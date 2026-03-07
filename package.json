@@ -1,0 +1,34 @@
+{
+  "name": "codex-app-server-im",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.6.0",
+  "scripts": {
+    "test": "vitest run",
+    "test:workspace": "vitest run tests/workspace.structure.test.ts",
+    "test:ci-gate": "vitest run tests/ci-gate.test.ts",
+    "test:channel-core": "vitest run packages/channel-core/tests",
+    "test:channel-feishu": "vitest run packages/channel-feishu/tests",
+    "test:codex-client": "vitest run packages/codex-client/tests",
+    "test:orchestrator": "vitest run services/orchestrator/tests",
+    "test:iam": "vitest run services/iam/tests",
+    "test:persistence": "vitest run services/persistence/tests",
+    "test:e2e:phase1": "vitest run tests/e2e.phase1.test.ts",
+    "test:phase1": "npm run test:workspace && npm run test:ci-gate && npm run test:channel-core && npm run test:channel-feishu && npm run test:codex-client && npm run test:orchestrator && npm run test:iam && npm run test:persistence && npm run test:e2e:phase1",
+    "test:orchestrator:phase2": "vitest run services/orchestrator/tests/phase2 --passWithNoTests",
+    "test:approval": "vitest run services/approval/tests --passWithNoTests",
+    "test:audit": "vitest run services/audit/tests --passWithNoTests",
+    "test:admin-api": "vitest run services/admin-api/tests --passWithNoTests",
+    "test:admin-ui": "vitest run packages/admin-ui/tests --passWithNoTests",
+    "test:live:codex:precheck": "node scripts/live-check-codex.mjs --precheck",
+    "test:live:codex": "node scripts/live-check-codex.mjs",
+    "test:phase2:logic": "npm run test:orchestrator:phase2 && npm run test:approval && npm run test:audit && npm run test:admin-api && npm run test:admin-ui",
+    "report:phase1": "node scripts/generate-review-report.mjs",
+    "report:phase2": "node scripts/generate-review-report-phase2.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

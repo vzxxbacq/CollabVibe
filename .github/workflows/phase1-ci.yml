@@ -1,0 +1,41 @@
+name: Phase1 CI Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  phase1-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run phase1 gate and generate review report
+        run: npm run report:phase1
+
+      - name: Upload phase1 review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1-review-report
+          path: |
+            docs/review/phase1/module-test-report.md
+            docs/review/phase1/module-test-report.json
+            docs/review/phase1/risk-list.md
+            docs/review/phase1/change-log.md
+          if-no-files-found: warn

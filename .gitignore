@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+coverage/
+*.tsbuildinfo
+
+# OS / Editor
+.DS_Store
+*.log
+tmp/
+
+# External tools
+.codex/
+.specstory/
+design-system/
+
+# AI agent working directories (not source of truth)
+docs/agent-output/
+docs/review/
+docs/tasks/
