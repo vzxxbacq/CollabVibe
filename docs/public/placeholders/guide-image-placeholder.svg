@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Image Placeholder</title>
+  <desc id="desc">Placeholder for a screenshot or annotated guide image.</desc>
+  <rect width="1280" height="720" fill="#f6f7fb"/>
+  <rect x="40" y="40" width="1200" height="640" rx="24" fill="#ffffff" stroke="#cfd6e4" stroke-width="4"/>
+  <rect x="88" y="96" width="320" height="24" rx="12" fill="#dbe3f0"/>
+  <rect x="88" y="144" width="1104" height="360" rx="18" fill="#eef2f8" stroke="#d7deeb" stroke-width="3" stroke-dasharray="16 10"/>
+  <rect x="88" y="536" width="240" height="18" rx="9" fill="#dbe3f0"/>
+  <rect x="88" y="572" width="520" height="18" rx="9" fill="#e5ebf5"/>
+  <rect x="1040" y="536" width="152" height="72" rx="16" fill="#0f172a"/>
+  <text x="640" y="335" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" fill="#64748b">Placeholder Image</text>
+  <text x="640" y="387" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" fill="#94a3b8">在此插入截图 / 架构图 / 标注引导图</text>
+</svg>

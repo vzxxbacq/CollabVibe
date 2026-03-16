@@ -1,0 +1,35 @@
+export const ErrorCode = {
+  APPROVAL_PENDING:        "APPROVAL_PENDING",
+  TURN_ALREADY_RUNNING:    "TURN_ALREADY_RUNNING",
+  UNSUPPORTED_INTENT:      "UNSUPPORTED_INTENT",
+  AGENT_API_UNAVAILABLE:   "AGENT_API_UNAVAILABLE",
+  THREAD_BINDING_REQUIRED: "THREAD_BINDING_REQUIRED",
+  THREAD_NOT_FOUND:        "THREAD_NOT_FOUND",
+  NO_ACTIVE_THREAD:        "NO_ACTIVE_THREAD",
+  RESUME_NOT_SUPPORTED:    "RESUME_NOT_SUPPORTED",
+  SNAPSHOT_REPO_MISSING:   "SNAPSHOT_REPO_MISSING",
+  SNAPSHOT_NOT_FOUND:      "SNAPSHOT_NOT_FOUND",
+  THREAD_NAME_REQUIRED:    "THREAD_NAME_REQUIRED",
+  BRANCH_NAME_REQUIRED:    "BRANCH_NAME_REQUIRED",
+  ILLEGAL_TRANSITION:      "ILLEGAL_TRANSITION",
+  THREAD_ALREADY_EXISTS:   "THREAD_ALREADY_EXISTS",
+  PROJECT_NOT_FOUND:       "PROJECT_NOT_FOUND",
+  WORKTREE_DIRTY:          "WORKTREE_DIRTY",
+  MERGE_IN_PROGRESS:       "MERGE_IN_PROGRESS",
+  MERGE_NO_CHANGES:        "MERGE_NO_CHANGES",
+  TURN_RECORD_MISSING:     "TURN_RECORD_MISSING",
+  TURN_DETAIL_MISSING:     "TURN_DETAIL_MISSING",
+} as const;
+
+export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
+
+export class OrchestratorError extends Error {
+  constructor(
+    public readonly code: ErrorCodeValue,
+    message: string,
+    public readonly meta?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "OrchestratorError";
+  }
+}

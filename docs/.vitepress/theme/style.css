@@ -1,0 +1,23 @@
+.mermaid-block {
+  margin: 16px 0;
+}
+
+.mermaid-block__inner {
+  overflow-x: auto;
+  padding: 12px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  background: var(--vp-c-bg-soft);
+}
+
+.mermaid-block__inner svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.mermaid-error {
+  margin: 0;
+  white-space: pre-wrap;
+}

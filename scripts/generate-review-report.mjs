@@ -1,30 +1,26 @@
 #!/usr/bin/env node
-import fs from "node:fs";
-import path from "node:path";
-import { spawnSync } from "node:child_process";
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const rootDir = process.cwd();
-const resultsDir = path.join(rootDir, "tmp", "test-results", "phase1");
-const reportPath = path.join(rootDir, "docs", "review", "phase1", "module-test-report.md");
-const reportJsonPath = path.join(rootDir, "docs", "review", "phase1", "module-test-report.json");
+const resultsDir = path.join(rootDir, 'tmp', 'test-results', 'phase1');
+const reportPath = path.join(rootDir, 'docs', 'review', 'phase1', 'module-test-report.md');
+const reportJsonPath = path.join(rootDir, 'docs', 'review', 'phase1', 'module-test-report.json');
 
 const moduleRuns = [
-  { name: "workspace", script: "test:workspace" },
-  { name: "ci-gate", script: "test:ci-gate" },
-  { name: "channel-core", script: "test:channel-core" },
-  { name: "channel-feishu", script: "test:channel-feishu" },
-  { name: "codex-client", script: "test:codex-client" },
-  { name: "orchestrator", script: "test:orchestrator" },
-  { name: "iam", script: "test:iam" },
-  { name: "persistence", script: "test:persistence" },
-  { name: "e2e-phase1", script: "test:e2e:phase1" }
+  { name: 'l0', script: 'test:l0' },
+  { name: 'l1', script: 'test:l1' },
+  { name: 'l2', script: 'test:l2' },
+  { name: 'l3', script: 'test:l3' },
+  { name: 'e2e', script: 'test:e2e' }
 ];
 
 fs.mkdirSync(resultsDir, { recursive: true });
 
 function loadVitestJson(filePath) {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch {
     return null;
   }
@@ -32,21 +28,10 @@ function loadVitestJson(filePath) {
 
 function runModuleTest(moduleRun) {
   const outputPath = path.join(resultsDir, `${moduleRun.name}.json`);
-  const args = [
-    "run",
-    moduleRun.script,
-    "--",
-    "--reporter=json",
-    `--outputFile=${outputPath}`
-  ];
-
+  const args = ['run', moduleRun.script, '--', '--reporter=json', `--outputFile=${outputPath}`];
   const startedAt = Date.now();
-  const child = spawnSync("npm", args, {
-    cwd: rootDir,
-    encoding: "utf8"
-  });
+  const child = spawnSync('npm', args, { cwd: rootDir, encoding: 'utf8' });
   const finishedAt = Date.now();
-
   const parsed = loadVitestJson(outputPath);
   const success = child.status === 0 && Boolean(parsed?.success);
 
@@ -61,8 +46,12 @@ function runModuleTest(moduleRun) {
       passedTests: parsed?.numPassedTests ?? 0,
       failedTests: parsed?.numFailedTests ?? 0
     },
-    stdoutTail: (child.stdout || "").split("\n").slice(-8).join("\n").trim(),
-    stderrTail: (child.stderr || "").split("\n").slice(-8).join("\n").trim()
+    stdoutTail: (child.stdout || '').split('
+').slice(-8).join('
+').trim(),
+    stderrTail: (child.stderr || '').split('
+').slice(-8).join('
+').trim()
   };
 }
 
@@ -73,64 +62,48 @@ const passedTests = runResults.reduce((sum, result) => sum + result.summary.pass
 const failedTests = runResults.reduce((sum, result) => sum + result.summary.failedTests, 0);
 
 const markdown = [
-  "# Phase1 Module Test Report",
-  "",
+  '# Phase1 Layered Test Report',
+  '',
   `- Generated at: ${new Date().toISOString()}`,
-  `- Gate status: ${allPassed ? "PASS" : "FAIL"}`,
+  `- Gate status: ${allPassed ? 'PASS' : 'FAIL'}`,
   `- Total tests: ${totalTests}`,
   `- Passed tests: ${passedTests}`,
   `- Failed tests: ${failedTests}`,
-  "",
-  "## Module Results",
-  "",
-  "| Module | Script | Status | Tests (pass/total) | Failed | Duration(ms) |",
-  "|---|---|---|---|---|---|",
-  ...runResults.map((result) =>
-    `| ${result.name} | ${result.script} | ${result.success ? "PASS" : "FAIL"} | ${result.summary.passedTests}/${result.summary.totalTests} | ${result.summary.failedTests} | ${result.durationMs} |`
-  ),
-  "",
-  "## Failed Module Logs",
-  ""
+  '',
+  '## Layer Results',
+  '',
+  '| Layer | Script | Status | Tests (pass/total) | Failed | Duration(ms) |',
+  '|---|---|---|---|---|---|',
+  ...runResults.map((result) => `| ${result.name} | ${result.script} | ${result.success ? 'PASS' : 'FAIL'} | ${result.summary.passedTests}/${result.summary.totalTests} | ${result.summary.failedTests} | ${result.durationMs} |`),
+  '',
+  '## Failed Layer Logs',
+  ''
 ];
 
 const failedModules = runResults.filter((result) => !result.success);
 if (failedModules.length === 0) {
-  markdown.push("- None");
+  markdown.push('- None');
 } else {
   for (const result of failedModules) {
     markdown.push(`### ${result.name}`);
-    markdown.push("");
-    markdown.push("```text");
+    markdown.push('');
+    markdown.push('```text');
     markdown.push(`exitCode: ${result.exitCode}`);
-    markdown.push(result.stdoutTail || "<no stdout>");
+    markdown.push(result.stdoutTail || '<no stdout>');
     if (result.stderrTail) {
-      markdown.push("--- stderr ---");
+      markdown.push('--- stderr ---');
       markdown.push(result.stderrTail);
     }
-    markdown.push("```");
-    markdown.push("");
+    markdown.push('```');
+    markdown.push('');
   }
 }
 
 fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-fs.writeFileSync(reportPath, `${markdown.join("\n")}\n`, "utf8");
-fs.writeFileSync(
-  reportJsonPath,
-  JSON.stringify(
-    {
-      generatedAt: new Date().toISOString(),
-      allPassed,
-      totalTests,
-      passedTests,
-      failedTests,
-      modules: runResults
-    },
-    null,
-    2
-  ) + "\n",
-  "utf8"
-);
+fs.writeFileSync(reportPath, `${markdown.join('
+')}
+`, 'utf8');
+fs.writeFileSync(reportJsonPath, JSON.stringify({ generatedAt: new Date().toISOString(), allPassed, totalTests, passedTests, failedTests, modules: runResults }, null, 2) + '
+', 'utf8');
 
-if (!allPassed) {
-  process.exit(1);
-}
+if (!allPassed) process.exit(1);

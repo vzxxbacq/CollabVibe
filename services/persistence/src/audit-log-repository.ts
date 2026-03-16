@@ -28,15 +28,30 @@ export class AuditLogRepository implements AuditLogRepositoryPort {
   }
 
   async withTransaction<T>(work: (repo: AuditLogRepositoryPort) => Promise<T>): Promise<T> {
-    const snapshot = new Map(this.logs);
-    try {
-      return await work(this);
-    } catch (error) {
-      this.logs.clear();
-      for (const [key, value] of snapshot.entries()) {
-        this.logs.set(key, value);
+    const workingLogs = new Map(this.logs);
+    const changedIds = new Set<string>();
+
+    const txRepo: AuditLogRepositoryPort = {
+      append: async (log) => {
+        workingLogs.set(log.id, log);
+        changedIds.add(log.id);
+      },
+      listByProject: async (projectId, limit = 50) => {
+        return [...workingLogs.values()]
+          .filter((log) => log.projectId === projectId)
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+          .slice(0, limit);
+      },
+      withTransaction: async <R>(nestedWork: (repo: AuditLogRepositoryPort) => Promise<R>) => nestedWork(txRepo)
+    };
+
+    const result = await work(txRepo);
+    for (const id of changedIds) {
+      const log = workingLogs.get(id);
+      if (log) {
+        this.logs.set(id, log);
       }
-      throw error;
     }
+    return result;
   }
 }

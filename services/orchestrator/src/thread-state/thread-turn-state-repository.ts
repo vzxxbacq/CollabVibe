@@ -1,0 +1,35 @@
+import type { ThreadTurnState } from "./thread-turn-state";
+
+export interface ThreadTurnStateRepository {
+  getSync(projectId: string, threadName: string): ThreadTurnState | null;
+  get(projectId: string, threadName: string): Promise<ThreadTurnState | null>;
+  upsert(state: ThreadTurnState): Promise<void>;
+}
+
+export class InMemoryThreadTurnStateRepository implements ThreadTurnStateRepository {
+  private readonly states = new Map<string, ThreadTurnState>();
+
+  private projectKey(projectId?: string, chatId?: string): string {
+    const key = projectId ?? chatId;
+    if (!key) {
+      throw new Error("ThreadTurnState requires projectId or legacy chatId");
+    }
+    return key;
+  }
+
+  async get(projectId: string, threadName: string): Promise<ThreadTurnState | null> {
+    return this.getSync(projectId, threadName);
+  }
+
+  getSync(projectId: string, threadName: string): ThreadTurnState | null {
+    return this.states.get(this.keyOf(projectId, threadName)) ?? null;
+  }
+
+  async upsert(state: ThreadTurnState): Promise<void> {
+    this.states.set(this.keyOf(this.projectKey(state.projectId, state.chatId), state.threadName), { ...state });
+  }
+
+  private keyOf(projectId: string, threadName: string): string {
+    return `${projectId}:${threadName}`;
+  }
+}

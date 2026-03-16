@@ -1,46 +1,76 @@
-export type Role = "platform_admin" | "project_owner" | "developer" | "approver" | "auditor";
+/**
+ * @module services/iam/src/permissions
+ *
+ * Two-dimensional permission model:
+ *   1. System level: UserRepository.isAdmin() → "admin" EffectiveRole
+ *   2. Project level: ProjectRole stored in adminState.members[projectId]
+ *
+ * admin > maintainer > developer > auditor
+ *
+ * NOTE: user management (USER_ADD/ROLE/REMOVE) requires system.admin.
+ * Project roles do NOT grant user management ability.
+ */
+
+/** Project-level role — persisted in adminState.members[projectId] */
+export type ProjectRole = "maintainer" | "developer" | "auditor";
+
+/**
+ * Effective role — the resolved role used by authorizeIntent.
+ * "admin" is derived from UserRepository.isAdmin(), never stored as a ProjectRole.
+ */
+export type EffectiveRole = "admin" | ProjectRole;
 
 export type Permission =
-  | "project.create"
+  // System-level (admin only)
+  | "system.admin"
+  // Project-level
   | "project.read"
-  | "thread.new"
-  | "thread.resume"
-  | "turn.start"
-  | "turn.interrupt"
-  | "skill.install"
-  | "skill.list"
-  | "audit.read"
+  | "thread.manage"
+  | "thread.merge"
+  | "turn.operate"
+  | "skill.use"
+  | "skill.manage"
   | "approval.decide"
-  | "config.write";
+  | "config.write"
+  | "user.read"
+  | "help.read";
 
-export const RolePermissionMap: Record<Role, Permission[]> = {
-  platform_admin: [
-    "project.create",
+const ALL_PERMISSIONS: Permission[] = [
+  "system.admin",
+  "project.read",
+  "thread.manage",
+  "thread.merge",
+  "turn.operate",
+  "skill.use",
+  "skill.manage",
+  "approval.decide",
+  "config.write",
+  "user.read",
+  "help.read"
+];
+
+export const RolePermissionMap: Record<EffectiveRole, Permission[]> = {
+  admin: ALL_PERMISSIONS,
+  maintainer: [
     "project.read",
-    "thread.new",
-    "thread.resume",
-    "turn.start",
-    "turn.interrupt",
-    "skill.install",
-    "skill.list",
-    "audit.read",
+    "thread.manage",
+    "thread.merge",
+    "turn.operate",
+    "skill.use",
+    "skill.manage",
     "approval.decide",
-    "config.write"
+    "config.write",
+    "user.read",
+    "help.read"
   ],
-  project_owner: [
-    "project.create",
+  developer: [
     "project.read",
-    "thread.new",
-    "thread.resume",
-    "turn.start",
-    "turn.interrupt",
-    "skill.install",
-    "skill.list",
-    "audit.read",
-    "approval.decide",
-    "config.write"
+    "thread.manage",
+    "turn.operate",
+    "skill.use",
+    "config.write",
+    "user.read",
+    "help.read"
   ],
-  developer: ["project.read", "thread.new", "thread.resume", "turn.start", "turn.interrupt", "skill.list"],
-  approver: ["project.read", "audit.read", "approval.decide"],
-  auditor: ["audit.read", "project.read"]
+  auditor: ["help.read"]
 };

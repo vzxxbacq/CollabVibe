@@ -6,17 +6,65 @@ dist/
 coverage/
 *.tsbuildinfo
 
-# OS / Editor
-.DS_Store
+# Logs
 *.log
-tmp/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# External tools
+# Environment
+.env
+.env.*
+.env.local
+.env.*.local
+!.env.example
+
+# Runtime data
+data/
+data/logs/
+data/tmp/
+data/cache/
+data/config/*.toml
+data/config/*.json
+data/config/*.yaml
+data/config/*.yml
+!data/config/*.example.toml
+!data/config/*.example.json
+!data/config/*.example.yaml
+!data/config/*.example.yml
+!data/config/default.gitignore
+*.db
+*.sqlite
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.db-*
+*.sqlite-*
+
+# Docs build output
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# OS / Editors
+.DS_Store
+.vscode/
+.idea/
+.eslintcache
+
+# Temp / local scratch
+tmp/
+bak/
+test/
+*.pid
+
+# External tools / local-only workdirs
 .codex/
 .specstory/
+agent/
 design-system/
-
-# AI agent working directories (not source of truth)
 docs/agent-output/
 docs/review/
 docs/tasks/
+doc_crawler/

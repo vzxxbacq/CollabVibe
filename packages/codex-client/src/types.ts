@@ -97,6 +97,28 @@ export interface TurnInterruptParams {
   turnId: string;
 }
 
+export interface ExecApprovalDecisionParams {
+  requestId: string;
+  threadId: string;
+  turnId: string;
+  callId: string;
+  decision: "accept" | "decline" | "approve_always";
+}
+
+export interface ApplyPatchApprovalDecisionParams {
+  requestId: string;
+  threadId: string;
+  turnId: string;
+  callId: string;
+  decision: "accept" | "decline" | "approve_always";
+}
+
+export interface TurnStatusUpdate {
+  threadId: string;
+  turnId: string;
+  status: "inProgress" | "completed" | "interrupted" | "failed";
+}
+
 /** JSON-RPC notification from server */
 export interface CodexNotification {
   method: string;

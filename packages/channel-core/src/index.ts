@@ -1,5 +1,14 @@
 export * from "./channel-adapter";
 export * from "./errors";
 export * from "./intent-router";
+export * from "./im-output";
+export * from "./event-transformer";
+export * from "./diff-parser";
+export * from "./turn-context";
+export * from "./stream-aggregator";
 export * from "./types";
 export * from "./unified-message";
+export * from "./logger";
+export { createFileLogSink, multiSink, createFilteredSink, type FileLogSinkOptions } from "./log-file-sink";
+export * from "./user-repository";
+export * from "./app-locale";

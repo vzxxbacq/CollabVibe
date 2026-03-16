@@ -1,6 +1,11 @@
 export * from "./codex-client";
 export * from "./errors";
 export * from "./event-stream";
-export * from "./rpc-client";
+export * from "./approval";
+export { CodexApiError, CodexClientStateError, RpcApiError, RpcClientStateError, JsonRpcClient } from "./rpc-client";
+export type { InitializeParams } from "./rpc-client";
+export * from "./stdio-transport";
 export * from "./types";
+export * from "./codex-api-factory";
+export * from "./codex-event-bridge";
 export * as GeneratedProtocolV2 from "./generated/v2";

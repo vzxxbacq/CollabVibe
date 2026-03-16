@@ -1,4 +1,4 @@
-import { RolePermissionMap, type Permission, type Role } from "./permissions";
+import { RolePermissionMap, type EffectiveRole, type Permission } from "./permissions";
 
 export class AuthorizationError extends Error {
   readonly status = 403;
@@ -6,7 +6,7 @@ export class AuthorizationError extends Error {
   readonly code = "FORBIDDEN";
 }
 
-export function hasPermission(role: Role, permission: Permission): boolean {
+export function hasPermission(role: EffectiveRole, permission: Permission): boolean {
   const permissions = RolePermissionMap[role];
   if (!permissions) {
     return false;
@@ -14,7 +14,7 @@ export function hasPermission(role: Role, permission: Permission): boolean {
   return permissions.includes(permission);
 }
 
-export function authorize(role: Role | null | undefined, permission: Permission): void {
+export function authorize(role: EffectiveRole | null | undefined, permission: Permission): void {
   if (!role || !hasPermission(role, permission)) {
     throw new AuthorizationError(`role cannot perform ${permission}`);
   }
