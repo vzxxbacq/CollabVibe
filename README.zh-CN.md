@@ -20,22 +20,22 @@
 
 | Backend | Transport | 接入方式 | 状态 | 说明 |
 | --- | --- | --- | --- | --- |
-| `codex` | `codex` | API | 已支持 | 通过 Codex protocol / stdio 接入 |
-| `opencode` | `acp` | API | 已支持 | 通过 ACP 接入 |
-| `claude-code` | `acp` | API | 已支持 | 通过 ACP 接入 |
-| `codex` | TBD | RefreshToken | 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
-| `claude-code` | TBD | RefreshToken | 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
-| `github-copilot` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
-| `gemini-cli` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
-| `trae-cli` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
+| `codex` | `codex` | API | ✅ 已支持 | 通过 Codex protocol / stdio 接入 |
+|  | TBD | RefreshToken | 🗺️ 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
+| `opencode` | `acp` | API | ✅ 已支持 | 通过 ACP 接入 |
+| `claude-code` | `acp` | API | ✅ 已支持 | 通过 ACP 接入 |
+|  | TBD | RefreshToken | 🗺️ 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
+| `github-copilot` | TBD | RefreshToken | 🗺️ 规划中 | 当前代码未接入 |
+| `gemini-cli` | TBD | RefreshToken | 🗺️ 规划中 | 当前代码未接入 |
+| `trae-cli` | TBD | RefreshToken | 🗺️ 规划中 | 当前代码未接入 |
 
 ## 已支持 IM 平台
 
 | 平台 | 状态 | 当前能力 | 说明 |
 | --- | --- | --- | --- |
-| Feishu / Lark | 已支持 | 消息事件、卡片、Bot 菜单、流式输出 | 当前主平台 |
-| Slack | 进行中 | 已有输出适配与 socket 基础能力 | 应用层主链路尚未接完 |
-| MS Teams | 规划中 | 未接入 | 预留扩展方向 |
+| Feishu / Lark | ✅ 已支持 | 消息事件、卡片、Bot 菜单、流式输出 | 当前主平台 |
+| Slack | 🚧 进行中 | 已有输出适配与 socket 基础能力 | 应用层主链路尚未接完 |
+| MS Teams | 🗺️ 规划中 | 未接入 | 预留扩展方向 |
 
 ## 快速开始
 

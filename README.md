@@ -20,22 +20,22 @@
 
 | Backend | Transport | Access Method | Status | Notes |
 | --- | --- | --- | --- | --- |
-| `codex` | `codex` | API | Supported | Connected through the Codex protocol / stdio path |
-| `opencode` | `acp` | API | Supported | Connected through ACP |
-| `claude-code` | `acp` | API | Supported | Connected through ACP |
-| `codex` | TBD | RefreshToken | Planned | RefreshToken-based platform integration is on the roadmap |
-| `claude-code` | TBD | RefreshToken | Planned | RefreshToken-based platform integration is on the roadmap |
-| `github-copilot` | TBD | RefreshToken | Planned | Not wired in the current codebase |
-| `gemini-cli` | TBD | RefreshToken | Planned | Not wired in the current codebase |
-| `trae-cli` | TBD | RefreshToken | Planned | Not wired in the current codebase |
+| `codex` | `codex` | API | ✅ Supported | Connected through the Codex protocol / stdio path |
+|  | TBD | RefreshToken | 🗺️ Planned | RefreshToken-based platform integration is on the roadmap |
+| `opencode` | `acp` | API | ✅ Supported | Connected through ACP |
+| `claude-code` | `acp` | API | ✅ Supported | Connected through ACP |
+|  | TBD | RefreshToken | 🗺️ Planned | RefreshToken-based platform integration is on the roadmap |
+| `github-copilot` | TBD | RefreshToken | 🗺️ Planned | Not wired in the current codebase |
+| `gemini-cli` | TBD | RefreshToken | 🗺️ Planned | Not wired in the current codebase |
+| `trae-cli` | TBD | RefreshToken | 🗺️ Planned | Not wired in the current codebase |
 
 ## Supported IM Platforms
 
 | Platform | Status | Current Capability | Notes |
 | --- | --- | --- | --- |
-| Feishu / Lark | Supported | Message events, cards, bot menu, streaming output | Current primary platform |
-| Slack | In progress | Output adapter and socket foundation exist | App-layer wiring is not complete yet |
-| MS Teams | Planned | Not connected | Reserved as a future extension |
+| Feishu / Lark | ✅ Supported | Message events, cards, bot menu, streaming output | Current primary platform |
+| Slack | 🚧 In progress | Output adapter and socket foundation exist | App-layer wiring is not complete yet |
+| MS Teams | 🗺️ Planned | Not connected | Reserved as a future extension |
 
 ## Quick Start
 
