@@ -1,56 +1,43 @@
-# CollabVibe
+<div align="center">
+  <img src="docs/public/placeholders/guide-image-placeholder.svg" alt="CollabVibe logo placeholder" width="240" />
+  <h1>CollabVibe</h1>
+  <p>CollabVibe: Empowering teams to co-code with multi-agent AI via IM platforms.</p>
+  <p>
+    <a href="./README.md"><strong>English</strong></a> |
+    <a href="./README.zh-CN.md"><strong>中文</strong></a>
+  </p>
+</div>
 
-An orchestration layer for collaborative AI coding workflows across chat platforms and agent backends.
+## Why CollabVibe
 
-CollabVibe provides threaded agent conversations, approval workflows, snapshots, merge review, and streaming output through a layered `src / services / packages` architecture.
+- Collaboration is the highest-leverage interface for getting real work done, and chat is where teams already coordinate.
+- Human-in-the-loop turns agent execution from a risky automation toy into a compounding system where `1 + 1` can outperform `10`.
+- It builds on the permissions, reach, notification loops, and habits your organization already has inside workplace collaboration platforms.
+- It unifies multiple models behind one operational surface so teams can make full use of existing accounts, providers, and budget pools.
+- It keeps agent orchestration available across devices, so you can direct work effectively even when you are away from your computer.
 
-![README hero placeholder](docs/public/placeholders/guide-image-placeholder.svg)
+## Supported Backends
 
-Placeholder: replace with a product overview screenshot, architecture poster, or chat-card workflow image.
+| Backend | Transport | Access Method | Status | Notes |
+| --- | --- | --- | --- | --- |
+| `codex` | `codex` | API | Supported | Connected through the Codex protocol / stdio path |
+| `opencode` | `acp` | API | Supported | Connected through ACP |
+| `claude-code` | `acp` | API | Supported | Connected through ACP |
+| `codex` | TBD | RefreshToken | Planned | RefreshToken-based platform integration is on the roadmap |
+| `claude-code` | TBD | RefreshToken | Planned | RefreshToken-based platform integration is on the roadmap |
+| `github-copilot` | TBD | RefreshToken | Planned | Not wired in the current codebase |
+| `gemini-cli` | TBD | RefreshToken | Planned | Not wired in the current codebase |
+| `trae-cli` | TBD | RefreshToken | Planned | Not wired in the current codebase |
 
-## Why this project
+## Supported IM Platforms
 
-- Run coding or automation agents directly from chat
-- Keep platform integration separate from orchestration and backend logic
-- Support multiple agent backends behind one runtime
-- Add safety controls such as approvals, snapshots, rollback, and merge review
+| Platform | Status | Current Capability | Notes |
+| --- | --- | --- | --- |
+| Feishu / Lark | Supported | Message events, cards, bot menu, streaming output | Current primary platform |
+| Slack | In progress | Output adapter and socket foundation exist | App-layer wiring is not complete yet |
+| MS Teams | Planned | Not connected | Reserved as a future extension |
 
-## Features
-
-- Multi-backend agent orchestration
-- Feishu-first chat integration
-- Thread-based conversations
-- Approval and interruption workflow
-- Snapshot and rollback support
-- Merge preview and merge review flows
-- Streaming event pipeline
-- Plugin / skill extensibility
-
-## Architecture
-
-The system has two main paths:
-
-1. **Command response path**
-   - IM event → platform handler → intent dispatcher → orchestrator → output adapter
-2. **Streaming event path**
-   - backend notification → event pipeline → router → output adapter
-
-Core repository layout:
-
-- `src/` — platform entrypoints and handlers
-- `services/` — orchestration and business services
-- `packages/` — reusable low-level packages
-- `docs/` — architecture and operations docs
-
-System-level architecture constraints live in:
-
-- `AGENTS.md`
-
-![Architecture placeholder](docs/public/placeholders/guide-image-placeholder.svg)
-
-Placeholder: replace with the latest Path A / Path B architecture diagram.
-
-## Quick start
+## Quick Start
 
 ### 1. Install
 
@@ -64,6 +51,21 @@ npm install
 cp .env.example .env
 ```
 
+Recommended `.env` baseline:
+
+```dotenv
+FEISHU_APP_ID=cli_xxxxxxxxxx
+FEISHU_APP_SECRET=xxxxxxxxxxxxxxxx
+
+CODEX_APP_SERVER_CMD=codex app-server
+CODEX_WORKSPACE_CWD=/path/to/workspace
+SYS_ADMIN_USER_IDS=ou_xxxxxxxxxx
+
+# UI language for project-level i18n
+# supported: zh-CN | en-US
+APP_LOCALE=zh-CN
+```
+
 Minimum commonly used settings:
 
 - `FEISHU_APP_ID`
@@ -71,6 +73,7 @@ Minimum commonly used settings:
 - `CODEX_APP_SERVER_CMD`
 - `CODEX_WORKSPACE_CWD`
 - `SYS_ADMIN_USER_IDS`
+- `APP_LOCALE` (`zh-CN` or `en-US`, defaults to `zh-CN`)
 
 ### 3. Run
 
@@ -78,62 +81,12 @@ Minimum commonly used settings:
 npm run start:dev
 ```
 
-### 4. Open docs locally
-
-```bash
-npm run docs:dev
-```
-
 ![Quickstart video placeholder](docs/public/placeholders/guide-video-placeholder.svg)
 
 Placeholder: replace with a short walkthrough video cover that shows local boot, Feishu trigger, and streaming output.
 
-## Documentation
-
-- Docs home: `docs/index.md`
-- Quickstart: `docs/00-overview/quickstart.md`
-- Project intro: `docs/00-overview/project-intro.md`
-- System overview: `docs/00-overview/system-overview.md`
-- Feishu onboarding: `docs/00-overview/platform-feishu.md`
-- Slack onboarding: `docs/00-overview/platform-slack.md`
-- Core entities: `docs/01-architecture/core-entities.md`
-- Architecture invariants: `docs/01-architecture/invariants.md`
-- Layer boundaries: `docs/01-architecture/layers-and-boundaries.md`
-- Logging system: `docs/02-operations/logging-system.md`
-- Local development: `docs/03-development/local-development.md`
-- Testing guide: `docs/03-development/testing.md`
-- Logging policy: `docs/logging-policy.md`
-
-## Development
-
-Run the app:
-
-```bash
-npm run start
-```
-
-Run tests:
-
-```bash
-npm test
-```
-
-Useful targeted suites:
-
-```bash
-npm run test:app
-npm run test:orchestrator
-npm run test:channel-feishu
-```
-
-## Current status
-
-- Primary chat platform: **Feishu**
-- Repository architecture is already prepared for additional platforms and backends
-- The project is under active iteration
-
 ## Notes
 
-- Runtime logs and local data are kept out of Git
-- Deep architecture rules are intentionally stricter than a typical Node project
-- If you are changing cross-layer data flow, read `AGENTS.md` first
+- Runtime logs and local data are kept out of Git.
+- If you are changing cross-layer data flow, read `AGENTS.md` first.
+- Full product, architecture, and operations docs live under `docs/`.

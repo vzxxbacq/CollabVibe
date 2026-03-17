@@ -1,6 +1,6 @@
 import type { BackendIdentity } from "../../../../packages/agent-core/src/backend-identity";
 import type { TurnStatus } from "../turn-state/turn-record";
-import type { ThreadRegistry, ThreadRecord, ThreadReservation } from "./thread-registry";
+import type { ThreadListEntry, ThreadRegistry, ThreadRecord, ThreadReservation } from "./thread-registry";
 import type { ThreadTurnState } from "./thread-turn-state";
 import type { ThreadTurnStateRepository } from "./thread-turn-state-repository";
 import type { UserThreadBinding } from "./user-thread-binding-types";
@@ -37,6 +37,19 @@ export class ThreadService {
 
   listRecords(projectId: string): ThreadRecord[] {
     return this.threadRegistry.list(projectId);
+  }
+
+  listEntries(projectId: string): ThreadListEntry[] {
+    const entries = this.threadRegistry.listEntries?.(projectId);
+    if (entries) return entries;
+    return this.threadRegistry.list(projectId).map((record) => ({
+      projectId,
+      chatId: record.chatId,
+      threadName: record.threadName,
+      threadId: record.threadId,
+      status: "active" as const,
+      backend: record.backend,
+    }));
   }
 
   listAllRecords(): ThreadRecord[] {

@@ -7,7 +7,7 @@ status: active
 
 # 项目简介
 
-`CollabVibe` 是一个面向聊天协作平台的 AI coding orchestration layer，核心能力包括：
+`CollabVibe` 是连接即时通讯平台与 AI Agent 后端的协作式编程编排引擎，核心能力包括：
 
 - IM 消息与交互卡片接入
 - 多 backend Agent 执行
@@ -49,13 +49,16 @@ flowchart LR
 
 ## Backend 支持
 
-| BackendId | 传输 | 状态 | 说明 |
-| --- | --- | --- | --- |
-| `codex` | `codex` | 已支持 | 通过 Codex protocol / stdio 接入 |
-| `opencode` | `acp` | 已支持 | 通过 ACP 接入 |
-| `claude-code` | `acp` | 已支持 | 通过 ACP 接入 |
-| `gemini-cli` | TBD | TODO | 计划支持，当前仓库未接入 |
-| `copilot-cli` | TBD | TODO | 计划支持，当前仓库未接入 |
+| Backend | 传输 | 接入方式 | 状态 | 说明 |
+| --- | --- | --- | --- | --- |
+| `codex` | `codex` | API | 已支持 | 通过 Codex protocol / stdio 接入 |
+| `opencode` | `acp` | API | 已支持 | 通过 ACP 接入 |
+| `claude-code` | `acp` | API | 已支持 | 通过 ACP 接入 |
+| `codex` | TBD | RefreshToken | 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
+| `claude-code` | TBD | RefreshToken | 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
+| `github-copilot` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
+| `gemini-cli` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
+| `trae-cli` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
 
 ```bash
 # 本地文档预览

@@ -4,7 +4,7 @@ import type { AgentApi, AgentApiPool, ApprovalAwareAgentApi, RuntimeConfig, Runt
 import type { BackendIdentity, BackendId } from "../../../packages/agent-core/src/backend-identity";
 import { createBackendIdentity } from "../../../packages/agent-core/src/backend-identity";
 import type { BackendRegistry, BackendDefinition } from "./backend/registry";
-import type { ThreadRegistry, ThreadRecord } from "./thread-state/thread-registry";
+import type { ThreadListEntryStatus, ThreadRegistry, ThreadRecord } from "./thread-state/thread-registry";
 import type { BackendSessionResolver, AvailableBackend, ResolvedBackendSession } from "./backend/session-resolver";
 import type { DefaultBackendSessionResolver } from "./backend/session-resolver";
 import type { BackendConfigService, BackendConfigInfo, ModelStatus } from "./backend/config-service";
@@ -59,6 +59,14 @@ export interface CreateThreadResult {
   threadName: string;
   cwd: string;
   api: AgentApi;
+}
+
+export interface ThreadListResult {
+  threadName: string;
+  threadId?: string;
+  status: ThreadListEntryStatus;
+  backendId: BackendId;
+  model: string;
 }
 
 export type SessionRecoveryFailureCategory =
@@ -718,6 +726,16 @@ export class ConversationOrchestrator {
     return this.threadService.listRecords(this.requireProjectId(chatId)).map((r) => ({
       threadName: r.threadName,
       threadId: r.threadId,
+    }));
+  }
+
+  async handleThreadListEntries(chatId: string): Promise<ThreadListResult[]> {
+    return this.threadService.listEntries(this.requireProjectId(chatId)).map((entry) => ({
+      threadName: entry.threadName,
+      threadId: entry.threadId,
+      status: entry.status,
+      backendId: entry.backend.backendId,
+      model: entry.backend.model,
     }));
   }
 

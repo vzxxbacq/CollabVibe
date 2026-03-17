@@ -51,8 +51,7 @@ export default defineConfig({
         items: [
           { text: "数据与存储", link: "/02-operations/data-and-storage" },
           { text: "日志系统", link: "/02-operations/logging-system" },
-          { text: "故障排查", link: "/02-operations/troubleshooting" },
-          { text: "GitHub Pages", link: "/02-operations/github-pages" }
+          { text: "故障排查", link: "/02-operations/troubleshooting" }
         ]
       },
       {

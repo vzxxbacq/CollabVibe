@@ -4,7 +4,7 @@ title: 首页
 
 # CollabVibe 文档
 
-面向 IM 场景的 Human-in-the-Loop Agent 协作系统。
+连接即时通讯平台与 AI Agent 后端的协作式编程编排引擎。
 
 ## 文档入口
 

@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { BackendIdentity } from "../../../packages/agent-core/src/backend-identity";
 import { createBackendIdentity, isBackendId } from "../../../packages/agent-core/src/backend-identity";
-import type { ThreadRecord, ThreadRegistry, ThreadReservation } from "../../orchestrator/src/thread-state/thread-registry";
+import type { ThreadListEntry, ThreadRecord, ThreadRegistry, ThreadReservation } from "../../orchestrator/src/thread-state/thread-registry";
 
 interface ProjectThreadRow {
   thread_id: string;
@@ -13,6 +13,7 @@ interface ProjectThreadRow {
   backend_name: string;
   transport: string;
   model: string | null;
+  status: string;
 }
 
 function rowToRecord(row: ProjectThreadRow): ThreadRecord {
@@ -23,6 +24,19 @@ function rowToRecord(row: ProjectThreadRow): ThreadRecord {
     chatId: row.chat_id || undefined,
     threadName: row.thread_name,
     threadId: row.thread_id,
+    backend,
+  };
+}
+
+function rowToListEntry(row: ProjectThreadRow): ThreadListEntry {
+  const backendId = isBackendId(row.backend_name) ? row.backend_name : "codex";
+  const backend: BackendIdentity = createBackendIdentity(backendId, row.model ?? "unknown");
+  return {
+    projectId: row.project_id,
+    chatId: row.chat_id || undefined,
+    threadName: row.thread_name,
+    threadId: row.status === "active" ? row.thread_id : undefined,
+    status: row.status === "creating" ? "creating" : "active",
     backend,
   };
 }
@@ -169,6 +183,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
     const row = this.db
       .prepare(
          `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model
+         , status
          FROM project_threads
          WHERE project_id = ? AND thread_name = ? AND status = 'active'`
       )
@@ -180,6 +195,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
     const rows = this.db
       .prepare(
          `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model
+         , status
          FROM project_threads
          WHERE project_id = ? AND status = 'active'`
       )
@@ -187,10 +203,21 @@ export class SqliteThreadRegistry implements ThreadRegistry {
     return rows.map(rowToRecord);
   }
 
+  listEntries(projectId: string): ThreadListEntry[] {
+    const rows = this.db
+      .prepare(
+        `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model, status
+         FROM project_threads
+         WHERE project_id = ? AND status IN ('creating', 'active')`
+      )
+      .all(projectId) as unknown as ProjectThreadRow[];
+    return rows.map(rowToListEntry);
+  }
+
   listAll(): ThreadRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model
+        `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model, status
          FROM project_threads
          WHERE status = 'active'`
       )

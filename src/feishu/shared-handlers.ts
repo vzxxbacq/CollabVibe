@@ -27,13 +27,14 @@ import {
   resolveModelList, resolveThreadNewFormData
 } from "../core/platform-commands";
 import { createLogger } from "../../packages/channel-core/src/index";
-import { notify, OP } from "./feishu-notify";
+import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 
 const log = createLogger("handler");
 
 // ── Project list ────────────────────────────────────────────────────────────
 
 export async function sendProjectList(deps: FeishuHandlerDeps, chatId: string): Promise<void> {
+    const { OP } = getFeishuNotifyCatalog(deps.config.locale);
     const projects = listProjects(deps);
     if (projects.length === 0) {
         await notify(deps, chatId, OP.NO_PROJECTS);
@@ -46,6 +47,7 @@ export async function sendProjectList(deps: FeishuHandlerDeps, chatId: string): 
 // ── Snapshot list ───────────────────────────────────────────────────────────
 
 export async function sendSnapshotList(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<void> {
+    const { OP } = getFeishuNotifyCatalog(deps.config.locale);
     const { snapshots, threadId, threadName, hasBinding } = await coreListSnapshots(deps, chatId, userId);
     if (snapshots.length === 0) {
         const hint = hasBinding
@@ -117,14 +119,21 @@ export async function resolveHelpCard(deps: FeishuHandlerDeps, chatId: string, u
 }
 
 export async function resolveHelpThreadCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const threads = await deps.orchestrator.handleThreadList(chatId);
+    const threads = await deps.orchestrator.handleThreadListEntries(chatId);
     const activeThread = await deps.orchestrator.getUserActiveThread(chatId, userId);
     const isOnMain = !activeThread;
     const displayName = deps.feishuAdapter.getUserDisplayName
         ? await deps.feishuAdapter.getUserDisplayName(userId)
         : userId;
     return deps.feishuOutputAdapter.buildHelpThreadCard(
-        threads.map(t => ({ ...t, active: t.threadName === activeThread?.threadName })),
+        threads.map(t => ({
+            threadName: t.threadName,
+            threadId: t.threadId,
+            status: t.status,
+            backendName: t.backendId,
+            modelName: t.model,
+            active: t.status === "active" && t.threadName === activeThread?.threadName,
+        })),
         userId, displayName, isOnMain
     );
 }

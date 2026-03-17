@@ -19,6 +19,21 @@ export interface ThreadRecord {
     backend: BackendIdentity;
 }
 
+export type ThreadListEntryStatus = "creating" | "active";
+
+export interface ThreadListEntry {
+    projectId: string;
+    chatId?: string;
+    threadName: string;
+    /**
+     * `active` entries carry the backend-assigned opaque thread/session id.
+     * `creating` entries are reservations and do not expose a stable backend id yet.
+     */
+    threadId?: string;
+    status: ThreadListEntryStatus;
+    backend: BackendIdentity;
+}
+
 export interface ThreadReservation {
     reservationId: string;
     projectId: string;
@@ -44,6 +59,9 @@ export interface ThreadRegistry {
 
     /** List all threads in a project */
     list(projectId: string): ThreadRecord[];
+
+    /** List visible thread rows in a project, including creating reservations. */
+    listEntries?(projectId: string): ThreadListEntry[];
 
     /** List ALL active threads across all projects (for startup recovery) */
     listAll?(): ThreadRecord[];

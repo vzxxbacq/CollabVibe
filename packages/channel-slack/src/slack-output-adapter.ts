@@ -471,7 +471,10 @@ export class SlackOutputAdapter implements IMOutputAdapter {
             ];
             for (const t of threads) {
                 const active = t.active ? " 🟢" : "";
-                threadBlocks.push(section(`*${t.threadName}*${active}\n\`${t.threadId.slice(0, 8)}\``));
+                const statusLine = t.status === "creating"
+                    ? `creating${t.backendName ? ` · ${t.backendName}` : ""}${t.modelName ? ` / ${t.modelName}` : ""}`
+                    : `\`${(t.threadId ?? "").slice(0, 8)}\``;
+                threadBlocks.push(section(`*${t.threadName}*${active}\n${statusLine}`));
             }
             threadBlocks.push(divider());
             threadBlocks.push(context("Use `/thread join <name>` or `/thread resume <name>` to switch"));

@@ -3,6 +3,8 @@ import { DEFAULT_APP_LOCALE, type AppLocale } from "../../channel-core/src/app-l
 export interface FeishuCardBuilderStrings {
   threadCurrentReadonly: string;
   threadCurrent: string;
+  threadCreating: string;
+  threadCreatingDetail(backendName?: string, modelName?: string): string;
   threadSwitch: string;
   threadMainDescription: string;
   threadListTitle: string;
@@ -391,6 +393,12 @@ export interface FeishuCardBuilderStrings {
 const zhCN: FeishuCardBuilderStrings = {
   threadCurrentReadonly: "<text_tag color='green'>当前</text_tag> **只读**",
   threadCurrent: "<text_tag color='green'>当前</text_tag>",
+  threadCreating: "<text_tag color='orange'>创建中</text_tag>",
+  threadCreatingDetail: (backendName, modelName) => {
+    const backend = backendName ? ` · ${backendName}` : "";
+    const model = modelName ? ` / ${modelName}` : "";
+    return `⏳ 创建中${backend}${model}`;
+  },
   threadSwitch: "切换",
   threadMainDescription: "**main** (主分支)\n🔒 受保护 · 仅通过 `/merge` 写入",
   threadListTitle: "Thread 列表",
@@ -794,6 +802,12 @@ const zhCN: FeishuCardBuilderStrings = {
 const enUS: FeishuCardBuilderStrings = {
   threadCurrentReadonly: "<text_tag color='green'>Current</text_tag> **Read only**",
   threadCurrent: "<text_tag color='green'>Current</text_tag>",
+  threadCreating: "<text_tag color='orange'>Creating</text_tag>",
+  threadCreatingDetail: (backendName, modelName) => {
+    const backend = backendName ? ` · ${backendName}` : "";
+    const model = modelName ? ` / ${modelName}` : "";
+    return `⏳ Creating${backend}${model}`;
+  },
   threadSwitch: "Switch",
   threadMainDescription: "**main** (default branch)\n🔒 Protected · writable only via `/merge`",
   threadListTitle: "Threads",

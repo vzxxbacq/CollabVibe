@@ -39,7 +39,7 @@ import { ErrorCode, OrchestratorError } from "../../services/orchestrator/src/er
 import { execFile as execFileCb } from "node:child_process";
 import { join as pathJoin } from "node:path";
 import { promisify } from "node:util";
-import { notify, GUARD, OP, ERR } from "./feishu-notify";
+import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 import { getFeishuCardHandlerStrings } from "./feishu-card-handler.strings";
 import { rm } from "node:fs/promises";
 
@@ -239,8 +239,13 @@ function alignButtonStyle(card: Record<string, unknown>, sourceText: string, tar
  * Layer 1: 输入消毒 — 将用户输入的相对路径消毒并拼接为绝对路径。
  * 七条规则独立于 Layer 2（project-setup-service）做快速拒绝。
  */
-function sanitizeProjectPath(rawInput: string, projectName: string, workspace: string): { absolute: string; relative: string } {
-  const s = getFeishuCardHandlerStrings("zh-CN");
+function sanitizeProjectPath(
+  rawInput: string,
+  projectName: string,
+  workspace: string,
+  locale: "zh-CN" | "en-US"
+): { absolute: string; relative: string } {
+  const s = getFeishuCardHandlerStrings(locale);
   // R1: 空值 → 使用 projectName 作为子目录
   let rel = rawInput.trim() || projectName;
 
@@ -274,6 +279,7 @@ async function handleInitProjectAction(
   operatorId: string,
   actionValue: Record<string, unknown>
 ): Promise<CardActionResponse> {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const formValues = payload.action?.form_value;
   const projectName = String(formValues?.project_name ?? actionValue.project_name ?? "").trim() || `project-${Date.now()}`;
   const rawCwd = String(formValues?.project_cwd ?? actionValue.project_cwd ?? "").trim();
@@ -282,7 +288,7 @@ async function handleInitProjectAction(
 
   let sanitized: { absolute: string; relative: string };
   try {
-    sanitized = sanitizeProjectPath(rawCwd, projectName, deps.config.cwd);
+    sanitized = sanitizeProjectPath(rawCwd, projectName, deps.config.cwd, deps.config.locale);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await notify(deps, chatId, ERR.pathValidation(msg));
@@ -345,6 +351,7 @@ async function handleCreateThreadAction(
   actionValue: Record<string, unknown>
 ): Promise<CardActionResponse> {
   const s = getFeishuCardHandlerStrings(deps.config.locale);
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const formValues = payload.action?.form_value;
   const threadName = String(formValues?.thread_name ?? actionValue.thread_name ?? "").trim() || `thread-${Date.now()}`;
   // Parse combined "backend:model" value from single selector
@@ -375,51 +382,35 @@ async function handleCreateThreadAction(
     const model = selectedModel || "gpt-5-codex";
     const createOpts = { backendId, model, serverCmd, profileName: selectedProfile || undefined };
 
-    // ACP backends (opencode, claude-code) have slow startup — fire-and-forget
-    // to avoid Feishu card callback timeout (~6s).
-    if (isBackendId(backendId) && transportFor(backendId) === "acp") {
-      deps.orchestrator.createThread(projectId, chatId, operatorId, threadName, createOpts)
-        .then((created) => {
-          log.info({ threadId: created.threadId, threadName, backend: backendId, model }, "create_thread (async)");
-          notify(deps, chatId,
-            s.threadCreated(threadName, backendId, model, created.threadId.slice(0, 12))
-          );
-        })
-        .catch((err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          log.error({ threadName, backend: backendId, err: msg }, "create_thread async failed");
-          notify(deps, chatId, ERR.threadCreate(msg));
-        });
-
-      // Return interim card immediately — actual result arrives via notification
-      return rawCard({
-        schema: "2.0",
-        header: {
-          title: { tag: "plain_text", content: s.creatingThreadTitle(threadName) },
-          subtitle: { tag: "plain_text", content: `${backendId} / ${model}` },
-          template: "wathet"
-        },
-        body: {
-          direction: "vertical",
-          elements: [
-            { tag: "markdown", content: s.creatingThreadBody(backendId) }
-          ]
-        }
+    void deps.orchestrator.createThread(projectId, chatId, operatorId, threadName, createOpts)
+      .then((created) => {
+        log.info({ threadId: created.threadId, threadName, backend: backendId, model }, "create_thread (async)");
+        return notify(
+          deps,
+          chatId,
+          s.threadCreated(threadName, backendId, model, created.threadId.slice(0, 12))
+        );
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.error({ threadName, backend: backendId, transport: transportFor(backendId), err: msg }, "create_thread async failed");
+        return notify(deps, chatId, ERR.threadCreate(msg));
       });
-    }
 
-    // Codex: fast path — synchronous response
-    const created = await deps.orchestrator.createThread(
-      projectId, chatId, operatorId, threadName, createOpts
-    );
-
-    log.info({ threadId: created.threadId, threadName, backend: backendId, model }, "create_thread");
-    return rawCard(deps.feishuOutputAdapter.buildThreadCreatedCard({
-      threadName,
-      threadId: created.threadId,
-      backendName: backendId,
-      modelName: model
-    }));
+    return rawCard({
+      schema: "2.0",
+      header: {
+        title: { tag: "plain_text", content: s.creatingThreadTitle(threadName) },
+        subtitle: { tag: "plain_text", content: `${backendId} / ${model}` },
+        template: "wathet"
+      },
+      body: {
+        direction: "vertical",
+        elements: [
+          { tag: "markdown", content: s.creatingThreadBody(backendId) }
+        ]
+      }
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     await notify(deps, chatId, ERR.threadCreate(msg));
@@ -528,6 +519,7 @@ async function handleThreadSwitchAction(
   action: string,
   actionValue: Record<string, unknown>
 ): Promise<CardActionResponse> {
+  const { GUARD, ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const ownerId = String(actionValue.ownerId ?? "");
   if (ownerId && ownerId !== userId) {
     await notify(deps, chatId, GUARD.NOT_YOUR_CARD);
@@ -543,13 +535,16 @@ async function handleThreadSwitchAction(
       // Update binding — pool is keyed by threadName, no release needed
       await deps.orchestrator.handleThreadJoin(chatId, userId, threadName);
       const activeBinding = await deps.orchestrator.getUserActiveThread(chatId, userId);
-      const threads = await deps.orchestrator.handleThreadList(chatId);
+      const threads = await deps.orchestrator.handleThreadListEntries(chatId);
       const displayName = await deps.feishuAdapter.getUserDisplayName?.(userId);
       return rawCard(deps.feishuOutputAdapter.buildThreadListCard(
         threads.map((thread) => ({
           threadName: thread.threadName,
           threadId: thread.threadId,
-          active: activeBinding?.threadId === thread.threadId
+          status: thread.status,
+          backendName: thread.backendId,
+          modelName: thread.model,
+          active: thread.status === "active" && activeBinding?.threadId === thread.threadId
         })),
         userId,
         displayName,
@@ -560,12 +555,15 @@ async function handleThreadSwitchAction(
     // switch_to_main: leave thread, keep old thread's API alive
     await deps.orchestrator.handleThreadLeave(chatId, userId);
     log.info("switch_to_main: binding cleared, threads stay alive");
-    const threads = await deps.orchestrator.handleThreadList(chatId);
+    const threads = await deps.orchestrator.handleThreadListEntries(chatId);
     const displayName = await deps.feishuAdapter.getUserDisplayName?.(userId);
     return rawCard(deps.feishuOutputAdapter.buildThreadListCard(
       threads.map((thread) => ({
         threadName: thread.threadName,
         threadId: thread.threadId,
+        status: thread.status,
+        backendName: thread.backendId,
+        modelName: thread.model,
         active: false
       })),
       userId,
@@ -588,13 +586,15 @@ async function handleMergeAction(
 ): Promise<CardActionResponse> {
   const s = getFeishuCardHandlerStrings(deps.config.locale);
   const branchName = String(actionValue.branchName ?? "");
+  const baseBranch = String(actionValue.baseBranch ?? "main");
   if (action === "confirm_merge" && branchName) {
     try {
       const mergeResult = await deps.orchestrator.handleMergeConfirm(chatId, branchName, undefined, context);
-      return rawCard(deps.feishuOutputAdapter.buildMergeResultCard(branchName, mergeResult.success, mergeResult.message));
+      return rawCard(deps.feishuOutputAdapter.buildMergeResultCard(branchName, baseBranch, mergeResult.success, mergeResult.message));
     } catch (error) {
       return rawCard(deps.feishuOutputAdapter.buildMergeResultCard(
         branchName,
+        baseBranch,
         false,
         error instanceof Error ? error.message : String(error)
       ));
@@ -627,6 +627,7 @@ async function handleSnapshotAction(
   userId: string,
   actionValue: Record<string, unknown>
 ): Promise<CardActionResponse> {
+  const { GUARD, ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const ownerId = String(actionValue.ownerId ?? "");
   if (ownerId && ownerId !== userId) {
     await notify(deps, chatId, GUARD.NOT_YOUR_CARD);
@@ -866,6 +867,7 @@ async function handleAdminSkillInstallSubmit(
   messageId?: string
 ): Promise<CardActionResponse> {
   const s = getFeishuCardHandlerStrings(deps.config.locale);
+  const { OP } = getFeishuNotifyCatalog(deps.config.locale);
   const formValues = payload.action?.form_value ?? {};
   const source = String(formValues.skill_source ?? "").trim();
   const pluginName = String(formValues.skill_name ?? "").trim() || undefined;
@@ -1255,6 +1257,7 @@ register("help_threads", "THREAD_LIST", async (deps, ctx) => {
 });
 
 register(["help_switch_thread", "help_switch_to_main"], "THREAD_SWITCH", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   if (!checkHelpCardOwner(ctx.actionValue, ctx.operatorId)) return;
   try {
     if (ctx.action === "help_switch_thread") {
@@ -1279,16 +1282,11 @@ register("help_thread_new", "THREAD_NEW", async (deps, ctx) => {
 
 register("help_create_thread", "THREAD_NEW", async (deps, ctx) => {
   if (!checkHelpCardOwner(ctx.actionValue, ctx.operatorId)) return;
-  // Create thread, then refresh the thread card in-place
-  const result = await handleCreateThreadAction(deps, ctx.payload, ctx.chatId, ctx.operatorId, ctx.actionValue);
-  if (result) {
-    // For ACP backends, handleCreateThreadAction returns an interim card and sends
-    // the real result asynchronously — refresh the help thread card after a delay
-    // so the user sees updated thread list once the async creation completes.
-    // For codex, the result is immediate so we can refresh in-place.
+  const creatingCard = await handleCreateThreadAction(deps, ctx.payload, ctx.chatId, ctx.operatorId, ctx.actionValue);
+  if (creatingCard) {
     return rawCard(await resolveHelpThreadCard(deps, ctx.chatId, ctx.operatorId));
   }
-  return; // error was already sent by handleCreateThreadAction
+  return;
 });
 
 register("help_merge", "THREAD_MERGE", async (deps, ctx) => {
@@ -1297,6 +1295,7 @@ register("help_merge", "THREAD_MERGE", async (deps, ctx) => {
 });
 
 register("help_merge_preview", "THREAD_MERGE", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   if (!checkHelpCardOwner(ctx.actionValue, ctx.operatorId)) return;
   const branchName = String(ctx.actionValue.branchName ?? "");
   if (!branchName) return;
@@ -1326,6 +1325,7 @@ register("help_merge_preview", "THREAD_MERGE", async (deps, ctx) => {
 });
 
 register("merge_start_review", "THREAD_MERGE", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const branchName = String(ctx.actionValue.branchName ?? "");
   if (!branchName) return;
   try {
@@ -1346,6 +1346,7 @@ register("help_skills", "SKILL_LIST", async (deps, ctx) => {
 });
 
 register("help_skill_install", "SKILL_INSTALL", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   if (!checkHelpCardOwner(ctx.actionValue, ctx.operatorId)) return;
   const skillName = String(ctx.actionValue.skillName ?? "");
   if (!skillName) return;
@@ -1359,6 +1360,7 @@ register("help_skill_install", "SKILL_INSTALL", async (deps, ctx) => {
 });
 
 register("help_skill_remove", "SKILL_REMOVE", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   if (!checkHelpCardOwner(ctx.actionValue, ctx.operatorId)) return;
   const name = String(ctx.actionValue.name ?? "");
   if (!name) return;
@@ -1496,6 +1498,7 @@ register(["confirm_merge", "cancel_merge"], "THREAD_MERGE", (deps, ctx) =>
 // ── Per-file merge review actions ──
 
 register(["merge_accept", "merge_keep_main", "merge_use_branch", "merge_skip"], "THREAD_MERGE", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const branchName = String(ctx.actionValue.branchName ?? "");
   const filePath = String(ctx.actionValue.filePath ?? "");
   if (!branchName || !filePath) return;
@@ -1524,6 +1527,7 @@ register(["merge_accept", "merge_keep_main", "merge_use_branch", "merge_skip"], 
 
 // Phase 2: reject with prompt → Agent retry
 register("merge_reject", "THREAD_MERGE", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const branchName = String(ctx.actionValue.branchName ?? "");
   const filePath = String(ctx.actionValue.filePath ?? "");
   if (!branchName || !filePath) return;
@@ -1543,6 +1547,7 @@ register("merge_reject", "THREAD_MERGE", async (deps, ctx) => {
 });
 
 register("merge_accept_all", "THREAD_MERGE", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const branchName = String(ctx.actionValue.branchName ?? "");
   if (!branchName) return;
   try {
@@ -1557,25 +1562,29 @@ register("merge_accept_all", "THREAD_MERGE", async (deps, ctx) => {
 });
 
 register("merge_commit", "THREAD_MERGE", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const branchName = String(ctx.actionValue.branchName ?? "");
+  const baseBranch = String(ctx.actionValue.baseBranch ?? "main");
   if (!branchName) return;
   try {
     const result = await deps.orchestrator.commitMergeReview(ctx.chatId, branchName, mergeActionContext(ctx));
-    return rawCard(deps.feishuOutputAdapter.buildMergeResultCard(branchName, result.success, result.message));
+    return rawCard(deps.feishuOutputAdapter.buildMergeResultCard(branchName, baseBranch, result.success, result.message));
   } catch (error) {
     await notify(deps, ctx.chatId, ERR.generic(error instanceof Error ? error.message : String(error)));
   }
 });
 
 register("merge_cancel", "THREAD_MERGE", async (deps, ctx) => {
+  const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const branchName = String(ctx.actionValue.branchName ?? "");
+  const baseBranch = String(ctx.actionValue.baseBranch ?? "main");
   if (!branchName) return;
   try {
     const s = getFeishuCardHandlerStrings(deps.config.locale);
     await deps.orchestrator.cancelMergeReview(ctx.chatId, branchName, mergeActionContext(ctx));
     return rawCard({
       schema: "2.0",
-      config: { width_mode: "fill" },
+      config: { width_mode: "fill", update_multi: true },
       header: {
         title: { tag: "plain_text", content: s.mergeReviewCanceledTitle(branchName) },
         subtitle: { tag: "plain_text", content: s.branchUnchanged },
@@ -1585,7 +1594,25 @@ register("merge_cancel", "THREAD_MERGE", async (deps, ctx) => {
         direction: "vertical",
         vertical_spacing: "8px",
         padding: "4px 12px 12px 12px",
-        elements: [{ tag: "markdown", content: s.mergeReviewCanceledBody(branchName) }]
+        elements: [
+          { tag: "markdown", content: s.mergeReviewCanceledBody(branchName, baseBranch) },
+          { tag: "hr" },
+          {
+            tag: "interactive_container",
+            width: "fill",
+            height: "auto",
+            has_border: true,
+            border_color: "grey",
+            corner_radius: "8px",
+            padding: "10px 12px 10px 12px",
+            behaviors: [{ type: "callback", value: { action: "help_merge", ownerId: ctx.operatorId, branchName } }],
+            elements: [{
+              tag: "markdown",
+              content: s.backToMergePanel,
+              icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
+            }]
+          }
+        ]
       }
     });
   } catch (error) {
@@ -2069,6 +2096,7 @@ export async function handleFeishuCardAction(deps: FeishuHandlerDeps, data: Reco
 
   // 2. Resolve role & authorize (if intent is declared)
   if (reg.intent) {
+    const { GUARD } = getFeishuNotifyCatalog(deps.config.locale);
     const project = deps.findProjectByChatId(chatId);
     const role = deps.roleResolver.resolve(operatorId, project?.id, { autoRegister: true });
     try {

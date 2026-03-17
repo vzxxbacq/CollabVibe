@@ -46,7 +46,7 @@ import { createProject } from "../core/platform-commands";
 import type { FeishuHandlerDeps } from "./types";
 import { resolveHelpCard, resolveHelpSkillCard, sendThreadNewForm } from "./shared-handlers";
 import { listSkills, installSkill, removeSkill } from "../core/platform-commands";
-import { notify, GUARD, OP, ERR, ORCHESTRATOR_ERROR_MAP } from "./feishu-notify";
+import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 import { consumePendingFeishuSkillInstall, peekPendingFeishuSkillInstall, stageFeishuSkillInstall } from "./skill-file-install-state";
 import { getFeishuMessageHandlerStrings } from "./feishu-message-handler.strings";
 
@@ -200,6 +200,7 @@ async function handleNonCodexIntent(
   intent: { intent: string; args: Record<string, unknown> },
   role: EffectiveRole | null
 ): Promise<void> {
+  const { OP } = getFeishuNotifyCatalog(deps.config.locale);
   if (intent.intent === "PROJECT_CREATE") {
     const name = String(intent.args.name ?? "").replace(/[<>'";&|`$\\]/g, "");
     const cwd = String(intent.args.cwd ?? "").replace(/[<>'";&|`$\\]/g, "");
@@ -297,6 +298,7 @@ async function handleSkillIntent(
 export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<string, unknown>): Promise<void> {
   try {
     const s = getFeishuMessageHandlerStrings(deps.config.locale);
+    const { GUARD, OP, ERR, ORCHESTRATOR_ERROR_MAP } = getFeishuNotifyCatalog(deps.config.locale);
     const payload = data as InboundMessageData;
     const messageData = payload.message;
     const senderData = payload.sender;
@@ -475,7 +477,7 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     }
 
     if (result.mode === ResultMode.THREAD_LIST) {
-      const threads = await deps.orchestrator.handleThreadList(chatId);
+      const threads = await deps.orchestrator.handleThreadListEntries(chatId);
       const activeBinding = userId ? await deps.orchestrator.getUserActiveThread(chatId, userId) : null;
       await deps.feishuOutputAdapter.sendThreadOperation(chatId, {
         kind: "thread_operation",
@@ -483,7 +485,10 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
         threads: threads.map((thread) => ({
           threadName: thread.threadName,
           threadId: thread.threadId,
-          active: activeBinding?.threadId === thread.threadId
+          status: thread.status,
+          backendName: thread.backendId,
+          modelName: thread.model,
+          active: thread.status === "active" && activeBinding?.threadId === thread.threadId
         }))
       }, userId);
       return;
@@ -614,6 +619,7 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     });
     turnLog.info("eventPipeline bound");
   } catch (error) {
+    const { GUARD, ERR, ORCHESTRATOR_ERROR_MAP } = getFeishuNotifyCatalog(deps.config.locale);
     const chatId = String((data as InboundMessageData).message?.chat_id ?? "");
     const messageId = String((data as InboundMessageData).message?.message_id ?? "");
     const userId = String((data as InboundMessageData).sender?.sender_id?.open_id ?? "");

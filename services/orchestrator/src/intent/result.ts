@@ -25,9 +25,9 @@ export type HandleIntentResult =
   | { mode: typeof ResultMode.THREAD_JOINED; id: string; threadName: string }
   | { mode: typeof ResultMode.THREAD_RESUMED; id: string; threadName: string }
   | { mode: typeof ResultMode.THREAD_LIST; id: string }
-  | { mode: typeof ResultMode.MERGE_PREVIEW; id: string; diffStats?: MergeDiffStats }
-  | { mode: typeof ResultMode.MERGE_CONFLICT; id: string; conflicts?: string[]; resolverThread?: { threadName: string; threadId: string }; message?: string }
-  | { mode: typeof ResultMode.MERGE_SUCCESS; id: string; message?: string }
+  | { mode: typeof ResultMode.MERGE_PREVIEW; id: string; baseBranch?: string; diffStats?: MergeDiffStats }
+  | { mode: typeof ResultMode.MERGE_CONFLICT; id: string; baseBranch?: string; conflicts?: string[]; resolverThread?: { threadName: string; threadId: string }; message?: string }
+  | { mode: typeof ResultMode.MERGE_SUCCESS; id: string; baseBranch?: string; message?: string }
   | { mode: typeof ResultMode.MERGE_FILE_REVIEW; id: string; fileReview: IMFileMergeReview }
   | { mode: typeof ResultMode.MERGE_SUMMARY; id: string; mergeSummary: IMMergeSummary }
   | { mode: typeof ResultMode.MERGE_RESOLVING; id: string; conflicts: string[] }

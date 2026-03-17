@@ -118,6 +118,7 @@ export class MergeUseCase {
   private resolverCompleteHandler?: (info: {
     chatId: string;
     branchName: string;
+    baseBranch: string;
     resolverName: string;
     traceId?: string;
     threadId?: string;
@@ -231,7 +232,7 @@ export class MergeUseCase {
 
   async handleMergeDryRun(
     projectId: string, chatId: string, branchName: string, context?: MergeRuntimeContext
-  ): Promise<DryRunMergeResult> {
+  ): Promise<DryRunMergeResult & { baseBranch: string }> {
     // Delegate to handleMergePreview for the actual dry-run logic
     const result = await this.handleMergePreview(chatId, branchName, context);
 
@@ -279,7 +280,7 @@ export class MergeUseCase {
 
     const runtimeConfig = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(this.ctx.resolveProjectId(chatId));
     const mainCwd = runtimeConfig.cwd ?? "";
-    this.requireBaseBranch(chatId, branchName, runtimeConfig, mergeContext);
+    const baseBranch = this.requireBaseBranch(chatId, branchName, runtimeConfig, mergeContext);
     if (!mainCwd) {
       mergeLog.error("onResolverTurnComplete: no cwd configured");
       return;
@@ -292,7 +293,7 @@ export class MergeUseCase {
     if (!resolved) {
       mergeLog.warn({ remaining, worktreePath }, "onResolverTurnComplete: unresolved conflicts remain");
       this.resolverCompleteHandler?.({
-        chatId, branchName, resolverName,
+        chatId, branchName, baseBranch, resolverName,
         traceId: mergeContext.traceId,
         threadId: mergeContext.threadId,
         turnId: mergeContext.turnId,
@@ -336,7 +337,7 @@ export class MergeUseCase {
 
     mergeLog.info({ hasStats: !!diffStats }, "onResolverTurnComplete: ready for merge approval");
     this.resolverCompleteHandler?.({
-      chatId, branchName, resolverName,
+      chatId, branchName, baseBranch, resolverName,
       traceId: mergeContext.traceId,
       threadId: mergeContext.threadId,
       turnId: mergeContext.turnId,
@@ -414,7 +415,7 @@ export class MergeUseCase {
 
   async handleMergePreview(
     chatId: string, branchName: string, context?: MergeRuntimeContext
-  ): Promise<DryRunMergeResult> {
+  ): Promise<DryRunMergeResult & { baseBranch: string }> {
     const mergeLog = this.mergeLogger(chatId, branchName, context);
     const runtimeConfig = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(this.ctx.resolveProjectId(chatId));
     const mainCwd = runtimeConfig.cwd ?? "";
@@ -439,7 +440,7 @@ export class MergeUseCase {
       deletions: result.diffStats?.deletions,
       fileCount: result.diffStats?.filesChanged.length
     }, "handleMergePreview: RESULT");
-    return result;
+    return { ...result, baseBranch };
   }
 
   async handleMerge(
@@ -739,7 +740,6 @@ export class MergeUseCase {
       this.buildMergeContext(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd, filePath })
     );
     const pendingReview = buildFileReview(session);
-    await this.ctx.routeMessage(chatId, { kind: "merge_review", review: pendingReview });
 
     try {
       const api = await this.ctx.resolveAgentApi(chatId, branchName);

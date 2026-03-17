@@ -22,8 +22,9 @@ export interface FeishuCardHandlerStrings {
   mergeCanceledTitle(branchName: string): string;
   mergeReviewCanceledTitle(branchName: string): string;
   branchUnchanged: string;
-  mergeCanceledBody(branchName: string): string;
-  mergeReviewCanceledBody(branchName: string): string;
+  mergeCanceledBody(branchName: string, baseBranch?: string): string;
+  mergeReviewCanceledBody(branchName: string, baseBranch?: string): string;
+  backToMergePanel: string;
   feishuFileSourceLabel: string;
   skillInstallExpiresHint: string;
   invalidSkillName: string;
@@ -80,8 +81,9 @@ const zhCN: FeishuCardHandlerStrings = {
   mergeCanceledTitle: (branchName) => `⏹️ 已取消合并: ${branchName}`,
   mergeReviewCanceledTitle: (branchName) => `⏹️ 已取消合并审阅: ${branchName}`,
   branchUnchanged: "分支保持不变",
-  mergeCanceledBody: (branchName) => `已取消 **${branchName}** → main 的合并操作`,
-  mergeReviewCanceledBody: (branchName) => `已取消 **${branchName}** → main 的合并审阅`,
+  mergeCanceledBody: (branchName, baseBranch = "main") => `已取消 **${branchName}** → ${baseBranch} 的合并操作`,
+  mergeReviewCanceledBody: (branchName, baseBranch = "main") => `已取消 **${branchName}** → ${baseBranch} 的合并审阅`,
+  backToMergePanel: "返回 merge 面板",
   feishuFileSourceLabel: "Feishu 文件",
   skillInstallExpiresHint: "10 分钟内确认，否则自动取消",
   invalidSkillName: "Skill 名称不合法",
@@ -138,8 +140,9 @@ const enUS: FeishuCardHandlerStrings = {
   mergeCanceledTitle: (branchName) => `⏹️ Merge canceled: ${branchName}`,
   mergeReviewCanceledTitle: (branchName) => `⏹️ Merge review canceled: ${branchName}`,
   branchUnchanged: "Branch remains unchanged",
-  mergeCanceledBody: (branchName) => `Canceled merge from **${branchName}** → main`,
-  mergeReviewCanceledBody: (branchName) => `Canceled merge review from **${branchName}** → main`,
+  mergeCanceledBody: (branchName, baseBranch = "main") => `Canceled merge from **${branchName}** → ${baseBranch}`,
+  mergeReviewCanceledBody: (branchName, baseBranch = "main") => `Canceled merge review from **${branchName}** → ${baseBranch}`,
+  backToMergePanel: "Back to merge panel",
   feishuFileSourceLabel: "Feishu file",
   skillInstallExpiresHint: "Confirm within 10 minutes, or it will be canceled automatically",
   invalidSkillName: "Invalid skill name",

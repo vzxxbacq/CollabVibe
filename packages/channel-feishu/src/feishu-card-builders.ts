@@ -42,6 +42,49 @@ function greyText(content: string): Record<string, unknown> {
   };
 }
 
+function buildCodePanel(title: string, content: string, language = "text", expanded = false): Record<string, unknown> {
+  return {
+    tag: "collapsible_panel",
+    expanded,
+    header: {
+      title: { tag: "markdown", content: title },
+      icon: { tag: "standard_icon", token: "code_outlined", color: "grey", size: "16px 16px" },
+      icon_position: "follow_text",
+      icon_expanded_angle: -180
+    },
+    vertical_spacing: "2px",
+    background_color: "grey",
+    elements: [{ tag: "markdown", content: `\`\`\`${language}\n${content}\n\`\`\`` }]
+  };
+}
+
+function parseConflictDiffSections(diff: string): {
+  merged?: string;
+  kind?: string;
+  ours?: string;
+  theirs?: string;
+} {
+  const marker = "\n#### ";
+  const markerIndex = diff.indexOf(marker);
+  const merged = markerIndex >= 0 ? diff.slice(0, markerIndex).trim() : diff.trim();
+  const rest = markerIndex >= 0 ? diff.slice(markerIndex).trim() : "";
+  if (!rest) {
+    return { merged: merged || undefined };
+  }
+
+  const kindMatch = rest.match(/^####\s+([^\n]+)\n*/);
+  const kind = kindMatch?.[1]?.trim();
+  const oursMatch = rest.match(/```ours\s*([\s\S]*?)```/);
+  const theirsMatch = rest.match(/```theirs\s*([\s\S]*?)```/);
+
+  return {
+    merged: merged || undefined,
+    kind,
+    ours: oursMatch?.[1]?.trim() || undefined,
+    theirs: theirsMatch?.[1]?.trim() || undefined,
+  };
+}
+
 function formatUserLabel(userId: string, displayName?: string): string {
   const normalized = String(displayName ?? "").trim();
   if (normalized && /\([A-Za-z0-9_-]{6}\)$/.test(normalized)) {
@@ -159,11 +202,20 @@ function displayKey(value?: string): string {
 
 // ── Card Builders ────────────────────────────────────────────────────────────
 
+type ThreadCardItem = {
+  threadName: string;
+  threadId?: string;
+  active?: boolean;
+  status?: "creating" | "active";
+  backendName?: string;
+  modelName?: string;
+};
+
 /**
  * Build a thread list card JSON.
  */
 export function buildThreadListCard(
-  threads: Array<{ threadName: string; threadId: string; active?: boolean }>,
+  threads: ThreadCardItem[],
   userId?: string,
   displayName?: string,
   isOnMain?: boolean,
@@ -214,7 +266,13 @@ export function buildThreadListCard(
 
   // 其他 thread 条目
   for (const t of threads) {
-    const rightCol = t.active
+    const isCreating = t.status === "creating";
+    const rightCol = isCreating
+      ? {
+        tag: "column", width: "auto", vertical_align: "center",
+        elements: [{ tag: "markdown", content: s.threadCreating, text_align: "right" }]
+      }
+      : t.active
       ? {
         tag: "column", width: "auto", vertical_align: "center",
         elements: [{ tag: "markdown", content: s.threadCurrent, text_align: "right" }]
@@ -233,7 +291,7 @@ export function buildThreadListCard(
       width: "fill",
       height: "auto",
       has_border: true,
-      border_color: t.active ? "blue" : "grey",
+      border_color: isCreating ? "orange" : (t.active ? "blue" : "grey"),
       corner_radius: "6px",
       padding: "8px 12px 8px 12px",
       margin: "4px 0",
@@ -244,7 +302,12 @@ export function buildThreadListCard(
         columns: [
           {
             tag: "column", width: "weighted", weight: 1, vertical_align: "center",
-            elements: [{ tag: "markdown", content: `**${t.threadName}**\nID: \`${t.threadId.slice(0, 8)}\`` }]
+            elements: [{
+              tag: "markdown",
+              content: isCreating
+                ? `**${t.threadName}**\n${s.threadCreatingDetail(t.backendName, t.modelName)}`
+                : `**${t.threadName}**\nID: \`${(t.threadId ?? "").slice(0, 8)}\``
+            }]
           },
           rightCol
         ]
@@ -387,7 +450,7 @@ export function buildMergePreviewCard(
             width: "fill", height: "auto",
             has_border: true, border_color: "grey", corner_radius: "8px",
             padding: "10px 12px 10px 12px",
-            behaviors: [{ type: "callback", value: { action: "confirm_merge", chatId, branchName } }],
+            behaviors: [{ type: "callback", value: { action: "confirm_merge", chatId, branchName, baseBranch } }],
             elements: [{
               tag: "markdown", content: txt.mergeConfirm,
               icon: { tag: "standard_icon", token: "check_outlined", color: "green" }
@@ -429,7 +492,7 @@ export function buildMergePreviewCard(
             width: "fill", height: "auto",
             has_border: true, border_color: "orange", corner_radius: "8px",
             padding: "10px 12px 10px 12px",
-            behaviors: [{ type: "callback", value: { action: "merge_start_review", chatId, branchName } }],
+            behaviors: [{ type: "callback", value: { action: "merge_start_review", chatId, branchName, baseBranch } }],
             elements: [{
               tag: "markdown", content: txt.mergeStartReview(Boolean(resolverThread)),
               icon: { tag: "standard_icon", token: "edit_outlined", color: "orange" }
@@ -1240,7 +1303,7 @@ export function buildModelListCard(
  * The create-thread form lives in a separate sub-panel (`buildHelpThreadNewCard`).
  */
 export function buildHelpThreadCard(
-  threads: Array<{ threadName: string; threadId: string; active?: boolean }>,
+  threads: ThreadCardItem[],
   userId: string,
   displayName?: string,
   isOnMain?: boolean,
@@ -1288,7 +1351,13 @@ export function buildHelpThreadCard(
 
   // ── Other threads ──
   for (const t of threads) {
-    const rightCol = t.active
+    const isCreating = t.status === "creating";
+    const rightCol = isCreating
+      ? {
+        tag: "column", width: "auto", vertical_align: "center",
+        elements: [{ tag: "markdown", content: s.threadCreating, text_align: "right" }]
+      }
+      : t.active
       ? {
         tag: "column", width: "auto", vertical_align: "center",
         elements: [{ tag: "markdown", content: s.threadCurrent, text_align: "right" }]
@@ -1305,7 +1374,7 @@ export function buildHelpThreadCard(
     elements.push({
       tag: "interactive_container",
       width: "fill", height: "auto",
-      has_border: true, border_color: t.active ? "blue" : "grey", corner_radius: "6px",
+      has_border: true, border_color: isCreating ? "orange" : (t.active ? "blue" : "grey"), corner_radius: "6px",
       padding: "8px 12px 8px 12px", margin: "4px 0",
       background_style: "default",
       disabled: true,
@@ -1314,7 +1383,12 @@ export function buildHelpThreadCard(
         columns: [
           {
             tag: "column", width: "weighted", weight: 1, vertical_align: "center",
-            elements: [{ tag: "markdown", content: `**${t.threadName}**\nID: \`${t.threadId.slice(0, 8)}\`` }]
+            elements: [{
+              tag: "markdown",
+              content: isCreating
+                ? `**${t.threadName}**\n${s.threadCreatingDetail(t.backendName, t.modelName)}`
+                : `**${t.threadName}**\nID: \`${(t.threadId ?? "").slice(0, 8)}\``
+            }]
           },
           rightCol
         ]
@@ -1877,8 +1951,11 @@ export function buildAdminProjectCard(
 /**
  * Inline edit form for a project — allows changing name and gitUrl.
  */
-export function buildAdminProjectEditCard(project: { id: string; name: string; gitUrl?: string; chatId?: string }): Record<string, unknown> {
-  const s = getFeishuCardBuilderStrings(DEFAULT_APP_LOCALE);
+export function buildAdminProjectEditCard(
+  project: { id: string; name: string; gitUrl?: string; chatId?: string },
+  locale: AppLocale = DEFAULT_APP_LOCALE
+): Record<string, unknown> {
+  const s = getFeishuCardBuilderStrings(locale);
   const formElements: unknown[] = [
     {
       tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
@@ -3201,8 +3278,8 @@ export interface TurnHistoryEntry {
   actionTaken?: string;
 }
 
-function turnHistoryStatusText(actionTaken?: string): string {
-  const s = getFeishuCardBuilderStrings(DEFAULT_APP_LOCALE);
+function turnHistoryStatusText(actionTaken?: string, locale: AppLocale = DEFAULT_APP_LOCALE): string {
+  const s = getFeishuCardBuilderStrings(locale);
   return actionTaken === "accepted" ? s.turnHistoryAccepted
     : actionTaken === "reverted" ? s.turnHistoryReverted
       : actionTaken === "interrupted" ? s.turnHistoryInterrupted
@@ -3238,6 +3315,7 @@ export function buildTurnHistoryCard(
         : t.actionTaken === "reverted" ? "↩️"
           : t.actionTaken === "interrupted" ? "⛔"
             : "✅";
+      const statusText = turnHistoryStatusText(t.actionTaken, locale);
 
       elements.push({
         tag: "interactive_container",
@@ -3253,7 +3331,7 @@ export function buildTurnHistoryCard(
               tag: "column", width: "weighted", weight: 1, vertical_align: "center",
               elements: [{
                 tag: "markdown",
-                content: `**${statusLabel} #${t.turnNumber ?? "?"}** ${summary}`,
+                content: `**${statusLabel} #${t.turnNumber ?? "?"}** ${summary}\n${statusText}`,
               }]
             },
             {
@@ -3318,24 +3396,32 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
     icon: { tag: "standard_icon", token: "code_outlined", color: file.status === "conflict" ? "red" : "turquoise" }
   });
 
-  // Diff (collapsible)
+  // Diff / conflict presentation
   if (file.diff) {
-    const diffPreview = file.diff.length > 3000 ? file.diff.slice(0, 3000) + s.mergeDiffTruncated : file.diff;
-    elements.push({
-      tag: "collapsible_panel",
-      expanded: totalFiles <= 3,
-      header: {
-        title: { tag: "markdown", content: s.mergeReviewViewDiff },
-        icon: { tag: "standard_icon", token: "code_outlined", color: "grey", size: "16px 16px" },
-        icon_position: "follow_text", icon_expanded_angle: -180
-      },
-      vertical_spacing: "2px",
-      background_color: "grey",
-      elements: [{ tag: "markdown", content: "```diff\n" + diffPreview + "\n```" }]
-    });
+    if (file.status === "conflict") {
+      const sections = parseConflictDiffSections(file.diff);
+      if (sections.kind) {
+        elements.push(greyText(`冲突类型: ${sections.kind}`));
+      }
+      if (sections.merged) {
+        const mergedPreview = sections.merged.length > 3000 ? sections.merged.slice(0, 3000) + s.mergeDiffTruncated : sections.merged;
+        elements.push(buildCodePanel(s.mergeReviewViewDiff, mergedPreview, "diff", totalFiles <= 3));
+      }
+      if (sections.ours) {
+        const oursPreview = sections.ours.length > 3000 ? sections.ours.slice(0, 3000) + s.mergeDiffTruncated : sections.ours;
+        elements.push(buildCodePanel("分支版本 (ours)", oursPreview, "python"));
+      }
+      if (sections.theirs) {
+        const theirsPreview = sections.theirs.length > 3000 ? sections.theirs.slice(0, 3000) + s.mergeDiffTruncated : sections.theirs;
+        elements.push(buildCodePanel("基线版本 (theirs)", theirsPreview, "python"));
+      }
+    } else {
+      const diffPreview = file.diff.length > 3000 ? file.diff.slice(0, 3000) + s.mergeDiffTruncated : file.diff;
+      elements.push(buildCodePanel(s.mergeReviewViewDiff, diffPreview, "diff", totalFiles <= 3));
+    }
   }
 
-  // Decision buttons (accept / keep_main / use_branch — outside the form_container)
+  // Decision buttons (accept / keep_main / use_branch — outside the form)
   elements.push({ tag: "hr" });
   const buttonCols: unknown[] = [];
   for (const d of availableDecisions) {
@@ -3359,10 +3445,10 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
   }
   elements.push({ tag: "column_set", flex_mode: "bisect", columns: buttonCols });
 
-  // Reject form (agent_resolved / conflict files: input + reject button in form_container)
+  // Reject form (agent_resolved / conflict files: input + reject button in form)
   if (file.status === "agent_resolved" || file.status === "conflict") {
     elements.push(greyText(s.mergeReviewRejectHint));
-    const formId = sanitizeElementId(`merge_reject_${branchName}_${file.path}`);
+    const formId = sanitizeElementId(`mrf_${fileIndex}`);
     elements.push({
       tag: "form",
       name: formId,
@@ -3391,15 +3477,38 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
 
   // Accept all button
   elements.push({
-    tag: "interactive_container",
-    width: "fill", height: "auto",
-    has_border: true, border_color: "grey", corner_radius: "8px",
-    padding: "8px 12px 8px 12px",
-    behaviors: [{ type: "callback", value: { action: "merge_accept_all", branchName } }],
-    elements: [{
-      tag: "markdown", content: s.mergeReviewAcceptAll(progress.remaining),
-      icon: { tag: "standard_icon", token: "check-double_outlined", color: "green" }
-    }]
+    tag: "column_set",
+    flex_mode: "bisect",
+    columns: [
+      {
+        tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+        elements: [{
+          tag: "interactive_container",
+          width: "fill", height: "auto",
+          has_border: true, border_color: "grey", corner_radius: "8px",
+          padding: "8px 12px 8px 12px",
+          behaviors: [{ type: "callback", value: { action: "merge_accept_all", branchName } }],
+          elements: [{
+            tag: "markdown", content: s.mergeReviewAcceptAll(progress.remaining),
+            icon: { tag: "standard_icon", token: "check-double_outlined", color: "green" }
+          }]
+        }]
+      },
+      {
+        tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+        elements: [{
+          tag: "interactive_container",
+          width: "fill", height: "auto",
+          has_border: true, border_color: "grey", corner_radius: "8px",
+          padding: "8px 12px 8px 12px",
+          behaviors: [{ type: "callback", value: { action: "merge_cancel", branchName, baseBranch } }],
+          elements: [{
+            tag: "markdown", content: s.mergeSummaryCancel,
+            icon: { tag: "standard_icon", token: "close_outlined", color: "red" }
+          }]
+        }]
+      }
+    ]
   });
 
   // Progress bar
@@ -3466,7 +3575,7 @@ export function buildMergeSummaryCard(summary: IMMergeSummary, locale: AppLocale
           tag: "button",
           text: { tag: "plain_text", content: s.mergeSummaryCommit },
           type: "primary",
-          behaviors: [{ type: "callback", value: { action: "merge_commit", branchName } }]
+          behaviors: [{ type: "callback", value: { action: "merge_commit", branchName, baseBranch } }]
         }]
       },
       {
@@ -3475,7 +3584,7 @@ export function buildMergeSummaryCard(summary: IMMergeSummary, locale: AppLocale
           tag: "button",
           text: { tag: "plain_text", content: s.mergeSummaryCancel },
           type: "danger",
-          behaviors: [{ type: "callback", value: { action: "merge_cancel", branchName } }]
+          behaviors: [{ type: "callback", value: { action: "merge_cancel", branchName, baseBranch } }]
         }]
       }
     ]

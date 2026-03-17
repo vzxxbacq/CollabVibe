@@ -276,6 +276,7 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
         kind: "thread_merge",
         action: "preview",
         branchName: info.resolverName,
+        baseBranch: info.baseBranch,
         message: info.message,
         diffStats: info.diffStats
       }).catch((error) => log.warn({
@@ -291,6 +292,7 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
         kind: "thread_merge",
         action: "conflict",
         branchName: info.branchName,
+        baseBranch: info.baseBranch,
         message: info.message,
         conflicts: info.remaining
       }).catch((error) => log.warn({

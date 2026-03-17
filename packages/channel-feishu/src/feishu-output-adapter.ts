@@ -692,12 +692,12 @@ export class FeishuOutputAdapter implements IMOutputAdapter {
   }
 
   async sendFileReview(chatId: string, review: import("../../channel-core/src/im-output").IMFileMergeReview): Promise<void> {
-    const card = buildFileReviewCard(review);
+    const card = buildFileReviewCard(review, this.locale);
     await this.client.sendInteractiveCard(chatId, card);
   }
 
   async sendMergeSummary(chatId: string, summary: import("../../channel-core/src/im-output").IMMergeSummary): Promise<void> {
-    const card = buildMergeSummaryCard(summary);
+    const card = buildMergeSummaryCard(summary, this.locale);
     await this.client.sendInteractiveCard(chatId, card);
   }
 
@@ -790,30 +790,30 @@ export class FeishuOutputAdapter implements IMOutputAdapter {
     }
 
     if (op.action === "error") {
-      await this.client.sendMessage({ chatId, text: s.skillError(op.error ?? "Unknown error") });
+      await this.client.sendMessage({ chatId, text: s.skillError(op.error ?? s.unknownError) });
     }
   }
 
   // ── Admin panels ───────────────────────────────────────────────────────
 
   async sendAdminHelp(chatId: string): Promise<void> {
-    await this.client.sendInteractiveCard(chatId, buildAdminHelpCard());
+    await this.client.sendInteractiveCard(chatId, buildAdminHelpCard(this.locale));
   }
 
   async sendAdminProjectPanel(chatId: string, data: IMAdminProjectPanel): Promise<void> {
-    await this.client.sendInteractiveCard(chatId, buildAdminProjectCard(data));
+    await this.client.sendInteractiveCard(chatId, buildAdminProjectCard(data, undefined, this.locale));
   }
 
   async sendAdminMemberPanel(chatId: string, data: IMAdminMemberPanel): Promise<void> {
-    await this.client.sendInteractiveCard(chatId, buildAdminMemberCard(data));
+    await this.client.sendInteractiveCard(chatId, buildAdminMemberCard(data, undefined, this.locale));
   }
 
   async sendAdminSkillPanel(chatId: string, data: IMAdminSkillPanel): Promise<void> {
-    await this.client.sendInteractiveCard(chatId, buildAdminSkillCard(data));
+    await this.client.sendInteractiveCard(chatId, buildAdminSkillCard(data, this.locale));
   }
 
   async sendAdminBackendPanel(chatId: string, data: IMAdminBackendPanel): Promise<void> {
-    await this.client.sendInteractiveCard(chatId, buildAdminBackendCard(data));
+    await this.client.sendInteractiveCard(chatId, buildAdminBackendCard(data, this.locale));
   }
 
   // ── Card builder proxies (for card-handler callback returns) ───────────
@@ -823,7 +823,14 @@ export class FeishuOutputAdapter implements IMOutputAdapter {
     opts?: Parameters<typeof buildHelpCard>[1]
   ) { return buildHelpCard(ownerId, { ...opts, locale: this.locale }); }
   buildThreadListCard(
-    threads: Array<{ threadName: string; threadId: string; active?: boolean }>,
+    threads: Array<{
+      threadName: string;
+      threadId?: string;
+      active?: boolean;
+      status?: "creating" | "active";
+      backendName?: string;
+      modelName?: string;
+    }>,
     userId?: string,
     displayName?: string,
     isOnMain?: boolean
@@ -874,9 +881,11 @@ export class FeishuOutputAdapter implements IMOutputAdapter {
   buildAdminProjectCard(data: Parameters<typeof buildAdminProjectCard>[0], searchKeyword?: string) {
     return buildAdminProjectCard(data, searchKeyword, this.locale);
   }
-  buildAdminProjectEditCard(...args: Parameters<typeof buildAdminProjectEditCard>) { return buildAdminProjectEditCard(...args); }
+  buildAdminProjectEditCard(project: Parameters<typeof buildAdminProjectEditCard>[0]) { return buildAdminProjectEditCard(project, this.locale); }
   buildProjectResumedCard(project: Parameters<typeof buildProjectResumedCard>[0]) { return buildProjectResumedCard(project, this.locale); }
-  buildAdminUserCard(...args: Parameters<typeof buildAdminUserCard>) { return buildAdminUserCard(...args); }
+  buildAdminUserCard(data: Parameters<typeof buildAdminUserCard>[0], searchKeyword?: string) {
+    return buildAdminUserCard(data, searchKeyword, this.locale);
+  }
   buildAdminMemberCard(data: Parameters<typeof buildAdminMemberCard>[0], searchKeyword?: string) {
     return buildAdminMemberCard(data, searchKeyword, this.locale);
   }
@@ -902,7 +911,14 @@ export class FeishuOutputAdapter implements IMOutputAdapter {
     return buildAdminBackendAddProviderCard(data, backendName, this.locale);
   }
   buildHelpThreadCard(
-    threads: Array<{ threadName: string; threadId: string; active?: boolean }>,
+    threads: Array<{
+      threadName: string;
+      threadId?: string;
+      active?: boolean;
+      status?: "creating" | "active";
+      backendName?: string;
+      modelName?: string;
+    }>,
     userId: string,
     displayName?: string,
     isOnMain?: boolean

@@ -51,6 +51,7 @@ export interface FeishuOutputAdapterStrings {
   skillCardTitle: string;
   skillInstalledCount(installed: number, total: number): string;
   skillInstallSuccess(name: string): string;
+  unknownError: string;
   approvalFileChangeDefaultDescription: string;
 }
 
@@ -106,6 +107,7 @@ const zhCN: FeishuOutputAdapterStrings = {
   skillCardTitle: "🧩 Skills",
   skillInstalledCount: (installed, total) => `${installed}/${total} 已安装`,
   skillInstallSuccess: (name) => `✅ Skill 安装成功: ${name}`,
+  unknownError: "未知错误",
   approvalFileChangeDefaultDescription: "审批文件变更",
 };
 
@@ -161,6 +163,7 @@ const enUS: FeishuOutputAdapterStrings = {
   skillCardTitle: "🧩 Skills",
   skillInstalledCount: (installed, total) => `${installed}/${total} installed`,
   skillInstallSuccess: (name) => `✅ Skill installed: ${name}`,
+  unknownError: "Unknown error",
   approvalFileChangeDefaultDescription: "Approve file changes",
 };
 

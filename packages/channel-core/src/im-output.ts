@@ -182,7 +182,14 @@ export interface IMThreadOperation {
   /** 当前操作的线程（created/joined/resumed 时有值） */
   thread?: { threadId: string; threadName: string };
   /** 线程列表（listed 时有值） */
-  threads?: Array<{ threadName: string; threadId: string; active?: boolean }>;
+  threads?: Array<{
+    threadName: string;
+    threadId?: string;
+    active?: boolean;
+    status?: "creating" | "active";
+    backendName?: string;
+    modelName?: string;
+  }>;
 }
 
 // ── 配置操作 ──────────────────────────────────────────────────────────────

@@ -102,6 +102,7 @@ export type OrchestratorLike = Pick<
   ConversationOrchestrator,
   | "handleIntent"
   | "handleThreadList"
+  | "handleThreadListEntries"
   | "createThread"
   | "handleThreadJoin"
   | "handleThreadLeave"
