@@ -18,16 +18,71 @@
 
 ## 已支持 Backend
 
-| Backend | Transport | 接入方式 | 状态 | 说明 |
-| --- | --- | --- | --- | --- |
-| `codex` | `codex` | API | ✅ 已支持 | 通过 Codex protocol / stdio 接入 |
-|  | TBD | RefreshToken | 🗺️ 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
-| `opencode` | `acp` | API | ✅ 已支持 | 通过 ACP 接入 |
-| `claude-code` | `acp` | API | ✅ 已支持 | 通过 ACP 接入 |
-|  | TBD | RefreshToken | 🗺️ 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
-| `github-copilot` | TBD | RefreshToken | 🗺️ 规划中 | 当前代码未接入 |
-| `gemini-cli` | TBD | RefreshToken | 🗺️ 规划中 | 当前代码未接入 |
-| `trae-cli` | TBD | RefreshToken | 🗺️ 规划中 | 当前代码未接入 |
+<table>
+  <thead>
+    <tr>
+      <th>Backend</th>
+      <th>Transport</th>
+      <th>接入方式</th>
+      <th>状态</th>
+      <th>说明</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="2"><strong><code>codex</code></strong></td>
+      <td rowspan="2"><code>codex</code></td>
+      <td>API</td>
+      <td>✅ 已支持</td>
+      <td>通过 Codex protocol / stdio 接入</td>
+    </tr>
+    <tr>
+      <td>RefreshToken</td>
+      <td>🗺️ 规划中</td>
+      <td>基于平台 RefreshToken 的接入方式在路线图中</td>
+    </tr>
+    <tr>
+      <td><strong><code>opencode</code></strong></td>
+      <td><code>acp</code></td>
+      <td>API</td>
+      <td>✅ 已支持</td>
+      <td>通过 ACP 接入</td>
+    </tr>
+    <tr>
+      <td rowspan="2"><strong><code>claude-code</code></strong></td>
+      <td rowspan="2"><code>acp</code></td>
+      <td>API</td>
+      <td>✅ 已支持</td>
+      <td>通过 ACP 接入</td>
+    </tr>
+    <tr>
+      <td>RefreshToken</td>
+      <td>🗺️ 规划中</td>
+      <td>基于平台 RefreshToken 的接入方式在路线图中</td>
+    </tr>
+    <tr>
+      <td><strong><code>github-copilot</code></strong></td>
+      <td><code>TBD</code></td>
+      <td>RefreshToken</td>
+      <td>🗺️ 规划中</td>
+      <td>当前代码未接入</td>
+    </tr>
+    <tr>
+      <td><strong><code>gemini-cli</code></strong></td>
+      <td><code>TBD</code></td>
+      <td>RefreshToken</td>
+      <td>🗺️ 规划中</td>
+      <td>当前代码未接入</td>
+    </tr>
+    <tr>
+      <td><strong><code>trae-cli</code></strong></td>
+      <td><code>TBD</code></td>
+      <td>RefreshToken</td>
+      <td>🗺️ 规划中</td>
+      <td>当前代码未接入</td>
+    </tr>
+  </tbody>
+</table>
 
 ## 已支持 IM 平台
 

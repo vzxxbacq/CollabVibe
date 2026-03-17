@@ -18,16 +18,71 @@
 
 ## Supported Backends
 
-| Backend | Transport | Access Method | Status | Notes |
-| --- | --- | --- | --- | --- |
-| `codex` | `codex` | API | ✅ Supported | Connected through the Codex protocol / stdio path |
-|  | TBD | RefreshToken | 🗺️ Planned | RefreshToken-based platform integration is on the roadmap |
-| `opencode` | `acp` | API | ✅ Supported | Connected through ACP |
-| `claude-code` | `acp` | API | ✅ Supported | Connected through ACP |
-|  | TBD | RefreshToken | 🗺️ Planned | RefreshToken-based platform integration is on the roadmap |
-| `github-copilot` | TBD | RefreshToken | 🗺️ Planned | Not wired in the current codebase |
-| `gemini-cli` | TBD | RefreshToken | 🗺️ Planned | Not wired in the current codebase |
-| `trae-cli` | TBD | RefreshToken | 🗺️ Planned | Not wired in the current codebase |
+<table>
+  <thead>
+    <tr>
+      <th>Backend</th>
+      <th>Transport</th>
+      <th>Access Method</th>
+      <th>Status</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="2"><strong><code>codex</code></strong></td>
+      <td rowspan="2"><code>codex</code></td>
+      <td>API</td>
+      <td>✅ Supported</td>
+      <td>Connected through the Codex protocol / stdio path</td>
+    </tr>
+    <tr>
+      <td>RefreshToken</td>
+      <td>🗺️ Planned</td>
+      <td>RefreshToken-based platform integration is on the roadmap</td>
+    </tr>
+    <tr>
+      <td><strong><code>opencode</code></strong></td>
+      <td><code>acp</code></td>
+      <td>API</td>
+      <td>✅ Supported</td>
+      <td>Connected through ACP</td>
+    </tr>
+    <tr>
+      <td rowspan="2"><strong><code>claude-code</code></strong></td>
+      <td rowspan="2"><code>acp</code></td>
+      <td>API</td>
+      <td>✅ Supported</td>
+      <td>Connected through ACP</td>
+    </tr>
+    <tr>
+      <td>RefreshToken</td>
+      <td>🗺️ Planned</td>
+      <td>RefreshToken-based platform integration is on the roadmap</td>
+    </tr>
+    <tr>
+      <td><strong><code>github-copilot</code></strong></td>
+      <td><code>TBD</code></td>
+      <td>RefreshToken</td>
+      <td>🗺️ Planned</td>
+      <td>Not wired in the current codebase</td>
+    </tr>
+    <tr>
+      <td><strong><code>gemini-cli</code></strong></td>
+      <td><code>TBD</code></td>
+      <td>RefreshToken</td>
+      <td>🗺️ Planned</td>
+      <td>Not wired in the current codebase</td>
+    </tr>
+    <tr>
+      <td><strong><code>trae-cli</code></strong></td>
+      <td><code>TBD</code></td>
+      <td>RefreshToken</td>
+      <td>🗺️ Planned</td>
+      <td>Not wired in the current codebase</td>
+    </tr>
+  </tbody>
+</table>
 
 ## Supported IM Platforms
 
