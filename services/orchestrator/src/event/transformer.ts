@@ -1,6 +1,6 @@
-import type { IMOutputMessage } from "../../../../packages/channel-core/src/im-output";
-import type { TransformContext } from "../../../../packages/channel-core/src/event-transformer";
-import { parseDiffFileNames, parseDiffStats } from "../../../../packages/channel-core/src/diff-parser";
+import type { IMOutputMessage } from "../../../contracts/im/im-output";
+import type { TransformContext } from "../../../contracts/im/event-transformer";
+import { parseDiffFileNames, parseDiffStats } from "../../../../packages/git-utils/src/diff-parser";
 
 import type { UnifiedAgentEvent } from "../../../../packages/agent-core/src/unified-agent-event";
 

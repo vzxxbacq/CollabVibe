@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
-import { createLogger } from "../../channel-core/src/index";
+import { createLogger } from "../../logger/src/index";
 
 const log = createLogger("process");
 

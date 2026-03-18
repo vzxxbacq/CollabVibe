@@ -15,7 +15,7 @@
  * - `src/server.ts` — creates FeishuWsApp and passes handler callbacks
  */
 import * as Lark from "@larksuiteoapi/node-sdk";
-import { createLogger } from "../../packages/channel-core/src/index";
+import { createLogger } from "../../packages/logger/src/index";
 
 interface FeishuWsAppOptions {
   appId: string;

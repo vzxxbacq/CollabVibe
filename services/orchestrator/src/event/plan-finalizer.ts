@@ -1,4 +1,4 @@
-import type { IMOutputMessage } from "../../../../packages/channel-core/src/im-output";
+import type { IMOutputMessage } from "../../../contracts/im/im-output";
 
 type PlanStatus = "pending" | "in_progress" | "completed";
 

@@ -1,26 +1,26 @@
 ---
-title: 系统总览
+title: "System Overview"
 layer: overview
 source_of_truth: src/server.ts, services/orchestrator, packages/channel-*
 status: active
 ---
 
-# 系统总览
+# System Overview
 
-系统由四类能力组成：平台接入、共享协调、基础包、本地状态。
+The system is composed of four kinds of capabilities: platform integration, shared orchestration, foundational packages, and local state.
 
-![系统分层总览占位图](/placeholders/guide-image-placeholder.svg)
+![System layering overview placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入最新版系统架构总图，建议用四层结构表示 `src / services / packages / local state`。
+> Placeholder: add the latest full system architecture diagram, ideally as a four-layer structure: `src / services / packages / local state`.
 
-## 系统结构
+## System structure
 
-| 层级 | 作用 | 典型目录 |
+| Layer | Purpose | Typical directories |
 | --- | --- | --- |
-| Platform | 接收平台事件，处理平台特有交互 | `src/feishu/*` |
-| Core / Services | intent 分发、线程管理、backend 调度、审批、权限、持久化 | `src/core/*`, `services/*` |
-| Packages | 通道抽象、协议客户端、输出适配、基础类型 | `packages/*` |
-| Local State | 数据库存储、日志、配置、工作区状态 | `data/*`, 本地 workspace |
+| Platform | Receives platform events and handles platform-specific interactions | `src/feishu/*` |
+| Core / Services | Intent dispatch, thread management, backend scheduling, approvals, authorization, persistence | `src/core/*`, `services/*` |
+| Packages | Channel abstractions, protocol clients, output adapters, fundamental types | `packages/*` |
+| Local State | Database storage, logs, config, workspace state | `data/*`, local workspace |
 
 ```mermaid
 flowchart LR
@@ -30,23 +30,23 @@ flowchart LR
   D --> E[packages/channel-feishu/*]
 ```
 
-## 系统关键对象
+## Key system objects
 
-| 对象 | 作用 |
+| Object | Purpose |
 | --- | --- |
-| Platform Event | IM 平台输入，如消息、卡片、菜单事件 |
-| Thread | 协作执行主轴，绑定 backend 与 session |
-| UnifiedAgentEvent | 屏蔽 backend transport 差异后的统一流式事件 |
-| Local State | thread registry、user repository、approval、audit、snapshot |
+| Platform Event | IM platform input such as messages, cards, and menu events |
+| Thread | The main axis of collaboration; binds backend and session |
+| UnifiedAgentEvent | Unified streaming event that hides backend transport differences |
+| Local State | Thread registry, user repository, approval records, audit data, snapshots |
 
-## 对外能力
+## External-facing capabilities
 
-| 面向对象 | 能力 |
+| Audience | Capability |
 | --- | --- |
-| 用户 | 在 IM 中触发命令、查看流式结果、审批动作 |
-| 管理员 | 管理 backend、项目、成员、系统配置 |
-| 开发者 | 基于统一路径扩展平台、backend、共享能力 |
+| Users | Trigger commands in IM, view streaming results, approve actions |
+| Administrators | Manage backends, projects, members, and system configuration |
+| Developers | Extend platforms, backends, and shared capabilities through the unified paths |
 
-![系统演示视频占位图](/placeholders/guide-video-placeholder.svg)
+![System overview demo video placeholder](/placeholders/guide-video-placeholder.svg)
 
-> Placeholder：在这里插入系统总览讲解视频封面或录屏。
+> Placeholder: add a cover image or screen recording for the system overview walkthrough.

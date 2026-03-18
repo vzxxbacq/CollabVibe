@@ -50,7 +50,8 @@ async function readFileExcerpt(worktreeCwd: string, filePath: string): Promise<s
       return content;
     }
     return `${content.slice(0, MAX_FILE_EXCERPT_CHARS)}\n... [truncated]`;
-  } catch {
-    return `[unavailable: ${filePath}]`;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to read merge target file ${filePath}: ${reason}`);
   }
 }

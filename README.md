@@ -1,5 +1,7 @@
+> This project is currently in the DEV stage. Features and documentation may change at any time, and the project remains unvalidated; use with caution.
+
 <div align="center">
-  <img src="docs/public/placeholders/guide-image-placeholder.svg" alt="CollabVibe logo placeholder" width="240" />
+  <img src="docs/public/logo.png" alt="CollabVibe logo placeholder" width="240" />
   <h1>CollabVibe</h1>
   <p>CollabVibe: Empowering teams to co-code with multi-agent AI via IM platforms.</p>
   <p>
@@ -11,7 +13,7 @@
 ## Why CollabVibe
 
 - Collaboration is the highest-leverage interface for getting real work done, and chat is where teams already coordinate.
-- Human-in-the-loop turns agent execution from a risky automation toy into a compounding system where `1 + 1` can outperform `10`.
+- Human-in-the-loop turns agent execution from a risky automation toy into a compounding system.
 - It builds on the permissions, reach, notification loops, and habits your organization already has inside workplace collaboration platforms.
 - It unifies multiple models behind one operational surface so teams can make full use of existing accounts, providers, and budget pools.
 - It keeps agent orchestration available across devices, so you can direct work effectively even when you are away from your computer.
@@ -92,6 +94,13 @@
 | Slack | 🚧 In progress | Output adapter and socket foundation exist | App-layer wiring is not complete yet |
 | MS Teams | 🗺️ Planned | Not connected | Reserved as a future extension |
 
+
+## Documentation
+
+- Default docs: [English](./docs/index.md)
+- 中文文档: [简体中文](./docs/zh/index.md)
+- Architecture entry: [Execution Paths and Data Flow](./docs/01-architecture/data-paths.md)
+
 ## Quick Start
 
 ### 1. Install
@@ -113,7 +122,7 @@ FEISHU_APP_ID=cli_xxxxxxxxxx
 FEISHU_APP_SECRET=xxxxxxxxxxxxxxxx
 
 CODEX_APP_SERVER_CMD=codex app-server
-CODEX_WORKSPACE_CWD=/path/to/workspace
+COLLABVIBE_WORKSPACE_CWD=/path/to/workspace
 SYS_ADMIN_USER_IDS=ou_xxxxxxxxxx
 
 # UI language for project-level i18n
@@ -126,7 +135,7 @@ Minimum commonly used settings:
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
 - `CODEX_APP_SERVER_CMD`
-- `CODEX_WORKSPACE_CWD`
+- `COLLABVIBE_WORKSPACE_CWD`
 - `SYS_ADMIN_USER_IDS`
 - `APP_LOCALE` (`zh-CN` or `en-US`, defaults to `zh-CN`)
 
@@ -144,4 +153,7 @@ Placeholder: replace with a short walkthrough video cover that shows local boot,
 
 - Runtime logs and local data are kept out of Git.
 - If you are changing cross-layer data flow, read `AGENTS.md` first.
-- Full product, architecture, and operations docs live under `docs/`.
+
+## License
+
+Apache-2.0. See [LICENSE](./LICENSE).

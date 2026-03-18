@@ -11,43 +11,71 @@
 ### 路径 A: 命令响应（用户消息 → 渲染结果）
 
 ```
-IM Event → server.ts 分发 → feishu-message-handler（平台层）
-  → intent-dispatcher（共享层）
-    ├─ agent 命令 → orchestrator.handleIntent() → AgentApiPool → Factory → HandleIntentResult
-    └─ 非 agent 命令 → platform-commands（共享业务逻辑）
-  → FeishuOutputAdapter 渲染（平台层）
+IM Event → server.ts 分发 (L0)
+  → feishu-message-handler (L1)
+  → orchestrator/intent/dispatcher (L2)
+    ├─ agent 命令 → orchestrator.handleIntent()
+    │              → AgentApiPool → AgentApiFactory → HandleIntentResult
+    └─ 非 agent 命令 → orchestrator/commands/platform-commands
+  → FeishuOutputAdapter 渲染 (L1)
 ```
 
 ### 路径 B: Agent 流式事件（Agent 执行中 → 实时推送）
 
 ```
 Backend (Codex stdio / ACP SSE)
-  → onNotification → codexEventBridge → UnifiedAgentEvent
-  → EventPipeline → AgentEventRouter → transformEvent → AgentStreamOutput 接口
-  → FeishuOutputAdapter / SlackOutputAdapter（IM 输出层）
+  → onNotification
+  → agent-core/transports/ eventBridge → UnifiedAgentEvent (L3)
+  → orchestrator/event/EventPipeline → AgentEventRouter → transformEvent (L2)
+  → AgentStreamOutput 接口
+  → FeishuOutputAdapter / SlackOutputAdapter (L1)
 ```
 
 **关键约束：**
-- 路径 A 中 `FeishuOutputAdapter` 是平台专属具体类，直接被 `src/feishu/` 调用
-- 路径 B 中 `FeishuOutputAdapter` 通过 `AgentStreamOutput` 接口被 orchestrator 层调用
-- Backend 差异（Codex vs ACP）在 orchestrator 内部通过 `AgentApiFactoryRegistry` 处理，对 IM 层透明
+- 路径 A 中 `FeishuOutputAdapter` 是 L1 平台专属具体类，直接被 `src/feishu/` 调用
+- 路径 B 中 `FeishuOutputAdapter` 通过 `AgentStreamOutput` 接口被 orchestrator (L2) 调用
+- Backend 差异（Codex vs ACP）在 `agent-core/transports/` (L3) 内部处理，对 L2 透明
 
 ---
 
-## 2. 层级隔离约束
+## 2. 四层架构与隔离约束
+
+### 层级结构
 
 ```
-src/core/        → 可 import: packages/*, services/*
-                 → 禁止 import: src/feishu/, src/slack/
-
-src/feishu/      → 可 import: src/core/, packages/*, services/*, channel-feishu
-                 → 禁止 import: src/slack/
-
-services/*       → 可 import: packages/*
-                 → 禁止 import: src/
-
-packages/*       → 最底层，不 import services/ 或 src/
+L0  src/        → Composition Root + Platform Modules
+L1  src/feishu/, src/slack/
+L2  services/   → contracts, orchestrator, persistence
+L3  packages/   → agent-core, git-utils, logger, admin-ui
 ```
+
+### 隔离规则
+
+```
+src/ (L0+L1)     → 可 import: services/orchestrator, services/contracts, packages/logger
+                  → 禁止 import: services/persistence, packages/agent-core, packages/git-utils
+                  → 禁止 import: 对方平台 (feishu ↛ slack, slack ↛ feishu)
+
+services/ (L2)   → 可 import: packages/* (L3), 同层 services/*
+                  → 禁止 import: src/ (L0+L1)
+
+packages/ (L3)   → 最底层，禁止 import services/ 或 src/
+```
+
+### L2 三模块职责
+
+| 模块 | 职责 | 对外暴露 |
+|------|------|----------|
+| **contracts** | 纯类型/接口: IM 协议 (`im/`) + 管理契约 (`admin/`) | L1 的类型依赖 |
+| **orchestrator** | 业务核心: Agent 会话, Intent, Commands, IAM, Approval, Audit, Plugin | L1 的 API 入口 |
+| **persistence** | 存储实现: SQLite | 仅 orchestrator 内部 DI 注入，L1 不可见 |
+
+### L3 约束
+
+- `agent-core` 统一后端协议，包含 `transports/codex/` 和 `transports/acp/`
+- L2 通过 `AgentApiFactory` 接口访问后端，**禁止**直接 import `transports/` 内部文件
+- `git-utils` 提供 diff/merge 工具，L2 可直接使用
+- `logger` 是跨切面基础设施，所有层可用
 
 ---
 
@@ -63,24 +91,16 @@ packages/*       → 最底层，不 import services/ 或 src/
 | **I4: 不可变** | `BackendIdentity` 创建后 `Object.freeze()`，线程的后端身份在创建后不可修改 |
 | **I5: 纯指针绑定** | `UserThreadBinding` 是纯指针（`projectId`, `userId`, `threadName`, `threadId`），**禁止携带后端元数据** |
 
-### BackendId 枚举
-
 ```typescript
 type BackendId = "codex" | "opencode" | "claude-code";
 // 新增后端需同时更新 BackendId 和 BACKEND_TRANSPORT 映射
-```
 
-### 创建方式
-
-```typescript
 // ✅ 正确：通过工厂函数创建
 const backend = createBackendIdentity("opencode", "MiniMax-M2.5");
-// backend.transport === "acp" (自动派生)
 
 // ❌ 禁止：手动构造或拆分字段传递
 config.transport = "acp";
 config.model = "MiniMax-M2.5";
-config.backendName = "opencode";
 ```
 
 ---
@@ -99,7 +119,7 @@ config.backendName = "opencode";
 ```
 IM chatId  →  ProjectResolver.findProjectByChatId(chatId)  →  projectId
 projectId  →  ThreadRegistry.get(projectId, threadName)    →  threadRecord.backend  →  RuntimeConfig.backend
-                                                        →  threadRecord.threadId  →  config.backendSessionId
+                                                            →  threadRecord.threadId  →  config.backendSessionId
 ```
 
 ### Project / Chat 关系不变式
@@ -129,7 +149,6 @@ projectId  →  ThreadRegistry.get(projectId, threadName)    →  threadRecord.b
 1. 提出修改理由和影响范围
 2. 获得人工审批
 3. 验证所有隔离约束仍然成立
-
 
 ---
 

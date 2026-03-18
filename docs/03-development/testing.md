@@ -1,28 +1,28 @@
 ---
-title: 测试矩阵
+title: "Test Matrix"
 layer: development
 source_of_truth: package.json
 status: active
 ---
 
-# 测试矩阵
+# Test Matrix
 
-## 测试入口
+## Test entry points
 
-| 命令 | 作用 |
+| Command | Purpose |
 | --- | --- |
-| `npm test` | 全量测试 |
-| `npm run test:logic` | 逻辑层测试 |
-| `npm run test:e2e` | 端到端测试 |
-| `npm run test:workspace` | workspace 与文档骨架校验 |
-| `npm run docs:build` | 文档站点构建校验 |
+| `npm test` | Full test suite |
+| `npm run test:logic` | Logic-layer tests |
+| `npm run test:e2e` | End-to-end tests |
+| `npm run test:workspace` | Workspace and docs-structure checks |
+| `npm run docs:build` | Documentation build validation |
 
-## 测试分层
+## Test layering
 
-| 位置 | 说明 |
+| Location | Description |
 | --- | --- |
-| `tests/governance/*` | 仓库结构、文档结构、CI gate |
-| `src/__tests__/*` | 应用层测试 |
-| `packages/*/tests/*` | 包级测试 |
-| `services/*/tests/*` | 服务级测试 |
-| `tests/e2e/*` | 端到端测试 |
+| `tests/governance/*` | Repository structure, documentation structure, CI gate |
+| `src/__tests__/*` | Application-layer tests |
+| `packages/*/tests/*` | Package-level tests |
+| `services/*/tests/*` | Service-level tests |
+| `tests/e2e/*` | End-to-end tests |

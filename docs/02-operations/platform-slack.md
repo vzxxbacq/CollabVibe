@@ -1,12 +1,12 @@
 ---
-title: Slack 平台接入
+title: "Slack Integration"
 layer: operations
 status: active
 ---
 
-# Slack 平台接入
+# Slack Integration
 
-该文档已迁移到总览章节，用于让读者先理解平台接入现状，再进入部署与运维文档。
+This document has been moved into the overview section so readers can understand the platform integration status before diving into deployment and operations.
 
-- 新入口：[Slack 平台接入](/00-overview/platform-slack)
-- 保留本页仅为兼容历史链接
+- New entry: [Slack Integration](/00-overview/platform-slack)
+- This page is kept only for historical-link compatibility

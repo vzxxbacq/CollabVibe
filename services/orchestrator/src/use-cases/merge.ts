@@ -1,20 +1,25 @@
 import { MAIN_THREAD_NAME } from "../../../../packages/agent-core/src/constants";
-import { isBackendId } from "../../../../packages/agent-core/src/backend-identity";
-import { createLogger } from "../../../../packages/channel-core/src/index";
-import type { MergeFileStatus, MergeFileDecision, IMFileMergeReview, IMMergeSummary } from "../../../../packages/channel-core/src/im-output";
+import { createBackendIdentity, isBackendId } from "../../../../packages/agent-core/src/backend-identity";
+import type { AgentApi, RuntimeConfig } from "../../../../packages/agent-core/src/types";
+import { createLogger } from "../../../../packages/logger/src/index";
+import { access } from "node:fs/promises";
+import type { MergeFileStatus, MergeFileDecision, IMFileMergeReview, IMMergeSummary } from "../../../contracts/im/im-output";
 import { createSnapshot, pinSnapshot } from "../../../../packages/git-utils/src/snapshot";
 import {
-  getWorktreePath, mergeWorktree, removeWorktree, dryRunMerge,
+  createWorktree, getWorktreePath, mergeWorktree, removeWorktree, dryRunMerge,
   startConflictMerge, checkConflictsResolved, isWorktreeDirty,
   startMergeSession as gitStartMergeSession, applyFileDecision as gitApplyFileDecision,
   commitMergeSession as gitCommitMergeSession, abortMergeSession as gitAbortMergeSession,
   fastForwardMain as gitFastForwardMain, commitWorktreeChanges, readCachedFileDiff, getCurrentBranch, readWorktreeStatusMap
 } from "../../../../packages/git-utils/src/index";
+import { ALL_BACKEND_SKILL_DIRS } from "../../../../services/plugin/src/index";
 import type { MergeDiffStats, DryRunMergeResult } from "../../../../packages/git-utils/src/merge";
 import type { MergeLogContext } from "../../../../packages/git-utils/src/merge-log-schema";
 import { OrchestratorError, ErrorCode } from "../errors";
 import type { OrchestratorContext, PendingMerge } from "../orchestrator-context";
+import type { PersistedMergeSessionRecord } from "../merge-state/merge-session-repository";
 import { buildSingleFileMergeAgentPrompt } from "./merge-agent-prompt";
+import { MergeTurnRunner } from "./merge-turn-runner";
 
 const log = createLogger("merge");
 
@@ -40,7 +45,7 @@ interface MergeSession {
   preMergeSha: string;
   files: MergeSessionFile[];
   currentIndex: number;
-  state: "resolving" | "reviewing";
+  state: "resolving" | "reviewing" | "recovery_required";
   createdAt: number;
   timeoutTimer?: ReturnType<typeof setTimeout>;
   activeAgentFilePath?: string;
@@ -50,6 +55,62 @@ interface MergeSession {
   turnId?: string;
   userId?: string;
   resolverName?: string;
+  resolverBackendId?: string;
+  resolverModel?: string;
+  recoveryError?: string;
+}
+
+function toPersistedMergeSessionRecord(session: MergeSession): PersistedMergeSessionRecord {
+  return {
+    projectId: session.projectId,
+    chatId: session.chatId,
+    branchName: session.branchName,
+    baseBranch: session.baseBranch,
+    mainCwd: session.mainCwd,
+    worktreeCwd: session.worktreeCwd,
+    preMergeSha: session.preMergeSha,
+    files: session.files.map((file) => ({ ...file })),
+    currentIndex: session.currentIndex,
+    state: session.state,
+    createdAt: session.createdAt,
+    updatedAt: Date.now(),
+    activeAgentFilePath: session.activeAgentFilePath,
+    agentRetryBaseline: session.agentRetryBaseline,
+    traceId: session.traceId,
+    threadId: session.threadId,
+    turnId: session.turnId,
+    userId: session.userId,
+    resolverName: session.resolverName,
+    resolverBackendId: session.resolverBackendId,
+    resolverModel: session.resolverModel,
+    recoveryError: session.recoveryError,
+  };
+}
+
+function fromPersistedMergeSessionRecord(record: PersistedMergeSessionRecord): MergeSession {
+  return {
+    projectId: record.projectId,
+    chatId: record.chatId,
+    branchName: record.branchName,
+    baseBranch: record.baseBranch,
+    mainCwd: record.mainCwd,
+    worktreeCwd: record.worktreeCwd,
+    preMergeSha: record.preMergeSha,
+    files: record.files.map((file) => ({ ...file })),
+    currentIndex: record.currentIndex,
+    state: record.state,
+    createdAt: record.createdAt,
+    activeAgentFilePath: record.activeAgentFilePath,
+    agentRetryBaseline: record.agentRetryBaseline,
+    traceId: record.traceId,
+    threadId: record.threadId,
+    turnId: record.turnId,
+    userId: record.userId,
+    resolverName: record.resolverName,
+    resolverBackendId: record.resolverBackendId,
+    resolverModel: record.resolverModel,
+    recoveryError: record.recoveryError,
+  };
 }
 
 interface MergeRuntimeContext {
@@ -76,14 +137,37 @@ function buildFileReview(session: MergeSession): IMFileMergeReview {
   const accepted = session.files.filter(f => f.decision === "accept").length;
   const rejected = session.files.filter(f => f.decision !== "pending" && f.decision !== "accept").length;
   const remaining = session.files.filter(f => f.decision === "pending").length;
+  const pendingConflicts = session.files.filter((f) => f.decision === "pending" && f.status === "conflict");
+  const pendingDirect = session.files.filter((f) => f.decision === "pending" && f.status !== "conflict" && f.status !== "agent_pending");
+  const agentPending = session.files.filter((f) => f.status === "agent_pending");
   return {
     kind: "file_merge_review",
     branchName: session.branchName,
     baseBranch: session.baseBranch,
+    sessionState: session.state,
+    resolverBackendId: session.resolverBackendId,
+    resolverModel: session.resolverModel,
     fileIndex: session.currentIndex,
     totalFiles: session.files.length,
     file: { path: file.path, diff: file.diff, status: file.status },
     availableDecisions: availableDecisionsForStatus(file.status),
+    overview: {
+      decided: session.files.length - remaining,
+      pending: remaining,
+      pendingConflicts: pendingConflicts.length,
+      pendingDirect: pendingDirect.length,
+      agentPending: agentPending.length,
+      accepted,
+      keptBase: session.files.filter((f) => f.decision === "keep_main").length,
+      usedBranch: session.files.filter((f) => f.decision === "use_branch").length,
+      skipped: session.files.filter((f) => f.decision === "skip").length,
+    },
+    queues: {
+      conflictPaths: pendingConflicts.map((f) => f.path),
+      directPaths: pendingDirect.map((f) => f.path),
+      agentPendingPaths: agentPending.map((f) => f.path),
+    },
+    recoveryError: session.recoveryError,
     progress: { accepted, rejected, remaining }
   };
 }
@@ -114,6 +198,7 @@ function buildMergeSummary(session: MergeSession): IMMergeSummary {
 export class MergeUseCase {
   private readonly pendingMerges = new Map<string, PendingMerge>();
   private readonly mergeSessions = new Map<string, MergeSession>();
+  private readonly mergeTurnRunner: MergeTurnRunner;
   private static readonly SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
   private resolverCompleteHandler?: (info: {
     chatId: string;
@@ -129,7 +214,16 @@ export class MergeUseCase {
     remaining?: string[];
   }) => void;
 
-  constructor(private readonly ctx: OrchestratorContext) { }
+  constructor(private readonly ctx: OrchestratorContext) {
+    this.mergeTurnRunner = new MergeTurnRunner(
+      { registerApprovalRequest: ctx.registerApprovalRequest.bind(ctx), routeMessage: ctx.routeMessage.bind(ctx) },
+      {
+        onResolverTurnComplete: this.onResolverTurnComplete.bind(this),
+        onMergeResolverDone: this.onMergeResolverDone.bind(this),
+        onMergeFileRetryDone: this.onMergeFileRetryDone.bind(this)
+      }
+    );
+  }
 
   onResolverComplete(handler: typeof this.resolverCompleteHandler): void {
     this.resolverCompleteHandler = handler;
@@ -238,11 +332,11 @@ export class MergeUseCase {
 
     if (result.canMerge) {
       const runtimeConfig = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(this.ctx.resolveProjectId(chatId));
-      const mainCwd = runtimeConfig.cwd ?? "";
-      let preMergeSha: string | undefined;
-      try {
-        preMergeSha = await createSnapshot(mainCwd);
-      } catch { /* snapshot failure is non-critical */ }
+      const mainCwd = runtimeConfig.cwd;
+      if (!mainCwd) {
+        throw new Error(`merge dry-run runtime config missing cwd: chatId=${chatId} branch=${branchName}`);
+      }
+      const preMergeSha = await createSnapshot(mainCwd);
 
       this.pendingMerges.set(this.mergeKey(chatId, branchName), {
         projectId,
@@ -279,11 +373,10 @@ export class MergeUseCase {
     mergeLog.info("onResolverTurnComplete: START");
 
     const runtimeConfig = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(this.ctx.resolveProjectId(chatId));
-    const mainCwd = runtimeConfig.cwd ?? "";
+    const mainCwd = runtimeConfig.cwd;
     const baseBranch = this.requireBaseBranch(chatId, branchName, runtimeConfig, mergeContext);
     if (!mainCwd) {
-      mergeLog.error("onResolverTurnComplete: no cwd configured");
-      return;
+      throw new Error(`resolver runtime config missing cwd: chatId=${chatId} branch=${branchName}`);
     }
 
     const worktreePath = getWorktreePath(mainCwd, resolverName);
@@ -304,28 +397,16 @@ export class MergeUseCase {
       return;
     }
 
-    try {
-      const committed = await commitWorktreeChanges(worktreePath, `[codex] resolve merge conflicts: ${branchName}`, gitContext);
-      if (committed) {
-        mergeLog.info({ worktreePath }, "onResolverTurnComplete: auto-committed resolver changes");
-      }
-    } catch (err) {
-      mergeLog.warn({ err: err instanceof Error ? err.message : err, worktreePath }, "onResolverTurnComplete: auto-commit failed");
+    const committed = await commitWorktreeChanges(worktreePath, `[codex] resolve merge conflicts: ${branchName}`, gitContext);
+    if (committed) {
+      mergeLog.info({ worktreePath }, "onResolverTurnComplete: auto-committed resolver changes");
     }
 
-    let diffStats: MergeDiffStats | undefined;
-    try {
-      const dryRun = await dryRunMerge(mainCwd, resolverName, this.buildMergeContext(chatId, branchName, mergeContext, { worktreePath: mainCwd, mergeBranch: resolverName }));
-      diffStats = dryRun.diffStats;
-    } catch (err) {
-      mergeLog.warn({ err: err instanceof Error ? err.message : err }, "onResolverTurnComplete: dryRunMerge failed");
-    }
+    const dryRun = await dryRunMerge(mainCwd, resolverName, this.buildMergeContext(chatId, branchName, mergeContext, { worktreePath: mainCwd, mergeBranch: resolverName }));
+    const diffStats: MergeDiffStats | undefined = dryRun.diffStats;
 
-    const projectId = "default-project";
-    let preMergeSha: string | undefined;
-    try {
-      preMergeSha = await createSnapshot(mainCwd);
-    } catch { /* non-critical */ }
+    const projectId = this.ctx.resolveProjectId(chatId);
+    const preMergeSha = await createSnapshot(mainCwd);
 
     this.pendingMerges.set(this.mergeKey(chatId, resolverName), {
       projectId,
@@ -349,22 +430,32 @@ export class MergeUseCase {
 
   async handleMergeWithConflictResolver(
     projectId: string, chatId: string, branchName: string, conflicts: string[], userId?: string, context?: MergeRuntimeContext
-  ): Promise<{ threadName: string; threadId: string; conflicts: string[] }> {
+  ): Promise<{ threadName: string; threadId: string; turnId: string; conflicts: string[] }> {
     const resolverName = `merge-${branchName}`;
     const mergeContext = { ...context, userId: context?.userId ?? userId, resolverName };
     const mergeLog = this.mergeLogger(chatId, branchName, mergeContext);
 
-    // Resolve backend info from current thread (if any) or use defaults
+    // Resolve backend info from current thread
     const runtimeConfig = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(this.ctx.resolveProjectId(chatId), userId);
-    const mainCwd = runtimeConfig.cwd ?? "";
+    const mainCwd = runtimeConfig.cwd;
+    if (!mainCwd) {
+      throw new Error(`merge runtime config missing cwd: chatId=${chatId} branch=${branchName}`);
+    }
     this.requireBaseBranch(chatId, branchName, runtimeConfig, mergeContext);
 
     // Determine backend/model for the resolver thread
-    const backendId = runtimeConfig.backend?.backendId ?? "codex";
-    const model = runtimeConfig.backend?.model ?? "gpt-5-codex";
+    const backendIdentity = runtimeConfig.backend;
+    if (!backendIdentity) {
+      throw new Error(`merge runtime config missing backend identity: chatId=${chatId} branch=${branchName}`);
+    }
+    const backendId = backendIdentity.backendId;
+    const model = backendIdentity.model;
 
     // Get serverCmd from backend definition
-    const resolvedBackendId = isBackendId(backendId) ? backendId : "codex" as const;
+    if (!isBackendId(backendId)) {
+      throw new Error(`merge runtime config has invalid backendId: ${backendId}`);
+    }
+    const resolvedBackendId = backendId;
 
     // Create the resolver thread via unified createThread
     // Note: createThread handles worktree, pool, threadStart, registry, bindings
@@ -388,15 +479,23 @@ export class MergeUseCase {
       "When all conflicts are resolved, run: git commit --no-edit"
     ].join("\n");
 
-    await created.api.turnStart({
+    this.mergeTurnRunner.attachApi(created.api);
+    const started = await created.api.turnStart({
       threadId: created.threadId,
       input: [{ type: "text", text: prompt }]
     });
+    const turnId = started.turn.id;
+    this.mergeTurnRunner.registerTurn(turnId, {
+      chatId,
+      userId,
+      traceId: mergeContext?.traceId,
+      threadName: resolverName,
+      threadId: created.threadId,
+      branchName,
+      kind: "resolver"
+    });
 
-    let preMergeSha: string | undefined;
-    try {
-      preMergeSha = await createSnapshot(mainCwd);
-    } catch { /* non-critical */ }
+    const preMergeSha = await createSnapshot(mainCwd);
 
     this.pendingMerges.set(this.mergeKey(chatId, branchName), {
       projectId,
@@ -409,6 +508,7 @@ export class MergeUseCase {
     return {
       threadName: resolverName,
       threadId: created.threadId,
+      turnId,
       conflicts: conflictList
     };
   }
@@ -418,7 +518,7 @@ export class MergeUseCase {
   ): Promise<DryRunMergeResult & { baseBranch: string }> {
     const mergeLog = this.mergeLogger(chatId, branchName, context);
     const runtimeConfig = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(this.ctx.resolveProjectId(chatId));
-    const mainCwd = runtimeConfig.cwd ?? "";
+    const mainCwd = runtimeConfig.cwd;
     const baseBranch = this.requireBaseBranch(chatId, branchName, runtimeConfig, context);
     if (!mainCwd) throw new Error("project has no cwd configured");
     await this.assertMainRepoOnBaseBranch(chatId, branchName, mainCwd, baseBranch, context);
@@ -448,7 +548,7 @@ export class MergeUseCase {
   ): Promise<{ success: boolean; message: string; conflicts?: string[] }> {
     const mergeLog = this.mergeLogger(chatId, branchName, context);
     const runtimeConfig = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(projectId);
-    const mainCwd = runtimeConfig.cwd ?? "";
+    const mainCwd = runtimeConfig.cwd;
     const baseBranch = this.requireBaseBranch(chatId, branchName, runtimeConfig, context);
     if (!mainCwd) throw new Error("project has no cwd configured");
     await this.assertMainRepoOnBaseBranch(chatId, branchName, mainCwd, baseBranch, context);
@@ -459,27 +559,22 @@ export class MergeUseCase {
       throw new OrchestratorError(ErrorCode.WORKTREE_DIRTY, "worktree has uncommitted changes — 请先 accept 或 revert 当前修改");
     }
 
-    let preMergeSha: string | undefined;
-    try {
-      preMergeSha = await createSnapshot(mainCwd);
-    } catch { /* snapshot failure should not block merge */ }
+    const preMergeSha = await createSnapshot(mainCwd);
 
     const result = await mergeWorktree(mainCwd, branchName, options?.force, this.buildMergeContext(chatId, branchName, context, { worktreePath }));
     mergeLog.info({ success: result.success, hasConflicts: !!result.conflicts?.length }, "handleMerge: mergeWorktree completed");
 
-    if (result.success && preMergeSha && this.ctx.snapshotRepo) {
-      try {
-        const mainThreadId = MAIN_THREAD_NAME;
-        const turnId = `merge-${branchName}-${Date.now()}`;
-        await pinSnapshot(mainCwd, preMergeSha, `codex-merge-${branchName}`);
-        const turnIndex = (await this.ctx.snapshotRepo.getLatestIndex(projectId, mainThreadId)) + 1;
-        await this.ctx.snapshotRepo.save({
-          projectId, chatId, threadId: mainThreadId, turnId, turnIndex,
-          cwd: mainCwd, gitRef: preMergeSha,
-          agentSummary: `合并分支: ${branchName}`,
-          createdAt: new Date().toISOString()
-        });
-      } catch { /* snapshot persistence failure should not block merge */ }
+    if (result.success && this.ctx.snapshotRepo) {
+      const mainThreadId = MAIN_THREAD_NAME;
+      const turnId = `merge-${branchName}-${Date.now()}`;
+      await pinSnapshot(mainCwd, preMergeSha, `codex-merge-${branchName}`);
+      const turnIndex = (await this.ctx.snapshotRepo.getLatestIndex(projectId, mainThreadId)) + 1;
+      await this.ctx.snapshotRepo.save({
+        projectId, chatId, threadId: mainThreadId, turnId, turnIndex,
+        cwd: mainCwd, gitRef: preMergeSha,
+        agentSummary: `合并分支: ${branchName}`,
+        createdAt: new Date().toISOString()
+      });
     }
 
     if (result.success) {
@@ -495,14 +590,6 @@ export class MergeUseCase {
     return `${chatId}:session:${branchName}`;
   }
 
-  /** Check if the project-bound chat has ANY active merge session (concurrency guard). */
-  private hasChatMergeSession(chatId: string): string | null {
-    for (const [key, session] of this.mergeSessions) {
-      if (session.chatId === chatId) return session.branchName;
-    }
-    return null;
-  }
-
   /** Schedule auto-abort for a session after timeout. */
   private scheduleSessionTimeout(mergeSessionKey: string, session: MergeSession): void {
     session.timeoutTimer = setTimeout(async () => {
@@ -511,12 +598,11 @@ export class MergeUseCase {
       const runtimeContext = this.sessionRuntimeContext(s);
       const mergeLog = this.mergeLogger(s.chatId, s.branchName, runtimeContext, { worktreePath: s.worktreeCwd });
       mergeLog.warn("merge session timed out, auto-aborting");
-      try {
-        await gitAbortMergeSession(s.worktreeCwd, this.buildMergeContext(s.chatId, s.branchName, runtimeContext, { worktreePath: s.worktreeCwd }));
-      } catch { /* best-effort */ }
+      await gitAbortMergeSession(s.worktreeCwd, this.buildMergeContext(s.chatId, s.branchName, runtimeContext, { worktreePath: s.worktreeCwd }));
       this.mergeSessions.delete(mergeSessionKey);
+      await this.deletePersistedSession(s.projectId, s.branchName);
       // Path B convergence: route timeout through AgentEventRouter
-      this.ctx.routeMessage(s.chatId, { kind: "merge_timeout", chatId: s.chatId, branchName: s.branchName }).catch(() => {});
+      await this.ctx.routeMessage(s.chatId, { kind: "merge_timeout", chatId: s.chatId, branchName: s.branchName });
     }, MergeUseCase.SESSION_TIMEOUT_MS);
   }
 
@@ -529,8 +615,218 @@ export class MergeUseCase {
     }
   }
 
+  private async persistSession(session: MergeSession): Promise<void> {
+    await this.ctx.mergeSessionRepository?.upsert(toPersistedMergeSessionRecord(session));
+  }
+
+  private async deletePersistedSession(projectId: string, branchName: string): Promise<void> {
+    await this.ctx.mergeSessionRepository?.delete(projectId, branchName);
+  }
+
+  private async getOrLoadSession(chatId: string, branchName: string): Promise<MergeSession | undefined> {
+    const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
+    const existing = this.mergeSessions.get(mergeSessionKey);
+    if (existing) return existing;
+
+    const projectId = this.ctx.resolveProjectId(chatId);
+    const persisted = await this.ctx.mergeSessionRepository?.get(projectId, branchName);
+    if (!persisted) return undefined;
+
+    const restored = fromPersistedMergeSessionRecord(persisted);
+    if (restored.state !== "recovery_required") {
+      try {
+        await this.validateSessionForRecovery(restored);
+      } catch (error) {
+        restored.state = "recovery_required";
+        restored.recoveryError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    this.mergeSessions.set(mergeSessionKey, restored);
+    this.scheduleSessionTimeout(mergeSessionKey, restored);
+    await this.persistSession(restored);
+    return restored;
+  }
+
+  private async listPersistedProjectSessions(projectId: string): Promise<PersistedMergeSessionRecord[]> {
+    if (!this.ctx.mergeSessionRepository) {
+      return [];
+    }
+    return this.ctx.mergeSessionRepository.listActive([projectId]);
+  }
+
+  private async assertNoPersistedMergeBlockers(projectId: string, chatId: string, branchName: string): Promise<void> {
+    const records = await this.listPersistedProjectSessions(projectId);
+    const sameChatRecords = records.filter((record) => record.chatId === chatId);
+    if (sameChatRecords.length === 0) {
+      return;
+    }
+
+    const sameBranchRecord = sameChatRecords.find((record) => record.branchName === branchName);
+    if (sameBranchRecord) {
+      const session = await this.getOrLoadSession(chatId, branchName);
+      if (session?.state === "recovery_required") {
+        throw new OrchestratorError(
+          ErrorCode.MERGE_IN_PROGRESS,
+          `该分支的合并审阅需要先回滚恢复: ${session.recoveryError ?? "unknown error"}`
+        );
+      }
+      throw new OrchestratorError(ErrorCode.MERGE_IN_PROGRESS, "该分支已有正在进行的合并审阅");
+    }
+
+    const activeRecord = sameChatRecords[0];
+    throw new OrchestratorError(
+      ErrorCode.MERGE_IN_PROGRESS,
+      `已有分支 ${activeRecord.branchName} 正在合并审阅中，请先完成或取消`
+    );
+  }
+
+  private async validateSessionForRecovery(session: MergeSession): Promise<MergeSession> {
+    try {
+      await access(session.worktreeCwd);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`worktree missing: ${session.worktreeCwd}; ${reason}`);
+    }
+
+    const currentBranch = await getCurrentBranch(session.worktreeCwd);
+    if (currentBranch !== session.branchName) {
+      throw new Error(`worktree branch mismatch: expected ${session.branchName}, got ${currentBranch}`);
+    }
+
+    if (session.state === "resolving") {
+      const { resolved } = await checkConflictsResolved(
+        session.worktreeCwd,
+        this.buildMergeContext(session.chatId, session.branchName, this.sessionRuntimeContext(session), { worktreePath: session.worktreeCwd })
+      );
+      for (const file of session.files) {
+        if (file.status === "agent_pending") {
+          file.status = "conflict";
+        }
+      }
+      session.state = "reviewing";
+      if (resolved) {
+        for (const file of session.files) {
+          if (file.status === "conflict" && file.decision === "pending") {
+            file.status = "agent_resolved";
+          }
+        }
+      }
+    }
+
+    const nextIdx = firstPendingIndex(session);
+    session.currentIndex = nextIdx >= 0 ? nextIdx : Math.max(0, session.currentIndex);
+    return session;
+  }
+
+  private mergeResolverName(branchName: string): string {
+    return `merge-${branchName}`;
+  }
+
+  private async buildMergeResolverRuntimeConfig(session: MergeSession, resolverName: string): Promise<RuntimeConfig> {
+    const base = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(session.projectId);
+    const branchRecord = this.ctx.getThreadRecord(session.projectId, session.branchName);
+    const backend = session.resolverBackendId && session.resolverModel && isBackendId(session.resolverBackendId)
+      ? createBackendIdentity(session.resolverBackendId, session.resolverModel)
+      : branchRecord?.backend ?? base.backend;
+    if (!backend) {
+      throw new Error(`merge resolver backend is missing: projectId=${session.projectId} branch=${session.branchName}`);
+    }
+    const env = base.env ? { ...base.env } : {};
+    if (backend.backendId === "codex") {
+      env.CODEX_HOME = `${session.worktreeCwd}/.codex`;
+    }
+    if (!base.approvalPolicy) {
+      throw new Error(`merge resolver approvalPolicy is missing: projectId=${session.projectId}`);
+    }
+    return {
+      ...base,
+      backend,
+      cwd: session.worktreeCwd,
+      env,
+      threadName: resolverName,
+      approvalPolicy: base.approvalPolicy,
+    };
+  }
+
+  private async ensureMergeResolver(session: MergeSession): Promise<{ api: AgentApi; threadId: string; resolverName: string }> {
+    const resolverName = session.resolverName?.trim() || this.mergeResolverName(session.branchName);
+    const config = await this.buildMergeResolverRuntimeConfig(session, resolverName);
+    const api = this.ctx.agentApiPool.get(session.chatId, resolverName)
+      ?? await this.ctx.agentApiPool.createWithConfig(session.chatId, resolverName, config);
+
+    let threadId = session.resolverName === resolverName ? session.threadId : undefined;
+    if (threadId && api.threadResume) {
+      try {
+        const resumed = await api.threadResume(threadId, config);
+        threadId = resumed.thread.id;
+        session.threadId = threadId;
+        session.resolverName = resolverName;
+        return { api, threadId, resolverName };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("thread not found")) {
+          throw error;
+        }
+      }
+    }
+
+    const created = await api.threadStart(config);
+    threadId = created.thread.id;
+    session.threadId = threadId;
+    session.resolverName = resolverName;
+    return { api, threadId, resolverName };
+  }
+
+  private async restoreWorktreeToPreMergeState(session: MergeSession, context?: MergeRuntimeContext): Promise<void> {
+    const runtimeContext = this.sessionRuntimeContext(session, context);
+    const logContext = this.buildMergeContext(session.chatId, session.branchName, runtimeContext, { worktreePath: session.worktreeCwd });
+
+    try {
+      await gitAbortMergeSession(session.worktreeCwd, logContext);
+    } catch (error) {
+      this.mergeLogger(session.chatId, session.branchName, runtimeContext, { worktreePath: session.worktreeCwd })
+        .warn({ err: error instanceof Error ? error.message : String(error) }, "restoreWorktreeToPreMergeState: abort failed, will rebuild worktree");
+    }
+
+    const currentBranch = await getCurrentBranch(session.worktreeCwd);
+    const dirty = await isWorktreeDirty(session.worktreeCwd);
+    const { resolved } = await checkConflictsResolved(session.worktreeCwd, logContext);
+
+    if (currentBranch === session.branchName && !dirty && resolved) {
+      return;
+    }
+
+    await removeWorktree(session.mainCwd, session.worktreeCwd);
+    await createWorktree(session.mainCwd, session.branchName, session.worktreeCwd, {
+      pluginDirs: ALL_BACKEND_SKILL_DIRS,
+    });
+  }
+
+  private async assertSessionConsistentForCommit(session: MergeSession, context?: MergeRuntimeContext): Promise<void> {
+    if (session.state === "recovery_required") {
+      throw new Error(`merge session requires recovery: ${session.recoveryError ?? "unknown error"}`);
+    }
+    const currentBranch = await getCurrentBranch(session.worktreeCwd);
+    if (currentBranch !== session.branchName) {
+      throw new Error(`worktree branch mismatch before commit: expected ${session.branchName}, got ${currentBranch}`);
+    }
+    const { resolved, remaining } = await checkConflictsResolved(
+      session.worktreeCwd,
+      this.buildMergeContext(session.chatId, session.branchName, this.sessionRuntimeContext(session, context), { worktreePath: session.worktreeCwd })
+    );
+    if (!resolved) {
+      throw new Error(`git index still has unresolved conflicts: ${remaining.join(", ")}`);
+    }
+  }
+
   getMergeSession(chatId: string, branchName: string): MergeSession | undefined {
     return this.mergeSessions.get(this.projectThreadMergeKey(chatId, branchName));
+  }
+
+  async getMergeReview(chatId: string, branchName: string): Promise<IMFileMergeReview> {
+    const session = await this.getOrLoadSession(chatId, branchName);
+    if (!session) throw new Error("没有正在进行的合并审阅");
+    return buildFileReview(session);
   }
 
   /**
@@ -545,27 +841,18 @@ export class MergeUseCase {
     const mergeLog = this.mergeLogger(chatId, branchName, context);
     const projectId = this.ctx.resolveProjectId(chatId);
     const runtimeConfig = await this.ctx.runtimeConfigProvider.getProjectRuntimeConfig(projectId);
-    const mainCwd = runtimeConfig.cwd ?? "";
+    const mainCwd = runtimeConfig.cwd;
     const baseBranch = this.requireBaseBranch(chatId, branchName, runtimeConfig, context);
     if (!mainCwd) throw new Error("project has no cwd configured");
     await this.assertMainRepoOnBaseBranch(chatId, branchName, mainCwd, baseBranch, context);
+
+    // Guard: persisted/in-memory session state must be cleared before a new review starts.
+    await this.assertNoPersistedMergeBlockers(projectId, chatId, branchName);
 
     // Guard: worktree must be clean
     const worktreeCwd = getWorktreePath(mainCwd, branchName);
     if (await isWorktreeDirty(worktreeCwd)) {
       throw new OrchestratorError(ErrorCode.WORKTREE_DIRTY, "worktree has uncommitted changes — 请先 accept 或 revert 当前修改");
-    }
-
-    // Guard: no existing session for this project-thread merge branch in the bound chat
-    const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    if (this.mergeSessions.has(mergeSessionKey)) {
-      throw new OrchestratorError(ErrorCode.MERGE_IN_PROGRESS, "该分支已有正在进行的合并审阅");
-    }
-
-    // Guard: no concurrent merge for this chat (different branch)
-    const activeBranch = this.hasChatMergeSession(chatId);
-    if (activeBranch) {
-      throw new OrchestratorError(ErrorCode.MERGE_IN_PROGRESS, `已有分支 ${activeBranch} 正在合并审阅中，请先完成或取消`);
     }
 
     // PR-style: merge main into the branch worktree
@@ -577,6 +864,8 @@ export class MergeUseCase {
     }
 
     const conflictFiles = files.filter(f => f.status === "conflict");
+    const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
+    const branchRecord = this.ctx.getThreadRecord(projectId, branchName);
 
     const session: MergeSession = {
       projectId,
@@ -598,13 +887,16 @@ export class MergeUseCase {
       threadId: context?.threadId,
       turnId: context?.turnId,
       userId: context?.userId,
-      resolverName: context?.resolverName
+      resolverName: context?.resolverName,
+      resolverBackendId: branchRecord?.backend?.backendId,
+      resolverModel: branchRecord?.backend?.model,
     };
 
     session.currentIndex = firstPendingIndex(session);
 
     this.mergeSessions.set(mergeSessionKey, session);
     this.scheduleSessionTimeout(mergeSessionKey, session);
+    await this.persistSession(session);
 
     mergeLog.info({ totalFiles: files.length, conflicts: conflictFiles.length, worktreePath: worktreeCwd }, "startMergeReview: entering review");
     return buildFileReview(session);
@@ -614,66 +906,94 @@ export class MergeUseCase {
    * Legacy batch conflict resolution entry.
    * The current flow is manual-first and uses per-file agent retry from reviewing state.
    */
-  async resolveConflictsViaAgent(chatId: string, branchName: string, context?: MergeRuntimeContext): Promise<void> {
+  async resolveConflictsViaAgent(chatId: string, branchName: string, prompt?: string, context?: MergeRuntimeContext): Promise<IMFileMergeReview> {
     const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    const session = this.mergeSessions.get(mergeSessionKey);
+    const session = await this.getOrLoadSession(chatId, branchName);
     const runtimeContext = session ? this.sessionRuntimeContext(session, context) : context;
     const mergeLog = this.mergeLogger(chatId, branchName, runtimeContext, session ? { worktreePath: session.worktreeCwd } : undefined);
     if (!session) {
       mergeLog.error("resolveConflictsViaAgent: no active merge session");
       throw new Error("没有正在进行的合并审阅");
     }
-    if (session.state !== "resolving") {
-      mergeLog.error({ state: session.state }, "resolveConflictsViaAgent: invalid session state");
-      throw new Error("当前合并流程不支持批量 Agent 接管；请在逐文件审阅中对单个文件发起 Agent 重试");
+    if (session.state === "recovery_required") {
+      throw new Error(`merge session requires recovery: ${session.recoveryError ?? "unknown error"}`);
+    }
+    const conflictFiles = session.files.filter((f) => f.decision === "pending" && f.status === "conflict");
+    if (conflictFiles.length === 0) {
+      mergeLog.info("resolveConflictsViaAgent: no pending conflict files");
+      return buildFileReview(session);
+    }
+    if (session.state === "resolving") {
+      mergeLog.info("resolveConflictsViaAgent: already resolving conflicts");
+      return buildFileReview(session);
     }
 
-    const conflictFiles = session.files.filter(f => f.status === "conflict");
-
     try {
-      const api = await this.ctx.resolveAgentApi(chatId, branchName);
+      session.state = "resolving";
+      const { api, threadId, resolverName } = await this.ensureMergeResolver(session);
 
-      const prompt = [
+      const fullPrompt = [
         `你正在解决 main 分支合并到分支 "${branchName}" 时产生的冲突。`,
         `工作目录: ${session.worktreeCwd}`,
         ``,
         `以下文件存在冲突，请逐一编辑并移除冲突标记 (<<<<<<< ======= >>>>>>>):`,
         ...conflictFiles.map(f => `- ${f.path}`),
         ``,
+        prompt?.trim() ? `额外要求:\n${prompt.trim()}\n` : "",
         `完成每个文件后，运行: git add <filename>`,
         `请确保合并结果保留双方的有效修改，使代码功能完整且可编译。`,
-      ].join("\n");
+      ].filter(Boolean).join("\n");
 
-      // Get thread record for threadId
-      const threadRecord = this.ctx.getThreadRecord(session.projectId, branchName);
-      const threadId = threadRecord?.threadId ?? branchName;
+      this.mergeTurnRunner.attachApi(api);
       const started = await api.turnStart({
         threadId,
-        input: [{ type: "text", text: prompt }]
+        input: [{ type: "text", text: fullPrompt }]
       });
       const turnId = started.turn.id;
-
-      // Bind pipeline so turn_complete routes to onMergeConflictResolved
-      this.ctx.bindTurnPipeline?.({
-        chatId, threadName: branchName, threadId, turnId,
+      this.mergeTurnRunner.registerTurn(turnId, {
+        chatId,
         userId: runtimeContext?.userId,
         traceId: runtimeContext?.traceId,
-        cwd: session.worktreeCwd,
-        isMergeConflictResolver: true,
+        threadName: resolverName,
+        threadId,
+        branchName,
+        kind: "batch"
       });
 
       session.turnId = turnId;
       session.threadId = threadId;
+      session.resolverName = resolverName;
       session.traceId = runtimeContext?.traceId ?? session.traceId;
       session.userId = runtimeContext?.userId ?? session.userId;
+      await this.persistSession(session);
       mergeLog.info({ conflicts: conflictFiles.length, turnId, threadId }, "resolveConflictsViaAgent: Agent turn started");
+      return buildFileReview(session);
     } catch (err) {
       mergeLog.error({ err: err instanceof Error ? err.message : err }, "resolveConflictsViaAgent: failed to start Agent turn");
-      // Fallback: transition to reviewing with unresolved conflicts
       session.state = "reviewing";
-      // Path B convergence: route review through AgentEventRouter
+      await this.persistSession(session);
       await this.ctx.routeMessage(chatId, { kind: "merge_review", review: buildFileReview(session) });
+      throw new Error("批量 Agent 冲突处理启动失败");
     }
+  }
+
+  async configureMergeResolver(
+    chatId: string,
+    branchName: string,
+    backendId: string,
+    model: string
+  ): Promise<void> {
+    const session = await this.getOrLoadSession(chatId, branchName);
+    if (!session) throw new Error("没有正在进行的合并审阅");
+    if (!isBackendId(backendId)) {
+      throw new Error(`unsupported backend: ${backendId}`);
+    }
+    if (!model.trim()) {
+      throw new Error("model is required");
+    }
+    session.resolverBackendId = backendId;
+    session.resolverModel = model.trim();
+    await this.persistSession(session);
   }
 
   /**
@@ -682,7 +1002,7 @@ export class MergeUseCase {
    */
   async onMergeResolverDone(chatId: string, branchName: string, context?: MergeRuntimeContext): Promise<void> {
     const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    const session = this.mergeSessions.get(mergeSessionKey);
+    const session = await this.getOrLoadSession(chatId, branchName);
     const runtimeContext = session ? this.sessionRuntimeContext(session, context) : context;
     const mergeLog = this.mergeLogger(chatId, branchName, runtimeContext, session ? { worktreePath: session.worktreeCwd } : undefined);
     if (!session) {
@@ -709,6 +1029,7 @@ export class MergeUseCase {
 
     session.state = "reviewing";
     session.currentIndex = firstPendingIndex(session);
+    await this.persistSession(session);
     mergeLog.info({ resolved, remaining }, "onMergeResolverDone: transitioned to reviewing");
 
     // Path B convergence: route review through AgentEventRouter
@@ -722,13 +1043,15 @@ export class MergeUseCase {
     chatId: string, branchName: string, filePath: string, feedback: string, context?: MergeRuntimeContext
   ): Promise<IMFileMergeReview> {
     const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    const session = this.mergeSessions.get(mergeSessionKey);
+    const session = await this.getOrLoadSession(chatId, branchName);
     if (!session) throw new Error("没有正在进行的合并审阅");
     const runtimeContext = this.sessionRuntimeContext(session, context);
     const mergeLog = this.mergeLogger(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd, filePath });
 
     const file = session.files.find(f => f.path === filePath);
     if (!file) throw new Error(`文件不在合并列表中: ${filePath}`);
+    if (session.state === "recovery_required") throw new Error(`merge session requires recovery: ${session.recoveryError ?? "unknown error"}`);
+    if (session.state === "resolving") throw new Error("Agent 正在批量处理冲突，请等待完成后再继续操作");
 
     file.lastFeedback = feedback;
     file.status = "agent_pending";
@@ -742,7 +1065,7 @@ export class MergeUseCase {
     const pendingReview = buildFileReview(session);
 
     try {
-      const api = await this.ctx.resolveAgentApi(chatId, branchName);
+      const { api, threadId, resolverName } = await this.ensureMergeResolver(session);
 
       const prompt = await buildSingleFileMergeAgentPrompt({
         worktreeCwd: session.worktreeCwd,
@@ -750,34 +1073,36 @@ export class MergeUseCase {
         userPrompt: feedback,
       });
 
-      const threadRecord = this.ctx.getThreadRecord(session.projectId, branchName);
-      const threadId = threadRecord?.threadId ?? branchName;
+      this.mergeTurnRunner.attachApi(api);
       const started = await api.turnStart({
         threadId,
         input: [{ type: "text", text: prompt }]
       });
       const turnId = started.turn.id;
-
-      // Bind pipeline so turn_complete routes to onMergeFileRetryDone
-      this.ctx.bindTurnPipeline?.({
-        chatId, threadName: branchName, threadId, turnId,
+      this.mergeTurnRunner.registerTurn(turnId, {
+        chatId,
         userId: runtimeContext?.userId,
         traceId: runtimeContext?.traceId,
-        cwd: session.worktreeCwd,
-        isMergeConflictResolver: true,
-        mergeRetryFilePath: filePath,
+        threadName: resolverName,
+        threadId,
+        branchName,
+        kind: "retry",
+        filePath
       });
 
       session.turnId = turnId;
       session.threadId = threadId;
+      session.resolverName = resolverName;
       session.traceId = runtimeContext.traceId ?? session.traceId;
       session.userId = runtimeContext.userId ?? session.userId;
+      await this.persistSession(session);
       mergeLog.info({ attempt: file.agentAttempts + 1, turnId, threadId }, "retryFileWithAgent: Agent turn started");
       return pendingReview;
     } catch (err) {
       file.status = "conflict";
       session.activeAgentFilePath = undefined;
       session.agentRetryBaseline = undefined;
+      await this.persistSession(session);
       await this.ctx.routeMessage(chatId, { kind: "merge_review", review: buildFileReview(session) });
       mergeLog.error({ err: err instanceof Error ? err.message : err }, "retryFileWithAgent: Agent turn failed");
       throw new Error("Agent 重试失败，请手动选择 keep_main 或 use_branch");
@@ -789,7 +1114,7 @@ export class MergeUseCase {
    */
   async onMergeFileRetryDone(chatId: string, branchName: string, filePath: string, context?: MergeRuntimeContext): Promise<void> {
     const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    const session = this.mergeSessions.get(mergeSessionKey);
+    const session = await this.getOrLoadSession(chatId, branchName);
     if (!session) return;
     const runtimeContext = this.sessionRuntimeContext(session, context);
     const mergeLog = this.mergeLogger(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd, filePath });
@@ -827,6 +1152,8 @@ export class MergeUseCase {
       session.agentRetryBaseline = undefined;
     }
 
+    await this.persistSession(session);
+
     await this.ctx.routeMessage(chatId, { kind: "merge_review", review: buildFileReview(session) });
   }
 
@@ -844,7 +1171,7 @@ export class MergeUseCase {
     chatId: string, branchName: string, filePath: string, decision: MergeFileDecision, context?: MergeRuntimeContext
   ): Promise<IMFileMergeReview | IMMergeSummary> {
     const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    const session = this.mergeSessions.get(mergeSessionKey);
+    const session = await this.getOrLoadSession(chatId, branchName);
     if (!session) throw new Error("没有正在进行的合并审阅");
     const runtimeContext = this.sessionRuntimeContext(session, context);
     const mergeLog = this.mergeLogger(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd, filePath });
@@ -852,6 +1179,8 @@ export class MergeUseCase {
     // Find and update the file
     const file = session.files.find(f => f.path === filePath);
     if (!file) throw new Error(`文件不在合并列表中: ${filePath}`);
+    if (session.state === "recovery_required") throw new Error(`merge session requires recovery: ${session.recoveryError ?? "unknown error"}`);
+    if (session.state === "resolving") throw new Error("Agent 正在批量处理冲突，请等待完成后再继续操作");
     if (file.decision !== "pending") return buildFileReview(session); // guard: already decided
     file.decision = decision;
 
@@ -862,11 +1191,13 @@ export class MergeUseCase {
     // Find next pending file
     const nextIdx = firstPendingIndex(session);
     if (nextIdx === -1) {
+      await this.persistSession(session);
       // All files decided → return summary
       return buildMergeSummary(session);
     }
 
     session.currentIndex = nextIdx;
+    await this.persistSession(session);
     return buildFileReview(session);
   }
 
@@ -877,8 +1208,10 @@ export class MergeUseCase {
     chatId: string, branchName: string, context?: MergeRuntimeContext
   ): Promise<IMMergeSummary | IMFileMergeReview> {
     const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    const session = this.mergeSessions.get(mergeSessionKey);
+    const session = await this.getOrLoadSession(chatId, branchName);
     if (!session) throw new Error("没有正在进行的合并审阅");
+    if (session.state === "recovery_required") throw new Error(`merge session requires recovery: ${session.recoveryError ?? "unknown error"}`);
+    if (session.state === "resolving") throw new Error("Agent 正在批量处理冲突，请等待完成后再继续操作");
     const runtimeContext = this.sessionRuntimeContext(session, context);
     const mergeLog = this.mergeLogger(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd });
 
@@ -894,8 +1227,10 @@ export class MergeUseCase {
     const nextIdx = firstPendingIndex(session);
     if (nextIdx >= 0) {
       session.currentIndex = nextIdx;
+      await this.persistSession(session);
       return buildFileReview(session);
     }
+    await this.persistSession(session);
     return buildMergeSummary(session);
   }
 
@@ -906,11 +1241,12 @@ export class MergeUseCase {
     chatId: string, branchName: string, context?: MergeRuntimeContext
   ): Promise<{ success: boolean; message: string }> {
     const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    const session = this.mergeSessions.get(mergeSessionKey);
+    const session = await this.getOrLoadSession(chatId, branchName);
     if (!session) throw new Error("没有正在进行的合并审阅");
     const runtimeContext = this.sessionRuntimeContext(session, context);
     const mergeLog = this.mergeLogger(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd });
     await this.assertSessionReadyToCommit(session, runtimeContext);
+    await this.assertSessionConsistentForCommit(session, runtimeContext);
 
     // Stage 3: Commit merge in worktree
     const result = await gitCommitMergeSession(session.worktreeCwd, branchName, session.baseBranch, undefined, this.buildMergeContext(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd }));
@@ -934,18 +1270,16 @@ export class MergeUseCase {
 
       // Record snapshot
       if (session.preMergeSha && this.ctx.snapshotRepo) {
-        try {
-          const mainThreadId = MAIN_THREAD_NAME;
-          const turnId = `merge-${branchName}-${Date.now()}`;
-          await pinSnapshot(session.mainCwd, session.preMergeSha, `codex-merge-${branchName}`);
-          const turnIndex = (await this.ctx.snapshotRepo.getLatestIndex(session.projectId, mainThreadId)) + 1;
-          await this.ctx.snapshotRepo.save({
-            projectId: session.projectId, chatId, threadId: mainThreadId, turnId, turnIndex,
-            cwd: session.mainCwd, gitRef: session.preMergeSha,
-            agentSummary: `合并分支: ${branchName} (per-file review)`,
-            createdAt: new Date().toISOString()
-          });
-        } catch { /* non-critical */ }
+        const mainThreadId = MAIN_THREAD_NAME;
+        const turnId = `merge-${branchName}-${Date.now()}`;
+        await pinSnapshot(session.mainCwd, session.preMergeSha, `codex-merge-${branchName}`);
+        const turnIndex = (await this.ctx.snapshotRepo.getLatestIndex(session.projectId, mainThreadId)) + 1;
+        await this.ctx.snapshotRepo.save({
+          projectId: session.projectId, chatId, threadId: mainThreadId, turnId, turnIndex,
+          cwd: session.mainCwd, gitRef: session.preMergeSha,
+          agentSummary: `合并分支: ${branchName} (per-file review)`,
+          createdAt: new Date().toISOString()
+        });
       }
 
       await removeWorktree(session.mainCwd, session.worktreeCwd, branchName);
@@ -954,6 +1288,7 @@ export class MergeUseCase {
 
     this.clearSessionTimeout(mergeSessionKey);
     this.mergeSessions.delete(mergeSessionKey);
+    await this.deletePersistedSession(session.projectId, branchName);
     return result;
   }
 
@@ -962,13 +1297,50 @@ export class MergeUseCase {
    */
   async cancelMergeReview(chatId: string, branchName: string, context?: MergeRuntimeContext): Promise<void> {
     const mergeSessionKey = this.projectThreadMergeKey(chatId, branchName);
-    const session = this.mergeSessions.get(mergeSessionKey);
+    const session = await this.getOrLoadSession(chatId, branchName);
     if (!session) return;
 
     const runtimeContext = this.sessionRuntimeContext(session, context);
-    await gitAbortMergeSession(session.worktreeCwd, this.buildMergeContext(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd }));
+    await this.restoreWorktreeToPreMergeState(session, runtimeContext);
     this.clearSessionTimeout(mergeSessionKey);
     this.mergeSessions.delete(mergeSessionKey);
+    await this.deletePersistedSession(session.projectId, branchName);
     this.mergeLogger(chatId, branchName, runtimeContext, { worktreePath: session.worktreeCwd }).info("cancelMergeReview: session cancelled");
+  }
+
+  async recoverSessions(activeProjectIds: string[]): Promise<{ recovered: number; failed: number; failures: Array<{ projectId: string; chatId: string; branchName: string; reason: string }> }> {
+    if (!this.ctx.mergeSessionRepository) {
+      return { recovered: 0, failed: 0, failures: [] };
+    }
+    const records = await this.ctx.mergeSessionRepository.listActive(activeProjectIds);
+    let recovered = 0;
+    let failed = 0;
+    const failures: Array<{ projectId: string; chatId: string; branchName: string; reason: string }> = [];
+
+    for (const record of records) {
+      try {
+        const session = await this.validateSessionForRecovery(fromPersistedMergeSessionRecord(record));
+        const mergeSessionKey = this.projectThreadMergeKey(session.chatId, session.branchName);
+        this.clearSessionTimeout(mergeSessionKey);
+        this.mergeSessions.set(mergeSessionKey, session);
+        this.scheduleSessionTimeout(mergeSessionKey, session);
+        await this.persistSession(session);
+        recovered++;
+      } catch (error) {
+        const recoveryRequired = fromPersistedMergeSessionRecord(record);
+        recoveryRequired.state = "recovery_required";
+        recoveryRequired.recoveryError = error instanceof Error ? error.message : String(error);
+        await this.ctx.mergeSessionRepository.upsert(toPersistedMergeSessionRecord(recoveryRequired));
+        failed++;
+        failures.push({
+          projectId: record.projectId,
+          chatId: record.chatId,
+          branchName: record.branchName,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { recovered, failed, failures };
   }
 }

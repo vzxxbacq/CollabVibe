@@ -1,27 +1,29 @@
-import { routeIntent } from "../../../../packages/channel-core/src/intent-router";
-import { ChannelError } from "../../../../packages/channel-core/src/errors";
-import type { ChannelAdapter } from "../../../../packages/channel-core/src/channel-adapter";
-import { authorizeIntent } from "../../../iam/src/command-guard";
-import type { EffectiveRole } from "../../../iam/src/permissions";
+import { routeIntent } from "../../../contracts/im/intent-router";
+import { ChannelError } from "../../../contracts/im/errors";
+import type { ChannelAdapter } from "../../../contracts/im/channel-adapter";
+import { authorizeIntent } from "../iam/command-guard";
+import type { EffectiveRole } from "../../iam/permissions";
+import { createLogger } from "../../../../packages/logger/src/index";
 
 import type { ConversationOrchestrator } from "../orchestrator";
 import type { HandleIntentResult } from "./result";
-import { shouldRouteToAgent } from "../../../../packages/channel-core/src/intent-router";
+import { shouldRouteToAgent } from "../../../contracts/im/intent-router";
 
 export interface InboundWebhookParams {
-  adapter: Pick<ChannelAdapter, "verifyWebhook" | "parseInboundEvent" | "sendMessage">;
+  adapter: Pick<ChannelAdapter, "verifyWebhook" | "parseInboundEvent">;
   orchestrator: Pick<ConversationOrchestrator, "handleIntent">;
   projectId: string;
   role: EffectiveRole;
   headers: Record<string, string>;
   body: string;
   payload: unknown;
-  errorMessage?: string;
 }
 
 export type InboundWebhookResult =
   | { ok: true; result: HandleIntentResult | { mode: "noop"; id: string } }
   | { ok: false; error: "signature_invalid" | "event_expired" | "event_replayed" | "handler_failed"; retriable: boolean };
+
+const log = createLogger("inbound-webhook");
 
 export async function handleInboundWebhook(
   params: InboundWebhookParams
@@ -64,11 +66,13 @@ export async function handleInboundWebhook(
       message.userId
     );
     return { ok: true, result };
-  } catch {
-    await params.adapter.sendMessage({
+  } catch (error) {
+    log.warn({
+      projectId: params.projectId,
       chatId: message.chatId,
-      text: params.errorMessage ?? "系统繁忙，请稍后重试"
-    });
+      traceId: message.traceId,
+      err: error instanceof Error ? error.message : String(error)
+    }, "handleIntent failed for inbound webhook");
     return { ok: false, error: "handler_failed", retriable: true };
   }
 }

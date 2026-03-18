@@ -1,5 +1,5 @@
-import { createLogger } from "../../../packages/channel-core/src/index";
-import type { ParsedIntent } from "../../../packages/channel-core/src/types";
+import { createLogger } from "../../../packages/logger/src/index";
+import type { ParsedIntent } from "../../contracts/im/types";
 import type { AgentApi, AgentApiPool, ApprovalAwareAgentApi, RuntimeConfig, RuntimeConfigProvider, TurnInputItem } from "../../../packages/agent-core/src/types";
 import type { BackendIdentity, BackendId } from "../../../packages/agent-core/src/backend-identity";
 import { createBackendIdentity } from "../../../packages/agent-core/src/backend-identity";
@@ -7,9 +7,9 @@ import type { BackendRegistry, BackendDefinition } from "./backend/registry";
 import type { ThreadListEntryStatus, ThreadRegistry, ThreadRecord } from "./thread-state/thread-registry";
 import type { BackendSessionResolver, AvailableBackend, ResolvedBackendSession } from "./backend/session-resolver";
 import type { DefaultBackendSessionResolver } from "./backend/session-resolver";
-import type { BackendConfigService, BackendConfigInfo, ModelStatus } from "./backend/config-service";
+import type { BackendConfigService, BackendConfigInfo } from "./backend/config-service";
 import { ApprovalWaitManager, ConversationStateMachine } from "./session/state-machine";
-import type { EventPipeline, RouteBinding } from "./event/pipeline";
+import type { EventPipeline, RouteBinding, ThreadRouteBinding } from "./event/pipeline";
 import { UserThreadBindingService } from "./thread-state/user-thread-binding-service";
 import { ThreadService } from "./thread-state/thread-service";
 import { createSnapshot, restoreSnapshot, diffSnapshot, pinSnapshot, type SnapshotDiff } from "../../../packages/git-utils/src/snapshot";
@@ -20,6 +20,7 @@ import { commitAndDiffWorktreeChanges } from "../../../packages/git-utils/src/co
 import type { TurnDiffResult } from "../../../packages/git-utils/src/commit";
 import type { SnapshotRepository, TurnSnapshotRecord } from "./thread-state/snapshot-types";
 import type { ThreadTurnStateRepository } from "./thread-state/thread-turn-state-repository";
+import type { MergeSessionRepository } from "./merge-state/merge-session-repository";
 import { InMemoryThreadTurnStateRepository } from "./thread-state/thread-turn-state-repository";
 import type { TurnRepository } from "./turn-state/turn-repository";
 import { InMemoryTurnRepository } from "./turn-state/turn-repository";
@@ -38,7 +39,8 @@ import { TurnStateManager } from "./session/turn-state-manager";
 import { MergeUseCase } from "./use-cases/merge";
 import { ApprovalUseCase } from "./use-cases/approval";
 import type { ProjectResolver } from "./project-resolver";
-import type { IMOutputMessage, IMProgressEvent } from "../../../packages/channel-core/src/im-output";
+import type { IMOutputMessage, IMProgressEvent } from "../../contracts/im/im-output";
+import type { TurnStateSnapshot } from "../../contracts/im/turn-state";
 import { ThreadRuntimeService } from "./thread-runtime-service";
 export { TurnSnapshot } from "./orchestrator-context";
 
@@ -81,6 +83,7 @@ export class ConversationOrchestrator {
   private readonly agentApiPool: AgentApiPool;
   private readonly runtimeConfigProvider: RuntimeConfigProvider;
   private readonly snapshotRepo?: SnapshotRepository;
+  private readonly mergeSessionRepository?: MergeSessionRepository;
   private readonly threadService: ThreadService;
   private readonly turnQueryService: TurnQueryService;
   private readonly turnCommandService: TurnCommandService;
@@ -133,6 +136,7 @@ export class ConversationOrchestrator {
     runtimeConfigProvider: RuntimeConfigProvider;
     userThreadBindingService: UserThreadBindingService;
     snapshotRepo?: SnapshotRepository;
+    mergeSessionRepository?: MergeSessionRepository;
     turnRepository?: TurnRepository;
     turnDetailRepository?: TurnDetailRepository;
     threadTurnStateRepository?: ThreadTurnStateRepository;
@@ -148,6 +152,7 @@ export class ConversationOrchestrator {
     this.agentApiPool = deps.agentApiPool;
     this.runtimeConfigProvider = deps.runtimeConfigProvider;
     this.snapshotRepo = deps.snapshotRepo;
+    this.mergeSessionRepository = deps.mergeSessionRepository;
     const turnRepository = deps.turnRepository ?? new InMemoryTurnRepository();
     const turnDetailRepository = deps.turnDetailRepository ?? new InMemoryTurnDetailRepository();
     const threadTurnStateRepository = deps.threadTurnStateRepository ?? new InMemoryThreadTurnStateRepository();
@@ -196,7 +201,7 @@ export class ConversationOrchestrator {
       agentApiPool: this.agentApiPool,
       runtimeConfigProvider: this.runtimeConfigProvider,
       snapshotRepo: this.snapshotRepo,
-      pluginDir: undefined, // deprecated — use pluginService directly
+      mergeSessionRepository: this.mergeSessionRepository,
       approvalTimeoutMs: this.approvalTimeoutMs,
       turnState: this.turnState,
       sessionStateMachines: this.projectThreadStateMachines,
@@ -213,13 +218,12 @@ export class ConversationOrchestrator {
       getThreadRecord: this.threadService.getRecord.bind(this.threadService),
       markThreadMerged: this.threadService.markMerged.bind(this.threadService),
       routeMessage: async (chatId: string, message: IMOutputMessage) => {
-        if (this.eventPipeline) {
-          await this.eventPipeline.routeMessage(chatId, message);
-        } else {
-          this.log.warn({ chatId }, "routeMessage: no eventPipeline configured");
+        if (!this.eventPipeline) {
+          throw new OrchestratorError(ErrorCode.AGENT_API_UNAVAILABLE, `eventPipeline is not configured for chatId=${chatId}`);
         }
+        await this.eventPipeline.routeMessage(chatId, message);
       },
-      bindTurnPipeline: this.bindTurnPipeline.bind(this),
+      registerApprovalRequest: this.registerApprovalRequest.bind(this),
     };
 
     this.mergeUseCase = new MergeUseCase(ctx);
@@ -289,7 +293,14 @@ export class ConversationOrchestrator {
   }
 
   private getChatIdForProject(projectId: string): string {
-    return this.projectResolver?.findProjectById?.(projectId)?.chatId ?? "";
+    if (!this.projectResolver) {
+      return projectId;
+    }
+    const chatId = this.projectResolver.findProjectById?.(projectId)?.chatId;
+    if (!chatId) {
+      throw new OrchestratorError(ErrorCode.PROJECT_NOT_FOUND, `chat binding not found for projectId: ${projectId}`);
+    }
+    return chatId;
   }
 
   private storageProjectId(projectId: string, chatId: string): string {
@@ -403,6 +414,50 @@ export class ConversationOrchestrator {
     );
   }
 
+  private async reinitializeEmptyCodexThread(params: {
+    projectId: string;
+    chatId: string;
+    threadName: string;
+    oldThreadId: string;
+  }): Promise<{ threadId: string }> {
+    const record = this.threadService.getRecord(params.projectId, params.threadName);
+    if (!record) {
+      throw new OrchestratorError(
+        ErrorCode.THREAD_NOT_FOUND,
+        `thread not found during empty-thread reinit: ${params.threadName}`
+      );
+    }
+    const baseConfig = await this.threadRuntimeService.buildBaseThreadConfig({
+      projectId: params.projectId,
+      threadName: params.threadName,
+      backend: record.backend,
+    });
+    const config = await this.threadRuntimeService.prepareThreadRuntimeConfig({
+      projectId: params.projectId,
+      threadName: params.threadName,
+      config: baseConfig,
+      backendId: record.backend.backendId,
+      ensureWorktree: false,
+    });
+    const api = await this.resolveAgentApi(params.chatId, params.threadName);
+    const created = await api.threadStart(config);
+    await this.threadService.reinitializeEmptyThread({
+      projectId: params.projectId,
+      chatId: params.chatId,
+      threadName: params.threadName,
+      oldThreadId: params.oldThreadId,
+      newThreadId: created.thread.id,
+      backend: record.backend,
+    });
+    this.log.warn({
+      chatId: params.chatId,
+      threadName: params.threadName,
+      oldThreadId: params.oldThreadId,
+      newThreadId: created.thread.id,
+    }, "reinitialized empty codex thread after missing rollout");
+    return { threadId: created.thread.id };
+  }
+
   /* ── public facade methods (Phase 2A — IM layer uses these instead of internal services) ── */
 
   /**
@@ -433,7 +488,7 @@ export class ConversationOrchestrator {
 
   /**
    * List backends with only available models — used by thread new form.
-   * Cross-references backendConfigService to filter by ModelStatus.available.
+   * Cross-references backendConfigService to filter by model availability.
    */
   async listAvailableBackends(): Promise<AvailableBackend[]> {
     return this.backendAdminService.listAvailableBackends();
@@ -576,17 +631,25 @@ export class ConversationOrchestrator {
     recovered: number;
     failed: number;
     failures: Array<{ projectId: string; chatId: string; threadName: string; category: SessionRecoveryFailureCategory; reason: string }>;
+    mergeFailures: Array<{ projectId: string; chatId: string; branchName: string; reason: string }>;
   }> {
     let recovered = 0, failed = 0;
     const failures: Array<{ projectId: string; chatId: string; threadName: string; category: SessionRecoveryFailureCategory; reason: string }> = [];
+    const mergeFailures: Array<{ projectId: string; chatId: string; branchName: string; reason: string }> = [];
     const projectIdSet = new Set(activeProjectIds);
     const allThreads = this.threadService.listAllRecords();
 
     for (const record of allThreads) {
-      const recordProjectId = record.projectId ?? record.chatId ?? "";
-      if (!recordProjectId || !projectIdSet.has(recordProjectId)) continue;
+      const recordProjectId = record.projectId;
+      if (!recordProjectId) {
+        const reason = `thread ${record.threadName} is missing required projectId`;
+        this.log.warn({ threadName: record.threadName, threadId: record.threadId }, reason);
+        failures.push({ projectId: "", chatId: "", threadName: record.threadName, category: "CONFIG_ERROR", reason });
+        failed++;
+        continue;
+      }
+      if (!projectIdSet.has(recordProjectId)) continue;
       const chatId = this.getChatIdForProject(recordProjectId);
-      if (!chatId) continue;
       try {
         await this.recoverThreadSession({
           projectId: recordProjectId,
@@ -603,8 +666,14 @@ export class ConversationOrchestrator {
         failed++;
       }
     }
-    this.log.info({ recovered, failed, total: allThreads.length, failures }, "session recovery complete");
-    return { recovered, failed, failures };
+    const mergeRecovery = await this.mergeUseCase.recoverSessions(activeProjectIds);
+    recovered += mergeRecovery.recovered;
+    failed += mergeRecovery.failed;
+    for (const failure of mergeRecovery.failures) {
+      mergeFailures.push(failure);
+    }
+    this.log.info({ recovered, failed, total: allThreads.length, failures, mergeFailures }, "session recovery complete");
+    return { recovered, failed, failures, mergeFailures };
   }
 
   /* ── thread use cases ── */
@@ -659,7 +728,13 @@ export class ConversationOrchestrator {
               env: s.env,
             }));
           }
-        } catch { /* non-critical — plugins may not have MCP servers */ }
+        } catch (error) {
+          this.log.warn({
+            projectId,
+            threadName,
+            err: error instanceof Error ? error.message : String(error)
+          }, "collectMcpServers failed; continuing without MCP servers");
+        }
       }
 
       const runtime = await this.threadRuntimeService.createForNewThread({
@@ -695,13 +770,21 @@ export class ConversationOrchestrator {
       });
 
       // 7. Bind UserThreadBinding (pure pointer)
-      await this.threadService.bindUserToThread(storageProjectId, userId, threadName, created.thread.id, chatId);
+      await this.threadService.bindUserToThread(storageProjectId, userId, threadName, created.thread.id);
       this.log.info({ chatId, threadName, threadId: created.thread.id, backend: backend.backendId, model: backend.model }, "thread created");
       return { threadId: created.thread.id, threadName, cwd: config.cwd ?? "", api };
     } catch (error) {
       this.threadService.release(reservation.reservationId);
       if (api) {
-        await this.agentApiPool.releaseThread(chatId, threadName).catch(() => undefined);
+        try {
+          await this.agentApiPool.releaseThread(chatId, threadName);
+        } catch (releaseError) {
+          this.log.warn({
+            chatId,
+            threadName,
+            err: releaseError instanceof Error ? releaseError.message : String(releaseError)
+          }, "releaseThread failed during createThread cleanup");
+        }
       }
       throw error;
     }
@@ -763,6 +846,15 @@ export class ConversationOrchestrator {
         await api.setMode("plan");
       }
 
+      const turnRouteBase = {
+        chatId,
+        userId,
+        traceId,
+        threadName: binding.threadName,
+        threadId: binding.threadId,
+        turnMode: options?.mode === "plan" ? "plan" : undefined
+      } satisfies ThreadRouteBinding;
+
       const makeTurnParams = (threadId: string) => {
         const input: TurnInputItem[] = [];
         // Parse $skill-name references from text
@@ -796,7 +888,14 @@ export class ConversationOrchestrator {
       let turn: { turn: { id: string } };
       let activeThreadId = binding.threadId;
       try {
-        turn = await api.turnStart(makeTurnParams(activeThreadId));
+        const started = await this.runTurnWithLifecycle(
+          { ...turnRouteBase, threadId: activeThreadId },
+          async () => {
+            const turnResult = await api.turnStart(makeTurnParams(activeThreadId));
+            return { turnId: turnResult.turn.id, value: turnResult };
+          }
+        );
+        turn = started.value;
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (errMsg.includes("thread not found") || errMsg.includes("not found")) {
@@ -809,6 +908,28 @@ export class ConversationOrchestrator {
           } catch (resumeError) {
             const resumeMsg = resumeError instanceof Error ? resumeError.message : String(resumeError);
             if (resumeMsg.includes("no rollout found for thread id")) {
+              const runtimeState = await this.threadService.getRuntimeState(projectIdResolved, binding.threadName);
+              if (!runtimeState?.lastCompletedTurnId) {
+                const record = this.threadService.getRecord(projectIdResolved, binding.threadName);
+                if (record?.backend.backendId === "codex") {
+                  const recreated = await this.reinitializeEmptyCodexThread({
+                    projectId: projectIdResolved,
+                    chatId,
+                    threadName: binding.threadName,
+                    oldThreadId: activeThreadId,
+                  });
+                  activeThreadId = recreated.threadId;
+                  const started = await this.runTurnWithLifecycle(
+                    { ...turnRouteBase, threadId: activeThreadId },
+                    async () => {
+                      const turnResult = await api.turnStart(makeTurnParams(activeThreadId));
+                      return { turnId: turnResult.turn.id, value: turnResult };
+                    }
+                  );
+                  turn = started.value;
+                  return { threadId: activeThreadId, turnId: turn.turn.id };
+                }
+              }
               throw new OrchestratorError(
                 ErrorCode.RESUME_NOT_SUPPORTED,
                 `thread ${binding.threadName} 无法恢复：当前后端会话存储中未找到 rollout；若刚调整过 CODEX_HOME/工作目录，请新建 thread`,
@@ -826,14 +947,18 @@ export class ConversationOrchestrator {
               `thread resume returned a new thread id for ${binding.threadName}; refusing to mutate ThreadRecord identity`
             );
           }
-          turn = await api.turnStart(makeTurnParams(activeThreadId));
+          const started = await this.runTurnWithLifecycle(
+            { ...turnRouteBase, threadId: activeThreadId },
+            async () => {
+              const turnResult = await api.turnStart(makeTurnParams(activeThreadId));
+              return { turnId: turnResult.turn.id, value: turnResult };
+            }
+          );
+          turn = started.value;
         } else {
           throw error;
         }
       }
-      // State remains RUNNING until pipeline.finishTurn() fires after agent completion.
-      // Do NOT call finishSessionTurn here — otherwise the RUNNING guard won't block
-      // concurrent users on the same thread.
       return { threadId: activeThreadId, turnId: turn.turn.id };
     } catch (error) {
       this.releaseFailedStartTurn(projectThreadKey);
@@ -841,27 +966,49 @@ export class ConversationOrchestrator {
     }
   }
 
-  /**
-   * Bind the event pipeline for a turn.
-   * Replaces the pattern where IM handlers called pool.getOrCreate() + pipeline.bind() directly.
-   * Returns true if bound successfully, false if the api lacks onNotification.
-   */
-  bindTurnPipeline(route: RouteBinding): boolean {
-    if (!this.eventPipeline) {
-      this.log.warn("bindTurnPipeline: no eventPipeline configured");
-      return false;
-    }
+  private getPipelineApi(route: ThreadRouteBinding): AgentApi {
     const api = this.agentApiPool.get(route.chatId, route.threadName);
     if (!api) {
-      this.log.warn({ chatId: route.chatId, threadName: route.threadName }, "bindTurnPipeline: api not found in pool");
-      return false;
+      throw new OrchestratorError(
+        ErrorCode.AGENT_API_UNAVAILABLE,
+        `pipeline agent api not found: chatId=${route.chatId} threadName=${route.threadName}`
+      );
     }
     if (!api.onNotification) {
-      this.log.warn("bindTurnPipeline: api.onNotification is missing");
-      return false;
+      throw new OrchestratorError(
+        ErrorCode.AGENT_API_UNAVAILABLE,
+        `pipeline agent api.onNotification is missing: chatId=${route.chatId} threadName=${route.threadName}`
+      );
     }
-    this.eventPipeline.bind(api as Parameters<typeof this.eventPipeline.bind>[0], route);
-    return true;
+    return api;
+  }
+
+  private prepareTurnPipeline(route: ThreadRouteBinding): void {
+    if (!this.eventPipeline) {
+      throw new OrchestratorError(ErrorCode.AGENT_API_UNAVAILABLE, "eventPipeline is not configured");
+    }
+    const api = this.getPipelineApi(route);
+    this.eventPipeline.attachSource(api as Parameters<typeof this.eventPipeline.attachSource>[0], route);
+    this.eventPipeline.prepareTurn(route);
+  }
+
+  private activateTurnPipeline(route: RouteBinding): void {
+    if (!this.eventPipeline) {
+      throw new OrchestratorError(ErrorCode.AGENT_API_UNAVAILABLE, "eventPipeline is not configured");
+    }
+    const api = this.getPipelineApi(route);
+    this.eventPipeline.attachSource(api as Parameters<typeof this.eventPipeline.attachSource>[0], route);
+    this.eventPipeline.activateTurn(route);
+  }
+
+  private async runTurnWithLifecycle<T>(
+    route: ThreadRouteBinding,
+    startTurn: () => Promise<{ turnId: string; value: T }>
+  ): Promise<{ turnId: string; value: T }> {
+    this.prepareTurnPipeline(route);
+    const started = await startTurn();
+    this.activateTurnPipeline({ ...route, turnId: started.turnId });
+    return started;
   }
 
   getConversationState(chatId: string, threadIdOrUserId?: string): string {
@@ -870,48 +1017,31 @@ export class ConversationOrchestrator {
 
   async finishTurn(chatId: string, _threadId: string, options?: { threadName?: string }): Promise<TurnDiffResult | null> {
     if (!options?.threadName) {
-      this.log.warn({ chatId, _threadId }, "finishTurn: threadName missing, falling back to threadId");
+      throw new Error(`finishTurn requires threadName: chatId=${chatId} threadId=${_threadId}`);
     }
-    const key = this.projectThreadKey(chatId, options?.threadName ?? _threadId);
+    const key = this.projectThreadKey(chatId, options.threadName);
     this.finishSessionTurn(key);
-
-    if (!options?.threadName) {
-      return null;
-    }
-
-    try {
-      const turn = await this.turnQueryService.getActiveTurnRecord(chatId, options.threadName);
-      if (!turn) return null;
-      const turnId = turn.turnId;
-      const worktreePath = turn.cwd;
-      const traceId = turn.traceId;
-      const diff = await commitAndDiffWorktreeChanges(
-        worktreePath,
-        `[codex] turn ${turnId} changes`,
-        {
-          chatId,
-          threadId: _threadId,
-          threadName: options.threadName,
-          turnId,
-          traceId
-        }
-      );
-      if (diff) {
-        this.log.info({ chatId, threadId: _threadId, threadName: options.threadName, turnId, traceId, files: diff.filesChanged.length }, "finishTurn: committed with diff");
-      }
-      await this.turnCommandService.completeActiveTurn(chatId, options.threadName, diff);
-      return diff;
-    } catch (err) {
-      this.log.warn({
+    const turn = await this.turnQueryService.getActiveTurnRecord(chatId, options.threadName);
+    if (!turn) return null;
+    const turnId = turn.turnId;
+    const worktreePath = turn.cwd;
+    const traceId = turn.traceId;
+    const diff = await commitAndDiffWorktreeChanges(
+      worktreePath,
+      `[codex] turn ${turnId} changes`,
+      {
         chatId,
         threadId: _threadId,
         threadName: options.threadName,
-        turnId: undefined,
-        traceId: undefined,
-        err: err instanceof Error ? err.message : err
-      }, "finishTurn: commitAndDiff failed (non-fatal)");
-      return null;
+        turnId,
+        traceId
+      }
+    );
+    if (diff) {
+      this.log.info({ chatId, threadId: _threadId, threadName: options.threadName, turnId, traceId, files: diff.filesChanged.length }, "finishTurn: committed with diff");
     }
+    await this.turnCommandService.completeActiveTurn(chatId, options.threadName, diff);
+    return diff;
   }
 
   /* ── thread runtime facade ── */
@@ -974,8 +1104,18 @@ export class ConversationOrchestrator {
       if (threadName) {
         const api = await this.resolveAgentApi(chatId, threadName);
         if (api.threadRollback) {
-          try { await api.threadRollback(target.threadId, numTurns); }
-          catch { contextReset = true; }
+          try {
+            await api.threadRollback(target.threadId, numTurns);
+          } catch (error) {
+            this.log.warn({
+              chatId,
+              threadName,
+              threadId: target.threadId,
+              turns: numTurns,
+              err: error instanceof Error ? error.message : String(error)
+            }, "threadRollback failed; UI should surface context reset");
+            contextReset = true;
+          }
         }
       }
     }
@@ -1000,11 +1140,29 @@ export class ConversationOrchestrator {
     modelName?: string;
     turnMode?: "plan";
   }): Promise<void> {
+    if (this.eventPipeline) {
+      const updated = await this.eventPipeline.updateTurnMetadata(chatId, turnId, patch);
+      if (updated) {
+        return;
+      }
+    }
     await this.turnCommandService.updateTurnMetadata(chatId, turnId, patch);
   }
 
   async appendTurnEvent(chatId: string, message: IMOutputMessage): Promise<void> {
     await this.turnCommandService.appendTurnEvent(chatId, message);
+  }
+
+  async syncTurnState(chatId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void> {
+    await this.turnCommandService.syncTurnState(chatId, turnId, snapshot);
+  }
+
+  async finalizeTurnState(chatId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void> {
+    await this.turnCommandService.finalizeTurnState(chatId, turnId, snapshot);
+    if (snapshot.content) {
+      const record = await this.turnQueryService.getTurnRecord(chatId, turnId);
+      await this.updateSnapshotSummary(chatId, turnId, snapshot.content.slice(0, 200), record?.filesChanged ?? []);
+    }
   }
 
   async getTurnDetail(chatId: string, turnId: string): Promise<TurnDetailAggregate> {
@@ -1056,10 +1214,6 @@ export class ConversationOrchestrator {
     this.mergeUseCase.handleMergeReject(chatId, branchName);
   }
 
-  onResolverTurnComplete(chatId: string, resolverName: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string }) {
-    return this.mergeUseCase.onResolverTurnComplete(chatId, resolverName, context);
-  }
-
   handleMergeWithConflictResolver(projectId: string, chatId: string, branchName: string, conflicts: string[], userId?: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string; resolverName?: string }) {
     return this.mergeUseCase.handleMergeWithConflictResolver(projectId, chatId, branchName, conflicts, userId, context);
   }
@@ -1078,6 +1232,10 @@ export class ConversationOrchestrator {
     return this.mergeUseCase.startMergeReview(chatId, branchName, context);
   }
 
+  getMergeReview(chatId: string, branchName: string) {
+    return this.mergeUseCase.getMergeReview(chatId, branchName);
+  }
+
   mergeDecideFile(chatId: string, branchName: string, filePath: string, decision: "accept" | "keep_main" | "use_branch" | "skip", context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string; resolverName?: string }) {
     return this.mergeUseCase.decideFile(chatId, branchName, filePath, decision, context);
   }
@@ -1094,20 +1252,16 @@ export class ConversationOrchestrator {
     return this.mergeUseCase.cancelMergeReview(chatId, branchName, context);
   }
 
-  resolveConflictsViaAgent(chatId: string, branchName: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string; resolverName?: string }) {
-    return this.mergeUseCase.resolveConflictsViaAgent(chatId, branchName, context);
+  resolveConflictsViaAgent(chatId: string, branchName: string, prompt?: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string; resolverName?: string }) {
+    return this.mergeUseCase.resolveConflictsViaAgent(chatId, branchName, prompt, context);
+  }
+
+  configureMergeResolver(chatId: string, branchName: string, backendId: string, model: string) {
+    return this.mergeUseCase.configureMergeResolver(chatId, branchName, backendId, model);
   }
 
   retryMergeFile(chatId: string, branchName: string, filePath: string, feedback: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string; resolverName?: string }) {
     return this.mergeUseCase.retryFileWithAgent(chatId, branchName, filePath, feedback, context);
-  }
-
-  onMergeResolverDone(chatId: string, branchName: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string }) {
-    return this.mergeUseCase.onMergeResolverDone(chatId, branchName, context);
-  }
-
-  onMergeFileRetryDone(chatId: string, branchName: string, filePath: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string }) {
-    return this.mergeUseCase.onMergeFileRetryDone(chatId, branchName, filePath, context);
   }
 
   /* ── intent routing ── */

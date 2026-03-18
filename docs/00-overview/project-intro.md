@@ -1,30 +1,30 @@
 ---
-title: 项目简介
+title: "Project Introduction"
 layer: overview
 source_of_truth: src/server.ts, src/config.ts, AGENTS.md
 status: active
 ---
 
-# 项目简介
+# Project Introduction
 
-`CollabVibe` 是连接即时通讯平台与 AI Agent 后端的协作式编程编排引擎，核心能力包括：
+`CollabVibe` is a collaborative programming orchestration engine that connects IM platforms with AI agent backends. Its core capabilities include:
 
-- IM 消息与交互卡片接入
-- 多 backend Agent 执行
-- 审批驱动的 Human-in-the-Loop 流程
-- 线程、快照、审计、本地状态持久化
+- IM message and interactive-card integration
+- Multi-backend agent execution
+- approval-driven human-in-the-loop workflows
+- local persistence for threads, snapshots, audit data, and state
 
-![项目简介封面占位图](/placeholders/guide-image-placeholder.svg)
+![Project introduction cover placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入一张“系统主界面 / 卡片流 / Agent 协作过程”的总览图，建议尺寸 1280x720。
+> Placeholder: add an overview image showing the main UI, card flow, or agent collaboration flow. Recommended size: 1280x720.
 
-## 设计目标
+## Design goals
 
-| 主题 | 说明 |
+| Theme | Description |
 | --- | --- |
-| Human-in-the-Loop | 高风险动作进入审批流，由用户决定是否继续 |
-| 协作开发 | 围绕 thread 持续执行、review、merge、snapshot |
-| 数据本地留存 | SQLite、日志、配置、工作区状态保存在本地 |
+| Human-in-the-Loop | High-risk actions enter an approval flow and continue only after a user decision |
+| Collaborative development | Continuous execution, review, merge, and snapshotting around a thread |
+| Local data retention | SQLite, logs, configuration, and workspace state are stored locally |
 
 ```mermaid
 flowchart LR
@@ -35,107 +35,107 @@ flowchart LR
   E --> F[IM Card / Message]
 ```
 
-## 平台支持
+## Platform support
 
-| 平台 | 状态 | 当前能力 | 代码位置 |
+| Platform | Status | Current capability | Code location |
 | --- | --- | --- | --- |
-| Feishu / Lark | 已支持 | WS 事件、消息、卡片、Bot 菜单、群/单聊入口 | `src/feishu/*`, `packages/channel-feishu/*` |
-| Slack | TODO | 已有输出适配与 socket handler，未完成应用层主链路接线 | `packages/channel-slack/*` |
-| MS Teams | TODO | 预留平台扩展方向，当前仓库未接入 | — |
+| Feishu / Lark | Supported | WebSocket events, messages, cards, bot menu, group and DM entry points | `src/feishu/*`, `packages/channel-feishu/*` |
+| Slack | TODO | Output adapter and socket handler exist, but the application-layer main path is not fully wired | `packages/channel-slack/*` |
+| MS Teams | TODO | Reserved as an extension direction; not integrated in the current repository | — |
 
-![平台能力对比占位图](/placeholders/guide-image-placeholder.svg)
+![Platform capability comparison placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入平台能力矩阵截图，建议标出 Feishu 已接入、Slack 当前处于“输出层就绪 / 应用层待接线”的状态。
+> Placeholder: add a platform capability matrix screenshot and highlight that Feishu is integrated while Slack is currently “output layer ready / application layer pending”.
 
-## Backend 支持
+## Backend support
 
-| Backend | 传输 | 接入方式 | 状态 | 说明 |
+| Backend | Transport | Access method | Status | Notes |
 | --- | --- | --- | --- | --- |
-| `codex` | `codex` | API | 已支持 | 通过 Codex protocol / stdio 接入 |
-| `opencode` | `acp` | API | 已支持 | 通过 ACP 接入 |
-| `claude-code` | `acp` | API | 已支持 | 通过 ACP 接入 |
-| `codex` | TBD | RefreshToken | 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
-| `claude-code` | TBD | RefreshToken | 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
-| `github-copilot` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
-| `gemini-cli` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
-| `trae-cli` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
+| `codex` | `codex` | API | Supported | Connected through the Codex protocol / stdio |
+| `opencode` | `acp` | API | Supported | Connected through ACP |
+| `claude-code` | `acp` | API | Supported | Connected through ACP |
+| `codex` | TBD | RefreshToken | Planned | Platform RefreshToken-based access is on the roadmap |
+| `claude-code` | TBD | RefreshToken | Planned | Platform RefreshToken-based access is on the roadmap |
+| `github-copilot` | TBD | RefreshToken | Planned | Not integrated in the current code |
+| `gemini-cli` | TBD | RefreshToken | Planned | Not integrated in the current code |
+| `trae-cli` | TBD | RefreshToken | Planned | Not integrated in the current code |
 
 ```bash
-# 本地文档预览
+# Preview the documentation locally
 npm run docs:dev
 ```
 
-## 认证与鉴权
+## Authentication and authorization
 
-### 平台接入认证
+### Platform integration credentials
 
-| 项目 | 说明 |
+| Item | Description |
 | --- | --- |
-| `FEISHU_APP_ID` | Feishu 应用 ID |
-| `FEISHU_APP_SECRET` | Feishu 应用密钥 |
-| `FEISHU_SIGNING_SECRET` | Feishu 事件签名校验密钥 |
-| `FEISHU_ENCRYPT_KEY` | Feishu 加密事件配置 |
+| `FEISHU_APP_ID` | Feishu app ID |
+| `FEISHU_APP_SECRET` | Feishu app secret |
+| `FEISHU_SIGNING_SECRET` | Feishu event-signature secret |
+| `FEISHU_ENCRYPT_KEY` | Feishu encrypted-event configuration |
 
-### 系统内权限控制
+### In-system access control
 
-| 组件 | 作用 |
+| Component | Purpose |
 | --- | --- |
-| `SYS_ADMIN_USER_IDS` | 初始系统管理员导入 |
-| `users` 表 | 系统级角色持久源 |
-| `RoleResolver` | 角色解析 |
-| `authorize` / `command-guard` | 命令级权限校验 |
+| `SYS_ADMIN_USER_IDS` | Initial import of system administrators |
+| `users` table | Persistent source of system-level roles |
+| `RoleResolver` | Resolves roles |
+| `authorize` / `command-guard` | Command-level authorization checks |
 
-![权限与角色占位图](/placeholders/guide-image-placeholder.svg)
+![Permissions and roles placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入“平台接入认证 + 系统内角色控制”的分层示意图。
+> Placeholder: add a layered diagram showing “platform integration credentials + in-system role control”.
 
-## 使用方式
+## How it is used
 
-| 步骤 | 说明 |
+| Step | Description |
 | --- | --- |
-| 1 | 用户在 IM 中发送消息或点击卡片 |
-| 2 | 平台层解析事件并进入统一 intent 分发 |
-| 3 | 共享层决定走平台命令或 agent 命令路径 |
-| 4 | orchestrator 解析 thread、backend、runtime config |
-| 5 | backend 执行并通过流式事件回推中间状态 |
-| 6 | 高风险动作进入审批流 |
-| 7 | 结果、线程状态、审计信息写入本地存储 |
+| 1 | A user sends a message in IM or clicks a card |
+| 2 | The Platform layer parses the event and forwards it into unified intent dispatch |
+| 3 | The shared layer decides whether the request takes the platform-command or agent-command path |
+| 4 | The orchestrator resolves the thread, backend, and runtime config |
+| 5 | The backend executes and pushes intermediate state back through streaming events |
+| 6 | High-risk actions enter an approval flow |
+| 7 | Results, thread state, and audit data are written to local storage |
 
-![使用流程示意图占位图](/placeholders/guide-image-placeholder.svg)
+![Usage flow placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入“用户发消息 -> Agent 执行 -> 审批 -> 回写结果”的流程图。
+> Placeholder: add a flow chart of “user sends message -> agent executes -> approval -> result written back”.
 
-![使用流程讲解视频占位图](/placeholders/guide-video-placeholder.svg)
+![Usage walkthrough video placeholder](/placeholders/guide-video-placeholder.svg)
 
-> Placeholder：在这里插入 1~3 分钟产品演示视频，建议覆盖 “发起一次任务、查看流式输出、处理审批” 三个动作。
+> Placeholder: add a 1–3 minute product demo covering “start a task, watch streaming output, handle an approval”.
 
-## 快速接入入口
+## Quick entry points
 
-如果读者是第一次接触项目，建议先看平台接入再进入架构章节：
+If this is your first time reading the project, start with the platform integrations and then move into the architecture section:
 
-- [Feishu 平台接入](/00-overview/platform-feishu)
-- [Slack 平台接入](/00-overview/platform-slack)
-- [系统总览](/00-overview/system-overview)
+- [Feishu Integration](/00-overview/platform-feishu)
+- [Slack Integration](/00-overview/platform-slack)
+- [System Overview](/00-overview/system-overview)
 
-## 本地留存的数据
+## Data retained locally
 
-| 类别 | 默认位置 |
+| Category | Default location |
 | --- | --- |
-| SQLite 主库 | `data/codex-im.db` |
-| backend 配置 | `data/config` |
-| 日志 | `data/logs` |
-| 工作区 / worktree / snapshot | 本地代码目录与派生 worktree |
+| Main SQLite database | `data/codex-im.db` |
+| Backend configuration | `data/config` |
+| Logs | `data/logs` |
+| Workspace / worktree / snapshots | local code directory and derived worktrees |
 
 ```bash
 ls -lah data
 ls -lah data/logs
 ```
 
-## 相关文档
+## Related documents
 
-- [系统总览](/00-overview/system-overview)
-- [Feishu 平台接入](/00-overview/platform-feishu)
-- [Slack 平台接入](/00-overview/platform-slack)
-- [调用链与数据流](/01-architecture/data-paths)
-- [核心类：Project / Thread / Turn](/01-architecture/core-entities)
-- [分层隔离与模块契约](/01-architecture/invariants)
+- [System Overview](/00-overview/system-overview)
+- [Feishu Integration](/00-overview/platform-feishu)
+- [Slack Integration](/00-overview/platform-slack)
+- [Execution Paths and Data Flow](/01-architecture/data-paths)
+- [Core Entities: Project / Thread / Turn](/01-architecture/core-entities)
+- [Layering and Module Contracts](/01-architecture/invariants)

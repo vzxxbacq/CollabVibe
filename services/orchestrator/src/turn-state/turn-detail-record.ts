@@ -1,4 +1,4 @@
-import type { IMProgressEvent } from "../../../../packages/channel-core/src/im-output";
+import type { IMProgressEvent } from "../../../contracts/im/im-output";
 
 export type TurnMode = "plan";
 

@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   docs-build:
+    name: Build and validate docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,13 +26,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run docs:build
+      - run: npm run docs:lint
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs/.vitepress/dist
 
   docs-deploy:
+    name: Deploy docs to GitHub Pages
     needs:
       - docs-build
     runs-on: ubuntu-latest

@@ -9,7 +9,7 @@
  * ❌ Must NOT import: src/, other services/*
  */
 import type { DatabaseSync } from "node:sqlite";
-import type { UserRecord, UserRepository } from "../../../packages/channel-core/src/user-repository";
+import type { UserRecord, UserRepository } from "../../contracts/admin/user-repository";
 
 interface UserRow {
   user_id: string;

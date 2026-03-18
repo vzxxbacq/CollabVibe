@@ -1,16 +1,16 @@
 ---
-title: 术语表
+title: "Glossary"
 layer: overview
 status: active
 ---
 
-# 术语表
+# Glossary
 
-- **Path A**：用户消息到渲染结果的命令响应路径
-- **Path B**：后端流式事件到 IM 输出的事件路径
-- **BackendIdentity**：后端身份值对象，统一表示 backendId / model / transport
-- **ThreadRecord**：chat 级线程持久状态
-- **UserThreadBinding**：user 级活动线程指针
-- **RuntimeConfig**：单次 turn 运行配置
-- **Orchestrator**：负责线程、backend、事件、turn 生命周期的协调层
-- **FeishuOutputAdapter**：Feishu 输出适配器，在两条路径中承担不同角色
+- **Path A**: the command-response path from a user message to a rendered result
+- **Path B**: the event path from backend streaming events to IM output
+- **BackendIdentity**: the backend identity value object that consistently represents `backendId` / `model` / `transport`
+- **ThreadRecord**: persistent thread state at the project scope
+- **UserThreadBinding**: the user-scoped pointer to the active thread
+- **RuntimeConfig**: per-turn runtime configuration
+- **Orchestrator**: the coordination layer responsible for threads, backends, events, and Turn lifecycle
+- **FeishuOutputAdapter**: the Feishu output adapter, which plays different roles on the two main paths

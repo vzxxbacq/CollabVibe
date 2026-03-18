@@ -1,7 +1,7 @@
 import type { AgentApi, AgentApiPool, RuntimeConfig, AgentApiFactory } from "../../../../packages/agent-core/src/types";
 import type { AgentProcessManager } from "../../../../packages/agent-core/src/agent-process-manager";
 import { MAIN_THREAD_NAME } from "../../../../packages/agent-core/src/constants";
-import { createLogger } from "../../../../packages/channel-core/src/index";
+import { createLogger } from "../../../../packages/logger/src/index";
 
 const log = createLogger("api-pool");
 

@@ -1,5 +1,7 @@
+> 当前项目处于 DEV 阶段，功能与文档都可能随时变动，且整体尚未经充分验证，请谨慎使用。
+
 <div align="center">
-  <img src="docs/public/placeholders/guide-image-placeholder.svg" alt="CollabVibe logo placeholder" width="240" />
+  <img src="docs/public/logo.png" alt="CollabVibe logo" width="240" />
   <h1>CollabVibe</h1>
   <p>连接即时通讯平台与 AI Agent 后端的协作式编程编排引擎。</p>
   <p>
@@ -92,6 +94,12 @@
 | Slack | 🚧 进行中 | 已有输出适配与 socket 基础能力 | 应用层主链路尚未接完 |
 | MS Teams | 🗺️ 规划中 | 未接入 | 预留扩展方向 |
 
+## 文档入口
+
+- 默认文档： [English](./docs/index.md)
+- 中文文档： [简体中文](./docs/zh/index.md)
+- 架构入口： [Execution Paths and Data Flow](./docs/01-architecture/data-paths.md)
+
 ## 快速开始
 
 ### 1. 安装依赖
@@ -113,7 +121,7 @@ FEISHU_APP_ID=cli_xxxxxxxxxx
 FEISHU_APP_SECRET=xxxxxxxxxxxxxxxx
 
 CODEX_APP_SERVER_CMD=codex app-server
-CODEX_WORKSPACE_CWD=/path/to/workspace
+COLLABVIBE_WORKSPACE_CWD=/path/to/workspace
 SYS_ADMIN_USER_IDS=ou_xxxxxxxxxx
 
 # 项目级 i18n 语言
@@ -126,7 +134,7 @@ APP_LOCALE=zh-CN
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
 - `CODEX_APP_SERVER_CMD`
-- `CODEX_WORKSPACE_CWD`
+- `COLLABVIBE_WORKSPACE_CWD`
 - `SYS_ADMIN_USER_IDS`
 - `APP_LOCALE`（可选：`zh-CN` 或 `en-US`，默认 `zh-CN`）
 
@@ -145,3 +153,7 @@ Placeholder：这里替换为 Quickstart 录屏封面，建议展示本地启动
 - 运行日志与本地数据目录默认不纳入 Git。
 - 如果你要修改跨层数据流，请先阅读 `AGENTS.md`。
 - 完整的产品、架构与运维文档位于 `docs/`。
+
+## 许可证
+
+Apache-2.0，详见 [LICENSE](./LICENSE)。

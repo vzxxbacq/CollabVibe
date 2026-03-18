@@ -1,23 +1,23 @@
 ---
-title: 线程与状态
+title: "Threads and State"
 layer: architecture
 source_of_truth: AGENTS.md, services/orchestrator, services/persistence
 status: active
 ---
 
-# 线程与状态
+# Threads and State
 
-## 状态对象
+## State objects
 
-| 类型 | 作用域 | 说明 |
+| Type | Scope | Description |
 | --- | --- | --- |
-| `ProjectRecord` | project 级 | 项目聚合根，持有 chat 绑定与项目配置 |
-| `ThreadRecord` | project 级 | 线程持久状态与 backend 身份 |
-| `UserThreadBinding` | user 级 / project 归属 | 当前活动线程指针 |
-| `RuntimeConfig` | per-turn | 运行期临时配置 |
-| `UserRecord` | 全局 | 用户角色与系统级身份 |
+| `ProjectRecord` | project-level | Project aggregate root, holding chat binding and project config |
+| `ThreadRecord` | project-level | Thread persistent state and backend identity |
+| `UserThreadBinding` | user-level / owned by project | Pointer to the current active thread |
+| `RuntimeConfig` | per-turn | Temporary runtime configuration |
+| `UserRecord` | global | User roles and system-level identity |
 
-## 核心流向
+## Core flow
 
 ```text
 chatId
@@ -28,10 +28,10 @@ chatId
   → RuntimeConfig.backend
 ```
 
-## 设计含义
+## Design implications
 
-- Project 是聚合根，thread / turn / snapshot / thread-turn-state / user-thread-binding 都归属 `projectId`
-- `chatId` 只是 IM 路由入口和 Project 的 1:1 绑定，不再是线程历史数据主键
-- 线程身份来自线程注册表，而不是用户绑定
-- 用户绑定只负责“在当前 project 下指向哪个线程”
-- 每次 turn 的配置组装要先解析 project，再从 thread record 回读
+- Project is the aggregate root; thread / turn / snapshot / thread-turn-state / user-thread-binding all belong to `projectId`
+- `chatId` is only the IM routing entry and the 1:1 binding field on Project; it is no longer the primary key for thread history
+- Thread identity comes from the thread registry, not from user binding
+- User binding is only responsible for “which thread this user points to in the current project”
+- Per-turn config assembly must resolve the project first, then read back from the thread record

@@ -24,37 +24,45 @@
  *
  * ## Exports
  * - `handleFeishuMessage(deps, data)` — primary export
- * - `handleInboundMessage` — deprecated alias for backward compatibility
  */
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { routeIntent } from "../../packages/channel-core/src/intent-router";
-import { createLogger } from "../../packages/channel-core/src/index";
-import type { EffectiveRole } from "../../services/iam/src/permissions";
-import { AuthorizationError } from "../../services/iam/src/authorize";
-import { OrchestratorError } from "../../services/orchestrator/src/errors";
-import { ResultMode } from "../../services/orchestrator/src/intent/result";
-import { PLUGIN_STAGING_SCOPE } from "../../services/plugin/src/index";
-import { dispatchIntent } from "../core/intent-dispatcher";
+import { routeIntent } from "../../services/contracts/im/intent-router";
+import type { PlatformMessageInput } from "../../services/contracts/im/platform-input";
+import { createLogger } from "../../packages/logger/src/index";
+import { FeishuInboundAdapter } from "./channel/index";
+import type { EffectiveRole } from "../../services/orchestrator/src/iam/index";
+import { AuthorizationError } from "../../services/orchestrator/src/iam/index";
+import { OrchestratorError } from "../../services/orchestrator/src/index";
+import { ResultMode } from "../../services/orchestrator/src/index";
+import { PLUGIN_STAGING_SCOPE } from "../../services/orchestrator/src/plugin/index";
+import { dispatchIntent } from "../../services/orchestrator/src/intent/dispatcher";
+import { PlatformInputRouter } from "../../services/orchestrator/src/commands/platform-input-router";
 import {
-  handleUserIntent as handleUserIntentCore,
-  handleAdminIntent as handleAdminIntentCore
-} from "../core/platform-commands";
-import { createProject } from "../core/platform-commands";
+  handleUserIntentOutput,
+  handleAdminIntentOutput
+} from "../../services/orchestrator/src/commands/platform-commands";
+import { createProject } from "../../services/orchestrator/src/commands/platform-commands";
 
 import type { FeishuHandlerDeps } from "./types";
 import { resolveHelpCard, resolveHelpSkillCard, sendThreadNewForm } from "./shared-handlers";
-import { listSkills, installSkill, removeSkill } from "../core/platform-commands";
+import { listSkills, installSkill, removeSkill } from "../../services/orchestrator/src/commands/platform-commands";
 import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 import { consumePendingFeishuSkillInstall, peekPendingFeishuSkillInstall, stageFeishuSkillInstall } from "./skill-file-install-state";
 import { getFeishuMessageHandlerStrings } from "./feishu-message-handler.strings";
+import { FeishuOutputGateway } from "./platform-output-dispatcher";
 
 const log = createLogger("handler");
+const feishuInboundAdapter = new FeishuInboundAdapter();
+const feishuInputRouter = new PlatformInputRouter<FeishuHandlerDeps>({
+  handleMessage: async (deps, input) => handleFeishuMessageLegacy(deps, input.raw as Record<string, unknown>)
+});
 
 async function sendProjectHelpCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<void> {
   const card = await resolveHelpCard(deps, chatId, userId);
-  await deps.feishuAdapter.sendInteractiveCard(chatId, card);
+  const dispatcher = new FeishuOutputGateway(deps);
+  await dispatcher.dispatch(chatId, { kind: "help_panel", panel: card });
 }
 
 interface InboundMessageData {
@@ -72,7 +80,8 @@ interface InboundMessageData {
 function parseText(rawContent: string): string {
   try {
     return String((JSON.parse(rawContent) as { text?: string }).text ?? "");
-  } catch {
+  } catch (error) {
+    log.debug({ err: error instanceof Error ? error.message : String(error) }, "parseText: falling back to raw content");
     return rawContent;
   }
 }
@@ -81,9 +90,33 @@ function parseFileContent(rawContent: string): { fileKey?: string; fileName?: st
   try {
     const parsed = JSON.parse(rawContent) as { file_key?: string; file_name?: string };
     return { fileKey: parsed.file_key, fileName: parsed.file_name };
-  } catch {
+  } catch (error) {
+    log.debug({ err: error instanceof Error ? error.message : String(error) }, "parseFileContent: failed to parse file payload");
     return {};
   }
+}
+
+function requireBoundProject(
+  deps: FeishuHandlerDeps,
+  chatId: string
+): NonNullable<ReturnType<FeishuHandlerDeps["findProjectByChatId"]>> {
+  const project = deps.findProjectByChatId(chatId);
+  if (!project) {
+    throw new Error(`project binding not found for chatId=${chatId}`);
+  }
+  return project;
+}
+
+function resolveRequiredRole(
+  deps: FeishuHandlerDeps,
+  userId: string,
+  projectId?: string
+): EffectiveRole {
+  const role = deps.roleResolver.resolve(userId, projectId, { autoRegister: true });
+  if (!role) {
+    throw new Error(`role resolution failed for userId=${userId} projectId=${projectId ?? "global"}`);
+  }
+  return role;
 }
 
 function isSupportedSkillArchiveName(fileName?: string): boolean {
@@ -129,6 +162,7 @@ async function handlePendingSkillFileUpload(
   }
   const tempDir = await deps.pluginService.allocateStagingDir(PLUGIN_STAGING_SCOPE.FEISHU_UPLOAD, input.userId);
   await mkdir(tempDir, { recursive: true });
+  const dispatcher = new FeishuOutputGateway(deps);
   try {
     if (!isSupportedSkillArchiveName(input.fileName)) {
       throw new Error(s.unsupportedSkillArchive(input.fileName ?? "unnamed file"));
@@ -163,11 +197,11 @@ async function handlePendingSkillFileUpload(
         void rm(staged.tempDir, { recursive: true, force: true }).catch((error) => {
           log.warn({ chatId: input.chatId, userId: input.userId, err: error instanceof Error ? error.message : String(error) }, "skill install temp dir cleanup failed");
         });
-        void notify(deps, input.chatId, s.skillFileInstallTimeoutUploaded);
+        void dispatcher.dispatch(input.chatId, { kind: "text", text: s.skillFileInstallTimeoutUploaded });
       },
     });
-    const confirmCard = deps.feishuOutputAdapter.buildAdminSkillFileConfirmCard
-      ? deps.feishuOutputAdapter.buildAdminSkillFileConfirmCard({
+    const confirmCard = deps.platformOutput.buildAdminSkillFileConfirmCard
+      ? deps.platformOutput.buildAdminSkillFileConfirmCard({
         fileName: downloaded.originalName ?? downloaded.localPath,
         pluginName: inspected.resolvedPluginName,
         manifestName: inspected.manifestName,
@@ -180,12 +214,18 @@ async function handlePendingSkillFileUpload(
       })
       : undefined;
     if (confirmCard) {
-      await deps.feishuAdapter.sendInteractiveCard(input.chatId, confirmCard);
+      await dispatcher.dispatch(input.chatId, { kind: "help_panel", panel: confirmCard });
     } else {
-      await notify(deps, input.chatId, s.skillFileInstallReceived(downloaded.originalName ?? downloaded.localPath));
+      await dispatcher.dispatch(input.chatId, {
+        kind: "text",
+        text: s.skillFileInstallReceived(downloaded.originalName ?? downloaded.localPath)
+      });
     }
   } catch (error) {
-    await notify(deps, input.chatId, s.skillFileInstallFailed(error instanceof Error ? error.message : String(error)));
+    await dispatcher.dispatch(input.chatId, {
+      kind: "text",
+      text: s.skillFileInstallFailed(error instanceof Error ? error.message : String(error))
+    });
     await rm(tempDir, { recursive: true, force: true }).catch((error) => {
       log.warn({ chatId: input.chatId, userId: input.userId, err: error instanceof Error ? error.message : String(error) }, "skill upload temp dir cleanup failed");
     });
@@ -200,27 +240,28 @@ async function handleNonCodexIntent(
   intent: { intent: string; args: Record<string, unknown> },
   role: EffectiveRole | null
 ): Promise<void> {
+  const dispatcher = new FeishuOutputGateway(deps);
   const { OP } = getFeishuNotifyCatalog(deps.config.locale);
   if (intent.intent === "PROJECT_CREATE") {
     const name = String(intent.args.name ?? "").replace(/[<>'";&|`$\\]/g, "");
     const cwd = String(intent.args.cwd ?? "").replace(/[<>'";&|`$\\]/g, "");
     const result = await createProject(deps, chatId, userId, { name, cwd });
     if (result.success && result.project) {
-      await notify(deps, chatId, OP.PROJECT_CREATED(result.project));
+      await dispatcher.dispatch(chatId, { kind: "text", text: OP.PROJECT_CREATED(result.project) });
       await sendProjectHelpCard(deps, chatId, userId);
     } else {
-      await notify(deps, chatId, `⚠️ ${result.message}`);
+      await dispatcher.dispatch(chatId, { kind: "text", text: `⚠️ ${result.message}` });
     }
     return;
   }
 
   if (intent.intent === "HELP") {
     const card = await resolveHelpCard(deps, chatId, userId);
-    await deps.feishuAdapter.sendInteractiveCard(chatId, card);
+    await dispatcher.dispatch(chatId, { kind: "help_panel", panel: card });
     return;
   }
 
-  await notify(deps, chatId, OP.FALLBACK_HELP);
+  await dispatcher.dispatch(chatId, { kind: "text", text: OP.FALLBACK_HELP });
 }
 
 async function handleSkillIntent(
@@ -230,28 +271,30 @@ async function handleSkillIntent(
   intent: { intent: string; args: Record<string, unknown> }
 ): Promise<void> {
   const s = getFeishuMessageHandlerStrings(deps.config.locale);
+  const dispatcher = new FeishuOutputGateway(deps);
   switch (intent.intent) {
     case "SKILL_LIST": {
       const card = await resolveHelpSkillCard(deps, chatId, userId);
-      await deps.feishuAdapter.sendInteractiveCard(chatId, card);
+      const dispatcher = new FeishuOutputGateway(deps);
+      await dispatcher.dispatch(chatId, { kind: "help_panel", panel: card });
       return;
     }
     case "SKILL_INSTALL": {
       const source = String(intent.args.source ?? "");
       if (!source) {
-        await notify(deps, chatId, s.skillNameRequired);
+        await dispatcher.dispatch(chatId, { kind: "text", text: s.skillNameRequired });
         return;
       }
       try {
         const project = deps.findProjectByChatId(chatId);
         const def = await deps.pluginService.install(source, project?.id, userId);
-        await deps.feishuOutputAdapter.sendSkillOperation(chatId, {
+        await deps.platformOutput.sendSkillOperation(chatId, {
           kind: "skill_operation",
           action: "installed",
           skill: { name: def.name, description: def.description, installed: true }
         });
       } catch (error) {
-        await deps.feishuOutputAdapter.sendSkillOperation(chatId, {
+        await deps.platformOutput.sendSkillOperation(chatId, {
           kind: "skill_operation",
           action: "error",
           error: error instanceof Error ? error.message : String(error)
@@ -262,7 +305,7 @@ async function handleSkillIntent(
     case "SKILL_REMOVE": {
       const name = String(intent.args.name ?? "");
       if (!name) {
-        await notify(deps, chatId, s.pluginNameRequired);
+        await dispatcher.dispatch(chatId, { kind: "text", text: s.pluginNameRequired });
         return;
       }
       try {
@@ -271,23 +314,27 @@ async function handleSkillIntent(
           ? await deps.pluginService.unbindFromProject?.(project.id, name)
           : await deps.pluginService.remove(name);
         if (removed) {
-          await deps.feishuOutputAdapter.sendSkillOperation(chatId, {
+          await deps.platformOutput.sendSkillOperation(chatId, {
             kind: "skill_operation",
             action: "removed",
             skill: { name, description: "", installed: false }
           });
         } else {
-          await notify(deps, chatId, s.pluginNotFound(name));
+          await dispatcher.dispatch(chatId, { kind: "text", text: s.pluginNotFound(name) });
         }
       } catch (error) {
-        await notify(deps, chatId, s.removeFailed(error instanceof Error ? error.message : String(error)));
+        await dispatcher.dispatch(chatId, {
+          kind: "text",
+          text: s.removeFailed(error instanceof Error ? error.message : String(error))
+        });
       }
       return;
     }
     case "SKILL_ADMIN": {
       // Admin skill panel — currently only accessible via card actions in the admin DM flow
       const card = await resolveHelpSkillCard(deps, chatId, userId);
-      await deps.feishuAdapter.sendInteractiveCard(chatId, card);
+      const dispatcher = new FeishuOutputGateway(deps);
+      await dispatcher.dispatch(chatId, { kind: "help_panel", panel: card });
       return;
     }
   }
@@ -295,10 +342,11 @@ async function handleSkillIntent(
 
 
 
-export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<string, unknown>): Promise<void> {
+async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<string, unknown>): Promise<void> {
   try {
     const s = getFeishuMessageHandlerStrings(deps.config.locale);
     const { GUARD, OP, ERR, ORCHESTRATOR_ERROR_MAP } = getFeishuNotifyCatalog(deps.config.locale);
+    const dispatcher = new FeishuOutputGateway(deps);
     const payload = data as InboundMessageData;
     const messageData = payload.message;
     const senderData = payload.sender;
@@ -353,21 +401,20 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     // @bot 空消息 → 显示 help card
     if (!text) {
       const project = deps.findProjectByChatId(chatId);
-      deps.roleResolver?.resolve?.(userId, project?.id, { autoRegister: true });
+      deps.roleResolver.resolve(userId, project?.id, { autoRegister: true });
       const card = await resolveHelpCard(deps, chatId, userId);
-      await deps.feishuAdapter.sendInteractiveCard(chatId, card);
+      const dispatcher = new FeishuOutputGateway(deps);
+      await dispatcher.dispatch(chatId, { kind: "help_panel", panel: card });
       return;
     }
 
     const project = deps.findProjectByChatId(chatId);
     if (project?.status === "disabled") {
       const s = getFeishuMessageHandlerStrings(deps.config.locale);
-      await deps.feishuAdapter.sendMessage({ chatId, text: s.projectDisabled });
+      const dispatcher = new FeishuOutputGateway(deps);
+      await dispatcher.dispatch(chatId, { kind: "text", text: s.projectDisabled });
       return;
     }
-    const projectId = project?.id ?? "default-project";
-    const role = deps.roleResolver?.resolve?.(userId, project?.id, { autoRegister: true }) ?? "developer";
-
     const message: Parameters<typeof routeIntent>[0] = {
       channel: "feishu" as const,
       eventId: `stream-${Date.now()}`,
@@ -382,19 +429,49 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     };
 
     const intent = routeIntent(message);
+    const projectRequiredIntents = new Set([
+      "TURN_START",
+      "THREAD_NEW",
+      "THREAD_LIST",
+      "THREAD_SWITCH",
+      "MODEL_LIST",
+      "SNAPSHOT_LIST",
+      "MERGE",
+      "MERGE_PREVIEW",
+      "MERGE_CONFIRM",
+      "MERGE_ABORT",
+      "MERGE_REVIEW",
+      "MERGE_DECIDE",
+      "MERGE_ACCEPT_ALL",
+      "MERGE_COMMIT",
+      "MERGE_CANCEL",
+      "MERGE_AGENT",
+      "SKILL_LIST",
+      "SKILL_INSTALL",
+      "SKILL_REMOVE",
+      "SKILL_ADMIN",
+      "USER_LIST",
+      "USER_ROLE",
+      "USER_ADD",
+      "USER_REMOVE"
+    ]);
+    const boundProject = projectRequiredIntents.has(intent.intent) ? requireBoundProject(deps, chatId) : project;
+    const role = resolveRequiredRole(deps, userId, boundProject?.id);
 
     // Audit: 记录用户命令/消息
-    deps.auditService?.append({
-      projectId,
+    if (boundProject) {
+      deps.auditService?.append({
+        projectId: boundProject.id,
       actorId: userId,
       action: `user_message:${intent.intent}`,
       result: "ok",
       traceId,
       correlationId: traceId,
       detailJson: { chatId, text: text.slice(0, 200), type: message.type }
-    }).catch((error) => {
-      requestLog.warn({ err: error instanceof Error ? error.message : String(error) }, "audit append failed");
-    });
+      }).catch((error) => {
+        requestLog.warn({ err: error instanceof Error ? error.message : String(error) }, "audit append failed");
+      });
+    }
 
     // ── Pre-flight guards: check thread state BEFORE calling handleIntent ──
     // handleIntent → ensureCanStartTurn() would throw generic errors;
@@ -410,13 +487,13 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
         preflightThreadName = selected.threadName;
 
         if (deps.orchestrator.isPendingApproval(chatId, selected.threadName)) {
-          await notify(deps, chatId, GUARD.PENDING_APPROVAL(selected.threadName));
+          await dispatcher.dispatch(chatId, { kind: "text", text: GUARD.PENDING_APPROVAL(selected.threadName) });
           return;
         }
 
         const threadState = deps.orchestrator.getConversationState(chatId, selected.threadName);
         if (threadState === "RUNNING") {
-          await notify(deps, chatId, GUARD.THREAD_RUNNING(selected.threadName));
+          await dispatcher.dispatch(chatId, { kind: "text", text: GUARD.THREAD_RUNNING(selected.threadName) });
           return;
         }
 
@@ -430,19 +507,18 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     const isPlanTurn = isPlanTurnText(text);
 
     const dispatch = await dispatchIntent(deps, {
-      projectId, chatId, userId, text,
+      projectId: boundProject?.id ?? "", chatId, userId, text,
       traceId: message.traceId ?? message.eventId,
       messageType: message.type,
       role
     }, intent);
 
     if (!dispatch.routed) {
+      const outputDispatcher = new FeishuOutputGateway(deps);
       if (["USER_LIST", "USER_ROLE", "USER_ADD", "USER_REMOVE"].includes(dispatch.intent.intent)) {
-        const result = handleUserIntentCore(deps, chatId, userId, dispatch.intent);
-        await notify(deps, chatId, result.text);
+        await outputDispatcher.dispatch(chatId, handleUserIntentOutput(deps, chatId, userId, dispatch.intent));
       } else if (["ADMIN_ADD", "ADMIN_REMOVE", "ADMIN_LIST"].includes(dispatch.intent.intent)) {
-        const result = handleAdminIntentCore(deps, dispatch.intent);
-        await notify(deps, chatId, result.text);
+        await outputDispatcher.dispatch(chatId, handleAdminIntentOutput(deps, dispatch.intent));
       } else if (["SKILL_LIST", "SKILL_INSTALL", "SKILL_REMOVE", "SKILL_ADMIN"].includes(dispatch.intent.intent)) {
         await handleSkillIntent(deps, chatId, userId, dispatch.intent);
       } else {
@@ -459,7 +535,7 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     }
 
     if (result.mode === ResultMode.THREAD_CREATED) {
-      await deps.feishuOutputAdapter.sendThreadOperation(chatId, {
+      await deps.platformOutput.sendThreadOperation(chatId, {
         kind: "thread_operation",
         action: "created",
         thread: { threadId: result.id, threadName: result.threadName }
@@ -468,7 +544,7 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     }
 
     if (result.mode === ResultMode.THREAD_JOINED || result.mode === ResultMode.THREAD_RESUMED) {
-      await deps.feishuOutputAdapter.sendThreadOperation(chatId, {
+      await deps.platformOutput.sendThreadOperation(chatId, {
         kind: "thread_operation",
         action: result.mode === ResultMode.THREAD_RESUMED ? "resumed" : "joined",
         thread: { threadId: result.id, threadName: result.threadName }
@@ -479,7 +555,7 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     if (result.mode === ResultMode.THREAD_LIST) {
       const threads = await deps.orchestrator.handleThreadListEntries(chatId);
       const activeBinding = userId ? await deps.orchestrator.getUserActiveThread(chatId, userId) : null;
-      await deps.feishuOutputAdapter.sendThreadOperation(chatId, {
+      await deps.platformOutput.sendThreadOperation(chatId, {
         kind: "thread_operation",
         action: "listed",
         threads: threads.map((thread) => ({
@@ -495,7 +571,7 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     }
 
     if (result.mode === ResultMode.MERGE_PREVIEW) {
-      await deps.feishuOutputAdapter.sendMergeOperation(chatId, {
+      await deps.platformOutput.sendMergeOperation(chatId, {
         kind: "thread_merge",
         action: "preview",
         branchName: result.id,
@@ -507,21 +583,22 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     }
 
     if (result.mode === ResultMode.MERGE_FILE_REVIEW) {
-      await deps.feishuOutputAdapter.sendFileReview(chatId, result.fileReview);
+      await deps.platformOutput.sendFileReview(chatId, result.fileReview);
       return;
     }
 
     if (result.mode === ResultMode.MERGE_RESOLVING) {
       const conflictList = result.conflicts.map(f => `• \`${f}\``).join("\n");
-      await deps.feishuAdapter.sendMessage({
-        chatId,
+      const dispatcher = new FeishuOutputGateway(deps);
+      await dispatcher.dispatch(chatId, {
+        kind: "text",
         text: s.mergeResolving(result.conflicts.length, conflictList)
       });
       return;
     }
 
     if (result.mode === ResultMode.MERGE_CONFLICT) {
-      await deps.feishuOutputAdapter.sendMergeOperation(chatId, {
+      await deps.platformOutput.sendMergeOperation(chatId, {
         kind: "thread_merge",
         action: "conflict",
         branchName: result.id,
@@ -535,31 +612,24 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
       if (result.resolverThread) {
         const resolverThreadId = result.resolverThread.threadId;
         const resolverThreadName = result.resolverThread.threadName;
-        const baseCwd = project?.cwd ?? deps.config.cwd;
+        const projectForMerge = requireBoundProject(deps, chatId);
+        if (!result.resolverThread.turnId) {
+          throw new Error(`resolver turnId missing for branch=${result.id}`);
+        }
+        const resolverTurnId = result.resolverThread.turnId;
+        const baseCwd = projectForMerge.cwd;
         const resolverCwd = `${baseCwd}--${resolverThreadName}`;
 
         // Record the turn start for snapshot/revert support
-        // The turnId for the resolver is its sessionId (returned by AcpClient.prompt)
-        await deps.orchestrator.recordTurnStart(projectId, chatId, resolverThreadName, resolverThreadId, resolverThreadId, resolverCwd, userId, traceId);
-
-        deps.orchestrator.bindTurnPipeline({
-          chatId,
-          userId,
-          traceId,
-          threadName: resolverThreadName,
-          threadId: resolverThreadId,
-          turnId: resolverThreadId,
-          cwd: resolverCwd,
-          isMergeResolver: true
-        });
-        deps.feishuOutputAdapter.setCardThreadName(chatId, resolverThreadId, resolverThreadName);
-        requestLog.info({ resolverThreadId, resolverThreadName }, "eventPipeline bound for merge-resolver");
+        await deps.orchestrator.recordTurnStart(projectForMerge.id, chatId, resolverThreadName, resolverThreadId, result.resolverThread.turnId, resolverCwd, userId, traceId);
+        deps.platformOutput.setCardThreadName(chatId, resolverTurnId, resolverThreadName);
+        requestLog.info({ resolverThreadId, resolverThreadName, resolverTurnId }, "merge-resolver turn started");
       }
       return;
     }
 
     if (result.mode === ResultMode.MERGE_SUCCESS) {
-      await deps.feishuOutputAdapter.sendMergeOperation(chatId, {
+      await deps.platformOutput.sendMergeOperation(chatId, {
         kind: "thread_merge",
         action: "success",
         branchName: result.id,
@@ -573,44 +643,34 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
       return;
     }
 
-    // Use pre-resolved thread info from preflight, or fall back to re-resolve
-    const threadId = preflightThreadId ?? result.id;
+    if (!preflightThreadId || !preflightThreadName) {
+      throw new Error(`preflight thread selection missing for turn ${result.id}`);
+    }
+    const projectForTurn = requireBoundProject(deps, chatId);
+    const threadId = preflightThreadId;
     const threadName = preflightThreadName;
 
-    if (!threadId) {
-      throw new Error(s.threadJoinHint);
-    }
-
-    const turnLog = requestLog.child({ threadId, threadName: threadName ?? threadId, turnId: result.id });
+    const turnLog = requestLog.child({ threadId, threadName, turnId: result.id });
     turnLog.info("turn started");
 
-    const baseCwd = project?.cwd ?? deps.config.cwd;
-    const turnCwd = threadName && threadName !== threadId ? `${baseCwd}--${threadName}` : baseCwd;
-    await deps.orchestrator.recordTurnStart(projectId, chatId, threadName ?? threadId, threadId, result.id, turnCwd, userId, traceId);
+    const baseCwd = projectForTurn.cwd;
+    const turnCwd = threadName !== threadId ? `${baseCwd}--${threadName}` : baseCwd;
+    await deps.orchestrator.recordTurnStart(projectForTurn.id, chatId, threadName, threadId, result.id, turnCwd, userId, traceId);
 
-    deps.orchestrator.bindTurnPipeline({
-      chatId,
-      userId,
-      threadName: threadName ?? threadId,
-      threadId,
-      turnId: result.id,
-      cwd: turnCwd,
-      turnMode: isPlanTurn ? "plan" : undefined
-    });
-    if (threadName && threadName !== threadId) {
-      deps.feishuOutputAdapter.setCardThreadName(chatId, result.id, threadName);
+    if (threadName !== threadId) {
+      deps.platformOutput.setCardThreadName(chatId, result.id, threadName);
     }
     // Set per-turn backend/model info on the card (not shared across turns)
     if (displayBackend || displayModel) {
-      deps.feishuOutputAdapter.setCardBackendInfo(
+      deps.platformOutput.setCardBackendInfo(
         chatId, result.id, displayBackend ?? "", displayModel ?? ""
       );
     }
     if (isPlanTurn) {
-      deps.feishuOutputAdapter.setCardTurnMode(chatId, result.id, "plan");
+      deps.platformOutput.setCardTurnMode(chatId, result.id, "plan");
     }
     // Set prompt summary from user's text (header shows what user asked)
-    deps.feishuOutputAdapter.setCardPromptSummary(chatId, result.id, normalizedText);
+    deps.platformOutput.setCardPromptSummary(chatId, result.id, normalizedText);
     await deps.orchestrator.updateTurnMetadata(chatId, result.id, {
       promptSummary: normalizedText,
       backendName: displayBackend ?? undefined,
@@ -627,7 +687,8 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     if (error instanceof AuthorizationError) {
       requestLog.info({ err: error.message }, "authorization denied");
       if (chatId) {
-        try { await notify(deps, chatId, GUARD.NO_PERMISSION); } catch (notifyError) {
+        const dispatcher = new FeishuOutputGateway(deps);
+        try { await dispatcher.dispatch(chatId, { kind: "text", text: GUARD.NO_PERMISSION }); } catch (notifyError) {
           requestLog.warn({ err: notifyError instanceof Error ? notifyError.message : String(notifyError) }, "authorization denied notify failed");
         }
       }
@@ -638,7 +699,8 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
       requestLog.info({ code: error.code, err: error.message }, "orchestrator error");
       if (chatId) {
         const friendly = ORCHESTRATOR_ERROR_MAP[error.code];
-        try { await notify(deps, chatId, friendly ?? ERR.generic(error.message)); } catch (notifyError) {
+        const dispatcher = new FeishuOutputGateway(deps);
+        try { await dispatcher.dispatch(chatId, { kind: "text", text: friendly ?? ERR.generic(error.message) }); } catch (notifyError) {
           requestLog.warn({ err: notifyError instanceof Error ? notifyError.message : String(notifyError), code: error.code }, "orchestrator error notify failed");
         }
       }
@@ -647,12 +709,18 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
     const errorMsg = error instanceof Error ? error.message : String(error);
     requestLog.error({ err: errorMsg }, "handler error");
     if (chatId) {
-      try { await notify(deps, chatId, ERR.generic(errorMsg)); } catch (notifyError) {
+      const dispatcher = new FeishuOutputGateway(deps);
+      try { await dispatcher.dispatch(chatId, { kind: "text", text: ERR.generic(errorMsg) }); } catch (notifyError) {
         requestLog.warn({ err: notifyError instanceof Error ? notifyError.message : String(notifyError) }, "generic error notify failed");
       }
     }
   }
 }
 
-/** @deprecated Use handleFeishuMessage */
-export const handleInboundMessage = handleFeishuMessage;
+export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<string, unknown>): Promise<void> {
+  const normalized = feishuInboundAdapter.toInput(data);
+  if (!normalized || normalized.kind !== "message") {
+    return;
+  }
+  await feishuInputRouter.route(deps, normalized as PlatformMessageInput);
+}

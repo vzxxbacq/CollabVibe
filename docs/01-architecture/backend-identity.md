@@ -1,5 +1,5 @@
 ---
-title: BackendIdentity
+title: "BackendIdentity"
 layer: architecture
 source_of_truth: packages/agent-core/src/backend-identity.ts, AGENTS.md
 status: active
@@ -7,29 +7,29 @@ status: active
 
 # BackendIdentity
 
-`BackendIdentity` 是线程后端身份的统一值对象。
+`BackendIdentity` is the unified value object for a thread's backend identity.
 
-## 规则
+## Rules
 
-- `transport` 从 `backendId` 自动派生
-- 后端信息整体传递，不拆分传播
-- `ThreadRecord.backend` 是唯一持久源
-- 创建后不可变
+- `transport` is derived automatically from `backendId`
+- backend information is passed as a single atomic object and must not be split apart
+- `ThreadRecord.backend` is the only persistent source of truth
+- the object is immutable after creation
 
-## 当前 backendId
+## Current `backendId` values
 
 - `codex`
 - `opencode`
 - `claude-code`
 
-## 正确使用方式
+## Correct usage
 
 ```ts
 const backend = createBackendIdentity("codex", "gpt-5-codex");
 ```
 
-## 禁止方式
+## Forbidden patterns
 
-- 手工传 `transport`
-- 在 `UserThreadBinding` 中存 backend 元数据
-- 在调用链中分散传 `backendName / model / transport`
+- Manually passing `transport`
+- Storing backend metadata inside `UserThreadBinding`
+- Passing `backendName / model / transport` separately across the execution path

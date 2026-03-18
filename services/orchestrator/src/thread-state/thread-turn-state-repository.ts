@@ -9,14 +9,6 @@ export interface ThreadTurnStateRepository {
 export class InMemoryThreadTurnStateRepository implements ThreadTurnStateRepository {
   private readonly states = new Map<string, ThreadTurnState>();
 
-  private projectKey(projectId?: string, chatId?: string): string {
-    const key = projectId ?? chatId;
-    if (!key) {
-      throw new Error("ThreadTurnState requires projectId or legacy chatId");
-    }
-    return key;
-  }
-
   async get(projectId: string, threadName: string): Promise<ThreadTurnState | null> {
     return this.getSync(projectId, threadName);
   }
@@ -26,7 +18,7 @@ export class InMemoryThreadTurnStateRepository implements ThreadTurnStateReposit
   }
 
   async upsert(state: ThreadTurnState): Promise<void> {
-    this.states.set(this.keyOf(this.projectKey(state.projectId, state.chatId), state.threadName), { ...state });
+    this.states.set(this.keyOf(state.projectId, state.threadName), { ...state });
   }
 
   private keyOf(projectId: string, threadName: string): string {

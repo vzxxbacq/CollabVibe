@@ -60,10 +60,29 @@ export class ThreadService {
     this.threadRegistry.remove(projectId, threadName);
   }
 
-  async bindUserToThread(projectId: string, userId: string, threadName: string, threadId: string, chatId?: string): Promise<void> {
+  async reinitializeEmptyThread(params: {
+    projectId: string;
+    threadName: string;
+    oldThreadId: string;
+    newThreadId: string;
+    chatId?: string;
+    backend: BackendIdentity;
+  }): Promise<void> {
+    if (!this.threadRegistry.replaceEmptyThreadId) {
+      throw new Error("ThreadRegistry.replaceEmptyThreadId is not available");
+    }
+    this.threadRegistry.replaceEmptyThreadId(params);
+    await this.userThreadBindingService.rebindThread(
+      params.projectId,
+      params.threadName,
+      params.oldThreadId,
+      params.newThreadId,
+    );
+  }
+
+  async bindUserToThread(projectId: string, userId: string, threadName: string, threadId: string): Promise<void> {
     await this.userThreadBindingService.bind({
       projectId,
-      chatId,
       userId,
       threadName,
       threadId,

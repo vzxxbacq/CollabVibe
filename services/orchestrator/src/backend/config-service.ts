@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { createLogger } from "../../../../packages/channel-core/src/index";
+import { createLogger } from "../../../../packages/logger/src/index";
 import type {
     UnifiedProviderInput, UnifiedProfileInput,
     StoredProvider, StoredProfile, CodexServerCmdResult
@@ -28,9 +28,6 @@ export interface ModelInfo {
     /** Backend-specific extras (reasoning_effort, personality, thinking, modalities, etc.) */
     extras: Record<string, unknown>;
 }
-
-/** @deprecated Use ModelInfo instead */
-export type ModelStatus = ModelInfo;
 
 export interface ProviderInfo {
     name: string;
@@ -145,14 +142,15 @@ async function checkCmd(cmd: string): Promise<boolean> {
     try {
         await execFileAsync("which", [cmd]);
         return true;
-    } catch {
+    } catch (error) {
+        log.debug({ cmd, err: error instanceof Error ? error.message : String(error) }, "backend command not found");
         return false;
     }
 }
 
 export class BackendConfigService {
     private readonly configDir: string;
-    private modelStatuses: Map<string, Map<string, ModelStatus[]>> = new Map();
+    private modelStatuses: Map<string, Map<string, ModelInfo[]>> = new Map();
     private dynamicProviders: Map<string, Array<{ name: string; baseUrl?: string; apiKeyEnv?: string }>> = new Map();
 
     constructor(configDir: string = "data/config") {
@@ -501,7 +499,7 @@ export class BackendConfigService {
     }
 
     /** Validate a model against a provider's API */
-    async validateModel(backendName: string, providerName: string, modelName: string): Promise<ModelStatus> {
+    async validateModel(backendName: string, providerName: string, modelName: string): Promise<ModelInfo> {
         // Find the provider to get baseUrl and apiKey
         const configs = await this.readAllConfigs();
         const backend = configs.find((c) => c.name === backendName);
@@ -520,7 +518,7 @@ export class BackendConfigService {
         const apiKey = this.resolveApiKey(provider.apiKeyEnv) ?? provider.apiKey;
 
         if (!baseUrl || !apiKey) {
-            const status: ModelStatus = {
+            const status: ModelInfo = {
                 name: modelName, modelId: actualModelId,
                 available: false,
                 checkedAt: new Date().toISOString(),
@@ -559,7 +557,7 @@ export class BackendConfigService {
                     log.info({ url: ep.url, status: response.status, modelName, backendId: backendName, providerName }, "validate endpoint probe");
 
                     if (response.ok || (response.status >= 400 && response.status < 404)) {
-                        const status: ModelStatus = {
+                        const status: ModelInfo = {
                             name: modelName, modelId: actualModelId,
                             available: response.ok,
                             checkedAt: new Date().toISOString(),
@@ -577,7 +575,7 @@ export class BackendConfigService {
             }
 
             // All endpoints failed
-            const status: ModelStatus = {
+            const status: ModelInfo = {
                 name: modelName, modelId: actualModelId,
                 available: false,
                 checkedAt: new Date().toISOString(),
@@ -587,7 +585,7 @@ export class BackendConfigService {
             this.updateModelStatus(backendName, providerName, status);
             return status;
         } catch (err) {
-            const status: ModelStatus = {
+            const status: ModelInfo = {
                 name: modelName, modelId: actualModelId,
                 available: false,
                 checkedAt: new Date().toISOString(),
@@ -600,7 +598,7 @@ export class BackendConfigService {
     }
 
     /** Validate all models for a specific provider */
-    async validateAllModels(backendName: string, providerName: string): Promise<ModelStatus[]> {
+    async validateAllModels(backendName: string, providerName: string): Promise<ModelInfo[]> {
         // Ensure model statuses are loaded from config files first
         await this.readAllConfigs();
         const models = this.getModelStatuses(backendName, providerName);
@@ -851,16 +849,16 @@ export class BackendConfigService {
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
-    private getModelStatuses(backend: string, provider: string): ModelStatus[] {
+    private getModelStatuses(backend: string, provider: string): ModelInfo[] {
         return this.modelStatuses.get(backend)?.get(provider) ?? [];
     }
 
-    private setModelStatuses(backend: string, provider: string, models: ModelStatus[]): void {
+    private setModelStatuses(backend: string, provider: string, models: ModelInfo[]): void {
         if (!this.modelStatuses.has(backend)) this.modelStatuses.set(backend, new Map());
         this.modelStatuses.get(backend)!.set(provider, models);
     }
 
-    private updateModelStatus(backend: string, provider: string, status: ModelStatus): void {
+    private updateModelStatus(backend: string, provider: string, status: ModelInfo): void {
         const models = this.getModelStatuses(backend, provider);
         const idx = models.findIndex((m) => m.name === status.name);
         if (idx >= 0) {
@@ -1166,14 +1164,34 @@ export class BackendConfigService {
     ): CodexServerCmdResult {
         const defaultResult: CodexServerCmdResult = { serverCmd: "codex app-server", env: {} };
 
-        // Find the model across providers
+        // Resolve either by profile name or by the underlying model id.
+        // Existing threads only persist BackendIdentity.model, so recovery
+        // may have to reconstruct the command from the raw model id.
         let targetModel: ModelInfo | undefined;
         let targetProvider: ProviderInfo | undefined;
+        let ambiguousModelId = false;
         for (const provider of providerMap.values()) {
-            const m = provider.models.find(m => m.name === modelName);
-            if (m) { targetModel = m; targetProvider = provider; break; }
+            const exact = provider.models.find(m => m.name === modelName);
+            if (exact) {
+                targetModel = exact;
+                targetProvider = provider;
+                break;
+            }
+            const byModelId = provider.models.filter(m => m.modelId === modelName);
+            if (byModelId.length > 0) {
+                if (!targetModel) {
+                    targetModel = byModelId[0];
+                    targetProvider = provider;
+                }
+                if (byModelId.length > 1) {
+                    ambiguousModelId = true;
+                }
+            }
         }
         if (!targetModel || !targetProvider) return defaultResult;
+        if (ambiguousModelId) {
+            log.warn({ modelName, selectedProfile: targetModel.name }, "multiple codex profiles matched model id; using first match");
+        }
 
         const flags: string[] = [];
         const pn = targetProvider.name;

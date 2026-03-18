@@ -68,4 +68,18 @@ export interface ThreadRegistry {
 
     /** Remove a thread (after merge+delete) */
     remove(projectId: string, threadName: string): void;
+
+    /**
+     * Replace the backend-assigned thread id for an empty thread before any
+     * completed turn exists. This is intentionally narrow and must not be used
+     * for threads with persisted conversation history.
+     */
+    replaceEmptyThreadId?(params: {
+        projectId: string;
+        threadName: string;
+        oldThreadId: string;
+        newThreadId: string;
+        chatId?: string;
+        backend: BackendIdentity;
+    }): void;
 }

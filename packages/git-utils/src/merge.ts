@@ -6,7 +6,7 @@ import { git } from "./git-exec";
 import { access, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { createLogger } from "../../channel-core/src/index";
+import { createLogger } from "../../logger/src/index";
 import type { MergeLogContext } from "./merge-log-schema";
 export type { MergeLogContext } from "./merge-log-schema";
 
@@ -42,22 +42,23 @@ export function unquoteGitPath(raw: string): string {
 async function ensureCleanMergeState(cwd: string, context?: MergeLogContext): Promise<void> {
     const logger = mergeLog(context);
     try {
-        const { access } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        let gitDir = cwd;
-        try {
-            const { stdout } = await git(["rev-parse", "--git-dir"], cwd, { logContext: context });
-            gitDir = stdout.trim();
-            if (!gitDir.startsWith("/")) {
-                gitDir = join(cwd, gitDir);
-            }
-        } catch { /* fallback to cwd */ }
-
+        const { stdout } = await git(["rev-parse", "--git-dir"], cwd, { logContext: context });
+        let gitDir = stdout.trim();
+        if (!gitDir) {
+            throw new Error(`git dir is empty for repo: ${cwd}`);
+        }
+        if (!gitDir.startsWith("/")) {
+            gitDir = join(cwd, gitDir);
+        }
         await access(join(gitDir, "MERGE_HEAD"));
         logger.warn({ cwd }, "dryRunMerge: stale MERGE_HEAD detected, resetting");
         await git(["reset", "--merge"], cwd, { logContext: context });
-    } catch {
-        // MERGE_HEAD doesn't exist — clean state
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("ENOENT")) {
+            return;
+        }
+        throw error;
     }
 }
 
@@ -177,13 +178,10 @@ export async function startConflictMerge(
         const msg = [errObj.stdout, errObj.stderr, errObj.message].filter(Boolean).join("\n");
         logger.info({ branchName, msg: msg.slice(0, 200) }, "startConflictMerge: merge produced conflicts");
 
-        let conflicts: string[] = [];
-        try {
-            const { stdout: diffOutput } = await git(
-                ["-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=U", "-z"], worktreePath, { logContext: context }
-            );
-            conflicts = diffOutput.split("\0").filter(Boolean);
-        } catch { /* ignore */ }
+        const { stdout: diffOutput } = await git(
+            ["-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=U", "-z"], worktreePath, { logContext: context }
+        );
+        const conflicts = diffOutput.split("\0").filter(Boolean);
         return { conflicts };
     }
 }
@@ -195,19 +193,15 @@ export async function checkConflictsResolved(
     worktreePath: string,
     context?: MergeLogContext
 ): Promise<{ resolved: boolean; remaining: string[] }> {
-    try {
-        const { stdout } = await git(
-            ["-c", "core.quotePath=false", "ls-files", "-u", "-z"], worktreePath, { logContext: context }
-        );
-        const entries = stdout.split("\0").filter(Boolean);
-        const fileNames = [...new Set(entries.map(e => {
-            const tabIdx = e.indexOf("\t");
-            return tabIdx >= 0 ? e.slice(tabIdx + 1) : e;
-        }))];
-        return { resolved: fileNames.length === 0, remaining: fileNames };
-    } catch {
-        return { resolved: true, remaining: [] };
-    }
+    const { stdout } = await git(
+        ["-c", "core.quotePath=false", "ls-files", "-u", "-z"], worktreePath, { logContext: context }
+    );
+    const entries = stdout.split("\0").filter(Boolean);
+    const fileNames = [...new Set(entries.map(e => {
+        const tabIdx = e.indexOf("\t");
+        return tabIdx >= 0 ? e.slice(tabIdx + 1) : e;
+    }))];
+    return { resolved: fileNames.length === 0, remaining: fileNames };
 }
 
 export async function readWorktreeStatusMap(
@@ -269,19 +263,17 @@ export async function mergeWorktree(
     const logger = mergeLog(context);
     const worktreePath = getWorktreePath(mainCwd, branchName);
 
-    try {
-        await access(worktreePath);
-        // Re-apply .gitignore: clear index then re-add, so previously-tracked
-        // files that now match .gitignore patterns get properly excluded.
-        await git(["rm", "-r", "--cached", ".", "--quiet"], worktreePath, { logContext: context }).catch(() => {});
-        await git(["add", "-A"], worktreePath, { logContext: context });
-        const { stdout: status } = await git(["status", "--porcelain"], worktreePath, { logContext: context });
-        if (status.trim()) {
-            await git(["commit", "-m", `[codex] thread ${branchName} changes`, "--allow-empty-message"], worktreePath, { logContext: context });
-            logger.info({ worktreePath }, "merge: auto-committed changes");
-        }
-    } catch (err) {
-        logger.warn({ err: err instanceof Error ? err.message : err }, "merge: auto-commit in worktree failed");
+    await access(worktreePath);
+    // Re-apply .gitignore: clear index then re-add, so previously-tracked
+    // files that now match .gitignore patterns get properly excluded.
+    if (await hasTrackedEntries(worktreePath, context)) {
+        await git(["rm", "-r", "--cached", ".", "--quiet"], worktreePath, { logContext: context });
+    }
+    await git(["add", "-A"], worktreePath, { logContext: context });
+    const { stdout: status } = await git(["status", "--porcelain"], worktreePath, { logContext: context });
+    if (status.trim()) {
+        await git(["commit", "-m", `[codex] thread ${branchName} changes`, "--allow-empty-message"], worktreePath, { logContext: context });
+        logger.info({ worktreePath }, "merge: auto-committed changes");
     }
 
     try {
@@ -301,21 +293,12 @@ export async function mergeWorktree(
         const msg = [errObj.stdout, errObj.stderr, errObj.message].filter(Boolean).join("\n");
 
         if (msg.includes("CONFLICT") || msg.includes("Automatic merge failed")) {
-            try {
-                const { stdout: diffOutput } = await git(
-                    ["-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=U", "-z"], mainCwd, { logContext: context }
-                );
-                const conflicts = diffOutput.split("\0").filter(Boolean);
-                await git(["reset", "--merge"], mainCwd, { logContext: context }).catch(async () => {
-                    await git(["merge", "--abort"], mainCwd, { logContext: context }).catch(() => { });
-                });
-                return { success: false, message: "合并冲突", conflicts };
-            } catch {
-                await git(["reset", "--merge"], mainCwd, { logContext: context }).catch(async () => {
-                    await git(["merge", "--abort"], mainCwd, { logContext: context }).catch(() => { });
-                });
-                return { success: false, message: msg };
-            }
+            const { stdout: diffOutput } = await git(
+                ["-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=U", "-z"], mainCwd, { logContext: context }
+            );
+            const conflicts = diffOutput.split("\0").filter(Boolean);
+            await git(["reset", "--merge"], mainCwd, { logContext: context });
+            return { success: false, message: "合并冲突", conflicts };
         }
         return { success: false, message: msg };
     }
@@ -328,7 +311,7 @@ export async function mergeWorktree(
  * mainCwd to the branch.                                                      
  */
 
-import type { MergeFileStatus, MergeFileDecision } from "../../channel-core/src/im-output";
+import type { MergeFileStatus, MergeFileDecision } from "../../../services/contracts/im/im-output";
 
 export interface MergeFileInfo {
     path: string;
@@ -349,6 +332,11 @@ async function readGitOutput(args: string[], cwd: string, context?: MergeLogCont
     } catch {
         return "";
     }
+}
+
+async function hasTrackedEntries(cwd: string, context?: MergeLogContext): Promise<boolean> {
+    const { stdout } = await git(["ls-files", "--cached", "-z"], cwd, { logContext: context });
+    return stdout.length > 0;
 }
 
 async function buildConflictPresentation(
@@ -588,19 +576,9 @@ export async function fastForwardMain(
         );
         return { success: true, message: stdout.trim() };
     } catch (err) {
-        // ff-only failed — fallback to regular merge
-        try {
-            const { stdout } = await git(
-                ["merge", branchName, "--no-edit"],
-                mainCwd,
-                { logContext: context }
-            );
-            return { success: true, message: stdout.trim() };
-        } catch (err2) {
-            const errObj = err2 as Error & { stderr?: string; stdout?: string };
-            const msg = [errObj.stdout, errObj.stderr, errObj.message].filter(Boolean).join("\n");
-            return { success: false, message: msg };
-        }
+        const errObj = err as Error & { stderr?: string; stdout?: string };
+        const msg = [errObj.stdout, errObj.stderr, errObj.message].filter(Boolean).join("\n");
+        return { success: false, message: msg };
     }
 }
 
@@ -635,14 +613,10 @@ export async function commitWorktreeChanges(cwd: string, message: string, contex
  * Useful for grabbing diff content without shell-piping.
  */
 export async function readCachedFileDiff(cwd: string, filePath: string, context?: MergeLogContext): Promise<string> {
-    try {
-        const { stdout: unresolved } = await git(["ls-files", "-u", "--", filePath], cwd, { maxBuffer: 1024 * 1024, logContext: context });
-        if (unresolved.trim()) {
-            return (await buildConflictPresentation(cwd, filePath, context)) || "(conflict diff unavailable)";
-        }
-        const { stdout } = await git(["diff", "--cached", "--", filePath], cwd, { maxBuffer: 1024 * 1024, logContext: context });
-        return stdout || "(no diff)";
-    } catch {
-        return "(diff unavailable)";
+    const { stdout: unresolved } = await git(["ls-files", "-u", "--", filePath], cwd, { maxBuffer: 1024 * 1024, logContext: context });
+    if (unresolved.trim()) {
+        return await buildConflictPresentation(cwd, filePath, context);
     }
+    const { stdout } = await git(["diff", "--cached", "--", filePath], cwd, { maxBuffer: 1024 * 1024, logContext: context });
+    return stdout;
 }

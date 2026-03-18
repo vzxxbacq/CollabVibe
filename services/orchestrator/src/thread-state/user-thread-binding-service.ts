@@ -5,19 +5,11 @@ function keyOf(projectId: string, userId: string): string {
   return `${projectId}:${userId}`;
 }
 
-function requireProjectId(projectId?: string, chatId?: string): string {
-  const key = projectId ?? chatId;
-  if (!key) {
-    throw new Error("UserThreadBinding requires projectId or legacy chatId");
-  }
-  return key;
-}
-
 class InMemoryUserThreadBindingRepository implements UserThreadBindingRepository {
   private readonly bindings = new Map<string, UserThreadBinding>();
 
   async bind(binding: UserThreadBinding): Promise<void> {
-    this.bindings.set(keyOf(requireProjectId(binding.projectId, binding.chatId), binding.userId), binding);
+    this.bindings.set(keyOf(binding.projectId, binding.userId), binding);
   }
 
   async resolve(projectId: string, userId: string): Promise<UserThreadBinding | null> {
@@ -46,5 +38,10 @@ export class UserThreadBindingService {
 
   async leave(projectId: string, userId: string): Promise<void> {
     await this.repo.leave(projectId, userId);
+  }
+
+  async rebindThread(projectId: string, threadName: string, oldThreadId: string, newThreadId: string): Promise<void> {
+    if (!this.repo.rebindThread) return;
+    await this.repo.rebindThread(projectId, threadName, oldThreadId, newThreadId);
   }
 }

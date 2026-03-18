@@ -4,7 +4,6 @@ import type { UserThreadBinding, UserThreadBindingRepository } from "../../orche
 
 interface BindingRow {
   project_id: string;
-  chat_id?: string;
   user_id: string;
   thread_name: string;
   backend_session_id: string | null;
@@ -32,26 +31,24 @@ export class SqliteUserThreadBindingRepository implements UserThreadBindingRepos
          backend_session_id = excluded.backend_session_id,
          codex_thread_id = excluded.codex_thread_id,
          updated_at = excluded.updated_at`
-    ).run(this.requireProjectId(binding.projectId), binding.chatId ?? "", binding.userId, binding.threadName, binding.threadId, binding.threadId);
+    ).run(this.requireProjectId(binding.projectId), "", binding.userId, binding.threadName, binding.threadId, binding.threadId);
   }
 
   async resolve(projectId: string, userId: string): Promise<UserThreadBinding | null> {
     const row = this.db.prepare(
-      `SELECT project_id, chat_id, user_id, thread_name, backend_session_id, codex_thread_id
+      `SELECT project_id, user_id, thread_name, backend_session_id, codex_thread_id
        FROM user_thread_bindings
        WHERE project_id = ? AND user_id = ?`
-    ).get(projectId, userId) as (BindingRow & { chat_id?: string }) | undefined;
+    ).get(projectId, userId) as BindingRow | undefined;
     if (!row) return null;
-    const threadId = row.backend_session_id ?? row.codex_thread_id;
-    if (!threadId) {
-      throw new Error(`UserThreadBinding is corrupted: missing threadId for project=${projectId} user=${userId}`);
+    if (!row.backend_session_id) {
+      throw new Error(`UserThreadBinding is corrupted: missing backend_session_id for project=${projectId} user=${userId}`);
     }
     return {
       projectId: row.project_id,
-      chatId: row.chat_id,
       userId: row.user_id,
       threadName: row.thread_name,
-      threadId
+      threadId: row.backend_session_id
     };
   }
 
@@ -59,5 +56,17 @@ export class SqliteUserThreadBindingRepository implements UserThreadBindingRepos
     this.db.prepare(
       `DELETE FROM user_thread_bindings WHERE project_id = ? AND user_id = ?`
     ).run(projectId, userId);
+  }
+
+  async rebindThread(projectId: string, threadName: string, oldThreadId: string, newThreadId: string): Promise<void> {
+    this.db.prepare(
+      `UPDATE user_thread_bindings
+          SET backend_session_id = ?,
+              codex_thread_id = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = ?
+          AND thread_name = ?
+          AND (backend_session_id = ? OR codex_thread_id = ?)`
+    ).run(newThreadId, newThreadId, projectId, threadName, oldThreadId, oldThreadId);
   }
 }

@@ -1,5 +1,5 @@
 export interface ThreadTurnState {
-  projectId?: string;
+  projectId: string;
   /** @deprecated routing alias only — persistent ownership is projectId */
   chatId?: string;
   threadName: string;

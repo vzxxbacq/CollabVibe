@@ -1,17 +1,17 @@
 ---
-title: 故障排查
+title: "Troubleshooting"
 layer: operations
 status: active
 ---
 
-# 故障排查
+# Troubleshooting
 
-| 问题 | 检查项 |
+| Problem | What to check |
 | --- | --- |
-| 服务启动失败 | `.env`、端口占用、`data/` 写权限、backend 命令可执行 |
-| Feishu 无响应 | appId / appSecret、Bot 可见性、事件订阅、WS 连接 |
-| Agent 不执行 | backend 配置、默认 model、event pipeline 注入 |
-| 线程状态异常 | `project_threads`、`user_thread_bindings`、数据库记录 |
-| 卡片审批无响应 | `card.action.trigger` 订阅、审批回调链路 |
-| 数据迁移后状态缺失 | 是否同时迁移 `.db`、`.db-wal`、`.db-shm` 与 `data/config/` |
-| 文档站点 404 | VitePress `base` 配置、GitHub Pages 路径 |
+| Service fails to start | `.env`, port conflicts, `data/` write permissions, backend command executability |
+| Feishu is unresponsive | `appId` / `appSecret`, bot visibility, event subscriptions, WebSocket connection |
+| Agent does not execute | backend configuration, default model, event pipeline injection |
+| Thread state looks wrong | `project_threads`, `user_thread_bindings`, database records |
+| Card approvals do not respond | `card.action.trigger` subscription, approval callback path |
+| State missing after data migration | Whether `.db`, `.db-wal`, `.db-shm`, and `data/config/` were migrated together |
+| Documentation site returns 404 | VitePress locale/base configuration, GitHub Pages path |

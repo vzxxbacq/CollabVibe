@@ -80,35 +80,43 @@ export class DefaultBackendSessionResolver implements BackendSessionResolver {
 
         // Priority 1: thread binding → read backend from ThreadRegistry
         if (threadName) {
-            const threadRecord = this.resolveThreadRecord?.(chatId, threadName) ?? null;
-            if (threadRecord?.backend) {
-                const backend = threadRecord.backend;
-                const backendDef = this.backendRegistry.get(backend.backendId);
-                const serverCmd = backendDef?.serverCmd ?? "codex app-server";
-                const availableModels = this.getModelsForBackend(backend.backendId);
-
-                return {
-                    backend,
-                    serverCmd,
-                    availableModels,
-                    source: "thread-binding"
-                };
+            const threadRecord = this.resolveThreadRecord?.(chatId, threadName);
+            if (!threadRecord?.backend) {
+                throw new Error(`thread backend session not found: chatId=${chatId} threadName=${threadName}`);
             }
-            throw new Error(`thread backend session not found: chatId=${chatId} threadName=${threadName}`);
+            const backend = threadRecord.backend;
+            const backendDef = this.backendRegistry.get(backend.backendId);
+            if (!backendDef) {
+                throw new Error(`backend definition missing for thread backend: backendId=${backend.backendId} chatId=${chatId} threadName=${threadName}`);
+            }
+            const availableModels = this.getModelsForBackend(backend.backendId);
+
+            return {
+                backend,
+                serverCmd: backendDef.serverCmd,
+                availableModels,
+                source: "thread-binding"
+            };
         }
 
         // Priority 2: global defaults from registry
         const defaultBackend = this.backendRegistry.getDefault();
-        const backendName = defaultBackend?.name ?? "codex";
-        const serverCmd = defaultBackend?.serverCmd ?? "codex app-server";
+        if (!defaultBackend) {
+            throw new Error("default backend is not configured");
+        }
+        const backendName = defaultBackend.name;
+        const serverCmd = defaultBackend.serverCmd;
         const availableModels = this.getModelsForBackend(backendName);
-        const model = this.getActiveModelForBackend(backendName) ?? availableModels[0] ?? "gpt-5-codex";
+        const model = this.getActiveModelForBackend(backendName);
+        if (!model) {
+            throw new Error(`default backend has no resolvable model: backend=${backendName}`);
+        }
+        if (!isBackendId(backendName)) {
+            throw new Error(`default backend is not a valid BackendId: backend=${backendName}`);
+        }
 
         return {
-            backend: createBackendIdentity(
-                isBackendId(backendName) ? backendName : "codex",
-                model
-            ),
+            backend: createBackendIdentity(backendName, model),
             serverCmd,
             availableModels,
             source: "default"
@@ -129,14 +137,23 @@ export class DefaultBackendSessionResolver implements BackendSessionResolver {
     }
 
     getDefaultBackendName(): string {
-        return this.backendRegistry.getDefaultName();
+        const name = this.backendRegistry.getDefaultName();
+        if (!name) {
+            throw new Error("default backend name is not configured");
+        }
+        return name;
     }
 
     getDefaultModel(): string {
         const defaultBackend = this.backendRegistry.getDefault();
-        return this.getActiveModelForBackend(defaultBackend?.name ?? "codex")
-            ?? defaultBackend?.models?.[0]
-            ?? "gpt-5-codex";
+        if (!defaultBackend) {
+            throw new Error("default backend is not configured");
+        }
+        const model = this.getActiveModelForBackend(defaultBackend.name);
+        if (!model) {
+            throw new Error(`default backend has no resolvable model: backend=${defaultBackend.name}`);
+        }
+        return model;
     }
 
     /** Resolve a backend definition by name (for handlers that need serverCmd/transport) */
@@ -162,6 +179,6 @@ export class DefaultBackendSessionResolver implements BackendSessionResolver {
         // Already synced into registry — return first model as best guess.
         // A more precise approach would track isCurrent during sync.
         const models = this.backendRegistry.get(backendName)?.models;
-        return models?.[0];
+        return models && models.length > 0 ? models[0] : undefined;
     }
 }

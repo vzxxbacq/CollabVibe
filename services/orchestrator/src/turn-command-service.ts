@@ -1,7 +1,9 @@
 import { createSnapshot, restoreSnapshot, pinSnapshot } from "../../../packages/git-utils/src/snapshot";
 import type { AgentApi } from "../../../packages/agent-core/src/types";
-import type { IMOutputMessage, IMProgressEvent } from "../../../packages/channel-core/src/im-output";
+import type { IMOutputMessage, IMProgressEvent } from "../../contracts/im/im-output";
+import type { TurnStateSnapshot } from "../../contracts/im/turn-state";
 import type { TurnDiffResult } from "../../../packages/git-utils/src/commit";
+import { createLogger } from "../../../packages/logger/src/index";
 import type { SnapshotRepository } from "./thread-state/snapshot-types";
 import type { TurnDetailRecord, TurnToolCall } from "./turn-state/turn-detail-record";
 import { TurnServiceBase, type TurnServiceBaseDeps } from "./turn-service-base";
@@ -17,6 +19,8 @@ export interface TurnCommandServiceDeps extends TurnServiceBaseDeps {
 }
 
 export class TurnCommandService extends TurnServiceBase {
+  private readonly log = createLogger("turn-command-service");
+
   constructor(private readonly commandDeps: TurnCommandServiceDeps) {
     super(commandDeps);
   }
@@ -68,7 +72,14 @@ export class TurnCommandService extends TurnServiceBase {
           gitRef: snapshotSha,
           createdAt,
         });
-      } catch {
+      } catch (error) {
+        this.log.warn({
+          projectId: storageProjectId,
+          threadId: input.threadId,
+          turnId: input.turnId,
+          cwd: input.cwd,
+          err: error instanceof Error ? error.message : String(error)
+        }, "snapshot persistence failed during recordTurnStart");
       }
     }
   }
@@ -145,6 +156,56 @@ export class TurnCommandService extends TurnServiceBase {
         return;
     }
     await this.deps.turnDetailRepository.update(next);
+  }
+
+  async syncTurnState(chatId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void> {
+    const projectId = this.requireProjectId(chatId);
+    const detail = await this.deps.turnDetailRepository.getByTurnId(projectId, turnId);
+    if (!detail) return;
+    await this.deps.turnDetailRepository.update({
+      ...detail,
+      promptSummary: snapshot.promptSummary ?? detail.promptSummary,
+      backendName: snapshot.backendName ?? detail.backendName,
+      modelName: snapshot.modelName ?? detail.modelName,
+      turnMode: snapshot.turnMode ?? detail.turnMode,
+      message: snapshot.content || detail.message,
+      reasoning: snapshot.reasoning || detail.reasoning,
+      planState: snapshot.plan
+        ? {
+            explanation: snapshot.planExplanation,
+            items: snapshot.plan,
+          }
+        : detail.planState,
+      tools: snapshot.tools.map((tool) => ({
+        label: tool.label,
+        tool: tool.tool,
+        callId: tool.callId,
+        status: tool.status,
+        targetFile: tool.targetFile,
+        exitCode: tool.exitCode,
+        duration: tool.duration,
+        summary: tool.summary,
+      })),
+      toolOutputs: snapshot.toolOutputs.map((output) => ({
+        callId: output.callId,
+        command: output.command,
+        output: output.output,
+      })),
+      updatedAt: this.deps.nowIso(),
+    });
+  }
+
+  async finalizeTurnState(chatId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void> {
+    await this.syncTurnState(chatId, turnId, snapshot);
+    const projectId = this.requireProjectId(chatId);
+    const turn = await this.deps.turnRepository.getByTurnId(projectId, turnId);
+    if (!turn) return;
+    await this.deps.turnRepository.update({
+      ...turn,
+      lastAgentMessage: snapshot.content || turn.lastAgentMessage,
+      tokenUsage: snapshot.tokenUsage ?? turn.tokenUsage,
+      updatedAt: this.deps.nowIso(),
+    });
   }
 
   async interruptTurn(chatId: string, userId?: string): Promise<{ interrupted: boolean }> {

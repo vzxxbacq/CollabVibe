@@ -1,32 +1,32 @@
 ---
-title: 分层与边界
+title: "Layers and Boundaries"
 layer: architecture
 source_of_truth: AGENTS.md, repository layout
 status: active
 ---
 
-# 分层与边界
+# Layers and Boundaries
 
-## packages/*
+## `packages/*`
 
-定位：最底层能力包。
+Positioning: the lowest-level capability packages.
 
-典型内容：
+Typical contents:
 
-- 协议客户端
-- 通道抽象
-- 类型与工具
+- protocol clients
+- channel abstractions
+- types and utilities
 
-约束：
+Constraints:
 
-- 不 import `services/*`
-- 不 import `src/*`
+- must not import `services/*`
+- must not import `src/*`
 
-## services/*
+## `services/*`
 
-定位：共享业务服务。
+Positioning: shared business services.
 
-典型内容：
+Typical contents:
 
 - orchestrator
 - persistence
@@ -34,36 +34,36 @@ status: active
 - approval
 - audit
 
-约束：
+Constraints:
 
-- 可 import `packages/*`
-- 不 import `src/*`
+- may import `packages/*`
+- must not import `src/*`
 
-## src/core
+## `src/core`
 
-定位：平台无关的应用层入口逻辑。
+Positioning: platform-agnostic application entry logic.
 
-典型内容：
+Typical contents:
 
 - intent-dispatcher
 - platform-commands
 
-## src/feishu
+## `src/feishu`
 
-定位：Feishu 平台专属接入层。
+Positioning: Feishu-specific integration layer.
 
-典型内容：
+Typical contents:
 
-- 消息处理
-- 卡片回调
-- WS app 装配
+- message handling
+- card callbacks
+- WebSocket app wiring
 
-## src/server.ts
+## `src/server.ts`
 
-定位：composition root。
+Positioning: composition root.
 
-职责：
+Responsibilities:
 
-- 初始化数据库、日志、adapter、service
-- 连接 orchestrator 与平台 handler
-- 绑定 Path A / Path B 的装配关系
+- initialize the database, logs, adapters, and services
+- connect the orchestrator with platform handlers
+- wire Path A and Path B together

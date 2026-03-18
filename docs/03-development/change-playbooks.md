@@ -1,25 +1,25 @@
 ---
-title: 常见改动入口
+title: "Change Playbooks"
 layer: development
 status: active
 ---
 
-# 常见改动入口
+# Change Playbooks
 
-| 改动目标 | 先看哪里 |
+| Change target | Look here first |
 | --- | --- |
-| 平台消息接入 | `src/feishu/*`, `packages/channel-feishu/*` |
-| 线程 / backend / turn | `services/orchestrator/*`, `packages/agent-core/*` |
-| 流式事件 | `services/orchestrator/src/event/*`, `packages/codex-client/*`, `packages/acp-client/*` |
-| 审批流程 | `services/approval/*`, `services/orchestrator/src/use-cases/approval`, `src/feishu/feishu-card-handler.ts` |
-| 权限控制 | `services/iam/*`, `src/core/intent-dispatcher.ts` |
-| 本地持久化 | `services/persistence/*`, `services/audit/*` |
-| 平台输出渲染 | `packages/channel-feishu/*`, `packages/channel-slack/*` |
+| Platform message integration | `src/feishu/*`, `packages/channel-feishu/*` |
+| Thread / backend / turn | `services/orchestrator/*`, `packages/agent-core/*` |
+| Streaming events | `services/orchestrator/src/event/*`, `packages/codex-client/*`, `packages/acp-client/*` |
+| Approval flow | `services/approval/*`, `services/orchestrator/src/use-cases/approval`, `src/feishu/feishu-card-handler.ts` |
+| Access control | `services/iam/*`, `src/core/intent-dispatcher.ts` |
+| Local persistence | `services/persistence/*`, `services/audit/*` |
+| Platform output rendering | `packages/channel-feishu/*`, `packages/channel-slack/*` |
 
-## 改动前检查
+## Pre-change checklist
 
-| 检查项 | 说明 |
+| Check | Description |
 | --- | --- |
-| 是否仍沿 Path A / Path B | 不新增旁路 |
-| 是否破坏分层依赖 | 不跨层反向依赖 |
-| 是否引入第二个状态事实源 | thread / backend / user 仍保持唯一持久源 |
+| Does the change still follow Path A / Path B? | Do not add bypasses |
+| Does it preserve layering dependencies? | Do not add reverse cross-layer dependencies |
+| Does it introduce a second source of truth for state? | Thread / backend / user must still keep a single persistent source |

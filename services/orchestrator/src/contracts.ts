@@ -19,4 +19,9 @@ export type { TurnListItem, TurnDetailAggregate, RecordTurnStartInput, TurnSumma
 export type { InboundWebhookParams, InboundWebhookResult } from "./intent/webhook";
 export type { ConversationState, ApprovalWaitConfig } from "./session/state-machine";
 export type { BackendDefinition } from "./backend/registry";
-export type { PluginDefinition } from "../../../services/plugin/src/plugin-service";
+export type { PluginDefinition } from "./plugin/plugin-service";
+export type {
+  MergeSessionRepository,
+  PersistedMergeSessionFile,
+  PersistedMergeSessionRecord,
+} from "./merge-state/merge-session-repository";

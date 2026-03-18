@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { AdminPersistedState, AdminStateStore } from "../../admin-api/src/contracts";
+import type { AdminPersistedState, AdminStateStore } from "../../contracts/admin/contracts";
 
 interface AdminStateRow {
   state_json: string;
@@ -48,8 +48,8 @@ export class SqliteAdminStateStore implements AdminStateStore {
     try {
       const parsed = JSON.parse(row.state_json) as AdminPersistedState;
       return clone(normalizeState(parsed));
-    } catch {
-      return clone(EMPTY_STATE);
+    } catch (error) {
+      throw new Error(`admin_state row is corrupted: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

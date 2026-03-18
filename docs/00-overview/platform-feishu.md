@@ -1,22 +1,22 @@
 ---
-title: Feishu 平台接入
+title: "Feishu Integration"
 layer: overview
 status: active
 source_of_truth: src/feishu/*, packages/channel-feishu/*, scripts/export-feishu-scopes.ts
 ---
 
-# Feishu 平台接入
+# Feishu Integration
 
-当前系统的主平台是 Feishu / Lark，接入方式为 WebSocket Stream 模式。
+Feishu / Lark is currently the primary platform for the system, and it is integrated via WebSocket Stream mode.
 
-## 接入前先理解
+## Understand the integration first
 
-| 项目 | 当前实现 |
+| Item | Current implementation |
 | --- | --- |
-| 事件接收 | WebSocket Stream |
-| 主要入口 | `src/feishu/feishu-ws-app.ts` |
-| Bot 交互 | 消息、卡片、Bot 菜单 |
-| 平台输出 | `packages/channel-feishu/*` |
+| Event intake | WebSocket Stream |
+| Main entry point | `src/feishu/feishu-ws-app.ts` |
+| Bot interactions | messages, cards, bot menu |
+| Platform output | `packages/channel-feishu/*` |
 
 ```mermaid
 flowchart LR
@@ -26,46 +26,46 @@ flowchart LR
   D --> E[FeishuOutputAdapter]
 ```
 
-![Feishu 接入概览占位图](/placeholders/guide-image-placeholder.svg)
+![Feishu integration overview placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 Feishu 开放平台的应用首页截图，标出 App ID、权限配置、事件订阅入口。
+> Placeholder: add a screenshot of the Feishu Open Platform app home page and mark App ID, permission settings, and event subscription entry points.
 
-## 创建应用
+## Create the app
 
-推荐步骤：
+Recommended sequence:
 
-| 步骤 | 操作 |
+| Step | Action |
 | --- | --- |
-| 1 | 在 Feishu 开放平台创建企业自建应用 |
-| 2 | 启用机器人能力 |
-| 3 | 获取 `App ID` 与 `App Secret` |
-| 4 | 开通所需权限 |
-| 5 | 配置事件订阅 |
-| 6 | 配置应用可见范围并发布 |
-| 7 | 将应用加入群聊或开放单聊使用 |
+| 1 | Create an internal enterprise app in the Feishu Open Platform |
+| 2 | Enable bot capability |
+| 3 | Get the `App ID` and `App Secret` |
+| 4 | Grant the required permissions |
+| 5 | Configure event subscriptions |
+| 6 | Configure app visibility and publish |
+| 7 | Add the app to a group chat or enable 1:1 chat usage |
 
-![Feishu 创建应用步骤占位图](/placeholders/guide-image-placeholder.svg)
+![Feishu app creation steps placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入“创建企业自建应用”的流程截图，建议逐步标记按钮位置。
+> Placeholder: add a step-by-step screenshot flow for “Create enterprise internal app” and mark the relevant buttons.
 
 ```mermaid
 flowchart LR
-  A[创建应用] --> B[开启机器人]
-  B --> C[配置权限]
-  C --> D[配置事件]
-  D --> E[发布]
-  E --> F[加入群聊]
+  A[Create App] --> B[Enable Bot]
+  B --> C[Configure Permissions]
+  C --> D[Configure Events]
+  D --> E[Publish]
+  E --> F[Add to Group Chat]
 ```
 
-## 环境变量
+## Environment variables
 
-| 变量 | 说明 |
+| Variable | Description |
 | --- | --- |
-| `FEISHU_APP_ID` | 应用 ID |
-| `FEISHU_APP_SECRET` | 应用密钥 |
-| `FEISHU_SIGNING_SECRET` | 事件签名密钥；Stream 模式通常可不填 |
-| `FEISHU_ENCRYPT_KEY` | 加密事件支持 |
-| `FEISHU_API_BASE_URL` | 默认 `https://open.feishu.cn/open-apis` |
+| `FEISHU_APP_ID` | App ID |
+| `FEISHU_APP_SECRET` | App secret |
+| `FEISHU_SIGNING_SECRET` | Event signing secret; usually optional in Stream mode |
+| `FEISHU_ENCRYPT_KEY` | Encryption support for encrypted events |
+| `FEISHU_API_BASE_URL` | Defaults to `https://open.feishu.cn/open-apis` |
 
 ```dotenv
 FEISHU_APP_ID=cli_xxx
@@ -75,70 +75,70 @@ FEISHU_ENCRYPT_KEY=
 FEISHU_API_BASE_URL=https://open.feishu.cn/open-apis
 ```
 
-## 权限
+## Permissions
 
-以下权限来自 `scripts/export-feishu-scopes.ts` 与当前代码调用。
+The following permissions come from `scripts/export-feishu-scopes.ts` and the current code paths.
 
-| 权限 | 用途 |
+| Permission | Purpose |
 | --- | --- |
-| `im:message` | 获取与发送单聊、群组消息 |
-| `im:message:send_as_bot` | 以应用身份发送消息 |
-| `im:message:patch` | 更新消息 / 互动卡片 |
-| `cardkit:card:read` | 读取卡片信息 |
-| `cardkit:card:write` | 创建与更新卡片 |
-| `im:message:pin` | Pin 消息 |
-| `contact:user.base:readonly` | 读取用户基础信息 |
-| `im:chat.members:read` | 读取群成员列表 |
+| `im:message` | Read and send direct and group messages |
+| `im:message:send_as_bot` | Send messages as the app/bot |
+| `im:message:patch` | Update messages / interactive cards |
+| `cardkit:card:read` | Read card data |
+| `cardkit:card:write` | Create and update cards |
+| `im:message:pin` | Pin messages |
+| `contact:user.base:readonly` | Read basic user info |
+| `im:chat.members:read` | Read group member lists |
 
-![Feishu 权限配置占位图](/placeholders/guide-image-placeholder.svg)
+![Feishu permission configuration placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入权限申请页截图，建议圈出最小必需权限。
+> Placeholder: add a screenshot of the permissions page and highlight the minimum required scopes.
 
-## 事件订阅
+## Event subscriptions
 
-当前代码中注册了以下事件：
+The current code registers the following events:
 
-| 事件 | 用途 |
+| Event | Purpose |
 | --- | --- |
-| `im.message.receive_v1` | 接收用户消息 |
-| `card.action.trigger` | 接收卡片回调 |
-| `im.chat.member.bot.added_v1` | Bot 被加入群聊 |
-| `im.chat.member.bot.deleted_v1` | Bot 被移出群聊 |
-| `im.chat.member.user.added_v1` | 新成员加入群聊 |
-| `application.bot.menu_v6` | Bot 菜单事件 |
+| `im.message.receive_v1` | Receive user messages |
+| `card.action.trigger` | Receive card callbacks |
+| `im.chat.member.bot.added_v1` | Bot added to group chat |
+| `im.chat.member.bot.deleted_v1` | Bot removed from group chat |
+| `im.chat.member.user.added_v1` | New member joined the group chat |
+| `application.bot.menu_v6` | Bot menu event |
 
-![Feishu 事件订阅占位图](/placeholders/guide-image-placeholder.svg)
+![Feishu event subscription placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入事件订阅配置截图，建议显示订阅事件列表和回调模式选择。
+> Placeholder: add a screenshot of the event subscription page showing the event list and callback mode selection.
 
-## 可见性与发布
+## Visibility and release
 
-| 配置项 | 建议 |
+| Setting | Recommendation |
 | --- | --- |
-| 应用可见范围 | 覆盖需要使用机器人的用户与群 |
-| 版本发布 | 权限与事件配置完成后发布应用版本 |
-| 群聊能力 | 将 Bot 添加到目标群聊 |
-| 单聊能力 | 确认应用允许用户单聊机器人 |
+| App visibility | Include the users and groups that need the bot |
+| Version publishing | Publish the app version after permissions and events are ready |
+| Group capability | Add the bot to the target group chats |
+| Direct-message capability | Confirm the app allows 1:1 chat with the bot |
 
-![Feishu 发布配置占位图](/placeholders/guide-image-placeholder.svg)
+![Feishu publishing configuration placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入应用发布页和可见范围设置页截图。
+> Placeholder: add screenshots of the app release page and visibility settings page.
 
-## 最小验证清单
+## Minimal validation checklist
 
-| 检查项 | 预期 |
+| Check | Expected result |
 | --- | --- |
-| Bot 可加入群聊 | 群中能看到 Bot |
-| 用户发消息可触发事件 | `im.message.receive_v1` 生效 |
-| 卡片按钮可回调 | `card.action.trigger` 生效 |
-| Bot 菜单可触发 | `application.bot.menu_v6` 生效 |
-| 机器人能发消息/更新卡片 | 输出链路正常 |
+| Bot can join a group chat | The bot is visible in the group |
+| User messages trigger events | `im.message.receive_v1` works |
+| Card buttons call back successfully | `card.action.trigger` works |
+| Bot menu triggers work | `application.bot.menu_v6` works |
+| Bot can send messages / update cards | Output path is functioning |
 
 ```bash
 npm run start:dev
 tail -f data/logs/app.log
 ```
 
-![Feishu 验证视频占位图](/placeholders/guide-video-placeholder.svg)
+![Feishu validation video placeholder](/placeholders/guide-video-placeholder.svg)
 
-> Placeholder：在这里插入一次完整 Feishu 接入验证录屏，建议包括“加群 -> 发消息 -> 点击卡片”。
+> Placeholder: add a complete Feishu validation recording, ideally covering “join group -> send message -> click card button”.

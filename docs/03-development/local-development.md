@@ -1,31 +1,31 @@
 ---
-title: 本地开发
+title: "Local Development"
 layer: development
 status: active
 ---
 
-# 本地开发
+# Local Development
 
-## 启动步骤
+## Startup steps
 
-| 步骤 | 命令 / 说明 |
+| Step | Command / description |
 | --- | --- |
-| 安装依赖 | `npm install` |
-| 配置环境变量 | 参考 [QUICKSTART](/00-overview/quickstart) |
-| 启动服务 | `npm run start:dev` |
-| 预览文档 | `npm run docs:dev` |
+| Install dependencies | `npm install` |
+| Configure environment variables | See [Quickstart](/00-overview/quickstart) |
+| Start the service | `npm run start:dev` |
+| Preview the docs | `npm run docs:dev` |
 
-## 读代码入口
+## Code reading entry points
 
-| 目标 | 入口文件 |
+| Goal | Entry file |
 | --- | --- |
-| 系统装配 | `src/server.ts` |
-| Feishu 消息接入 | `src/feishu/feishu-message-handler.ts` |
-| Feishu 卡片交互 | `src/feishu/feishu-card-handler.ts` |
-| orchestrator 核心 | `services/orchestrator/src/orchestrator.ts` |
-| backend 身份模型 | `packages/agent-core/src/backend-identity.ts` |
+| System assembly | `src/server.ts` |
+| Feishu message intake | `src/feishu/feishu-message-handler.ts` |
+| Feishu card interactions | `src/feishu/feishu-card-handler.ts` |
+| Orchestrator core | `services/orchestrator/src/orchestrator.ts` |
+| Backend identity model | `packages/agent-core/src/backend-identity.ts` |
 
-## 推荐先读文档
+## Recommended docs to read first
 
-- [调用链与数据流](/01-architecture/data-paths)
-- [分层隔离与模块契约](/01-architecture/invariants)
+- [Execution Paths and Data Flow](/01-architecture/data-paths)
+- [Layering and Module Contracts](/01-architecture/invariants)

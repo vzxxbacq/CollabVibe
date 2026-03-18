@@ -13,20 +13,21 @@
  * | Function            | Core function called        | Renders via                              |
  * |---------------------|-----------------------------|------------------------------------------|
  * | `sendProjectList`   | `listProjects()`            | `feishuAdapter.sendMessage`              |
- * | `sendSnapshotList`  | `listSnapshots()`           | `feishuOutputAdapter.sendSnapshotOperation` |
- * | `sendModelList`     | `resolveModelList()`        | `feishuOutputAdapter.sendConfigOperation`  |
- * | `sendThreadNewForm` | `resolveThreadNewFormData()`| `feishuOutputAdapter.sendThreadNewForm`    |
+ * | `sendSnapshotList`  | `listSnapshots()`           | `platformOutput.sendSnapshotOperation` |
+ * | `sendModelList`     | `resolveModelList()`        | `platformOutput.sendConfigOperation`  |
+ * | `sendThreadNewForm` | `resolveThreadNewFormData()`| `platformOutput.sendThreadNewForm`    |
  *
  * ## Import Constraints
  * ✅ May import: src/core/, src/feishu/types
  * ❌ Must NOT import: src/slack/
  */
 import type { FeishuHandlerDeps } from "./types";
+import { FeishuOutputGateway } from "./platform-output-dispatcher";
 import {
   listProjects, listSnapshots as coreListSnapshots,
   resolveModelList, resolveThreadNewFormData
-} from "../core/platform-commands";
-import { createLogger } from "../../packages/channel-core/src/index";
+} from "../../services/orchestrator/src/commands/platform-commands";
+import { createLogger } from "../../packages/logger/src/index";
 import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 
 const log = createLogger("handler");
@@ -34,67 +35,82 @@ const log = createLogger("handler");
 // ── Project list ────────────────────────────────────────────────────────────
 
 export async function sendProjectList(deps: FeishuHandlerDeps, chatId: string): Promise<void> {
+    const dispatcher = new FeishuOutputGateway(deps);
     const { OP } = getFeishuNotifyCatalog(deps.config.locale);
     const projects = listProjects(deps);
     if (projects.length === 0) {
-        await notify(deps, chatId, OP.NO_PROJECTS);
+        await dispatcher.dispatch(chatId, { kind: "text", text: OP.NO_PROJECTS });
         return;
     }
     const lines = projects.map((project) => `• ${project.name} (${project.id}) — ${project.cwd}`);
-    await notify(deps, chatId, OP.PROJECT_LIST(lines));
+    await dispatcher.dispatch(chatId, { kind: "text", text: OP.PROJECT_LIST(lines) });
 }
 
 // ── Snapshot list ───────────────────────────────────────────────────────────
 
 export async function sendSnapshotList(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<void> {
+    const dispatcher = new FeishuOutputGateway(deps);
     const { OP } = getFeishuNotifyCatalog(deps.config.locale);
     const { snapshots, threadId, threadName, hasBinding } = await coreListSnapshots(deps, chatId, userId);
     if (snapshots.length === 0) {
         const hint = hasBinding
             ? OP.SNAPSHOT_EMPTY_THREAD(threadName)
             : OP.SNAPSHOT_EMPTY_MERGE;
-        await notify(deps, chatId, hint);
+        await dispatcher.dispatch(chatId, { kind: "text", text: hint });
         return;
     }
     const latestIndex = snapshots[snapshots.length - 1]!.turnIndex;
-    await deps.feishuOutputAdapter.sendSnapshotOperation(chatId, {
+    await dispatcher.dispatch(chatId, {
         kind: "snapshot_operation",
-        action: "listed",
-        threadId,
-        threadName,
-        snapshots: snapshots.map((snapshot) => ({
-            turnId: snapshot.turnId,
-            turnIndex: snapshot.turnIndex,
-            agentSummary: snapshot.agentSummary,
-            filesChanged: snapshot.filesChanged,
-            createdAt: snapshot.createdAt,
-            isCurrent: snapshot.turnIndex === latestIndex
-        }))
-    }, userId);
+        data: {
+            kind: "snapshot_operation",
+            action: "listed",
+            threadId,
+            threadName,
+            snapshots: snapshots.map((snapshot) => ({
+                turnId: snapshot.turnId,
+                turnIndex: snapshot.turnIndex,
+                agentSummary: snapshot.agentSummary,
+                filesChanged: snapshot.filesChanged,
+                createdAt: snapshot.createdAt,
+                isCurrent: snapshot.turnIndex === latestIndex
+            }))
+        },
+        userId
+    });
 }
 
 // ── Model list ──────────────────────────────────────────────────────────────
 
 export async function sendModelList(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<void> {
+    const dispatcher = new FeishuOutputGateway(deps);
     const { currentModel, availableModels, threadName } = await resolveModelList(deps, chatId, userId);
-    await deps.feishuOutputAdapter.sendConfigOperation(chatId, {
+    await dispatcher.dispatch(chatId, {
         kind: "config_operation",
-        action: "model_list",
-        currentModel,
-        availableModels,
-        threadName
-    }, userId);
+        data: {
+            kind: "config_operation",
+            action: "model_list",
+            currentModel,
+            availableModels,
+            threadName
+        },
+        userId
+    });
 }
 
 // ── Thread new form data ────────────────────────────────────────────────────
 
 export async function sendThreadNewForm(deps: FeishuHandlerDeps, chatId: string, userId?: string): Promise<void> {
+    const dispatcher = new FeishuOutputGateway(deps);
     const { backends, defaultBackend, defaultModel } = await resolveThreadNewFormData(deps, chatId, userId);
-    await deps.feishuOutputAdapter.sendThreadNewForm(chatId, {
+    await dispatcher.dispatch(chatId, {
         kind: "thread_new_form",
-        backends,
-        defaultBackend,
-        defaultModel
+        data: {
+            kind: "thread_new_form",
+            backends,
+            defaultBackend,
+            defaultModel
+        }
     });
 }
 
@@ -106,11 +122,13 @@ export async function resolveHelpCard(deps: FeishuHandlerDeps, chatId: string, u
     let members: Array<{ userId: string; displayName?: string; role: string }> | undefined;
     if (isAdmin && project) {
         const state = deps.adminStateStore.read();
-        members = (state.members[project.id] ?? []).map(m => ({
-            userId: m.userId, role: m.role
-        }));
+        members = await Promise.all((state.members[project.id] ?? []).map(async (m) => ({
+            userId: m.userId,
+            displayName: await deps.feishuAdapter.getUserDisplayName?.(m.userId),
+            role: m.role
+        })));
     }
-    return deps.feishuOutputAdapter.buildHelpCard(userId, {
+    return deps.platformOutput.buildHelpCard(userId, {
         isAdmin,
         members,
         projectId: project?.id,
@@ -125,7 +143,7 @@ export async function resolveHelpThreadCard(deps: FeishuHandlerDeps, chatId: str
     const displayName = deps.feishuAdapter.getUserDisplayName
         ? await deps.feishuAdapter.getUserDisplayName(userId)
         : userId;
-    return deps.feishuOutputAdapter.buildHelpThreadCard(
+    return deps.platformOutput.buildHelpThreadCard(
         threads.map(t => ({
             threadName: t.threadName,
             threadId: t.threadId,
@@ -140,7 +158,7 @@ export async function resolveHelpThreadCard(deps: FeishuHandlerDeps, chatId: str
 
 export async function resolveHelpThreadNewCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
     const { backends, defaultBackend, defaultModel } = await resolveThreadNewFormData(deps, chatId, userId);
-    return deps.feishuOutputAdapter.buildHelpThreadNewCard(
+    return deps.platformOutput.buildHelpThreadNewCard(
         userId, backends, defaultBackend, defaultModel
     );
 }
@@ -148,7 +166,7 @@ export async function resolveHelpThreadNewCard(deps: FeishuHandlerDeps, chatId: 
 export async function resolveHelpMergeCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
     const activeThread = await deps.orchestrator.getUserActiveThread(chatId, userId);
     const branchName = activeThread?.threadName;
-    return deps.feishuOutputAdapter.buildHelpMergeCard(userId, branchName);
+    return deps.platformOutput.buildHelpMergeCard(userId, branchName);
 }
 
 export async function resolveSnapshotCard(
@@ -159,7 +177,7 @@ export async function resolveSnapshotCard(
     const displayName = deps.feishuAdapter.getUserDisplayName
         ? await deps.feishuAdapter.getUserDisplayName(userId)
         : userId;
-    return deps.feishuOutputAdapter.buildSnapshotHistoryCard(
+    return deps.platformOutput.buildSnapshotHistoryCard(
         snapshots.map(s => ({
             turnId: s.turnId,
             turnIndex: s.turnIndex,
@@ -175,7 +193,7 @@ export async function resolveSnapshotCard(
 export async function resolveHelpSkillCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
     const project = deps.findProjectByChatId(chatId);
     const skills = await deps.pluginService.getInstallablePlugins(project?.id);
-    return deps.feishuOutputAdapter.buildHelpSkillCard(
+    return deps.platformOutput.buildHelpSkillCard(
         skills.map(s => ({
             name: s.name ?? s.pluginName ?? "unknown",
             description: s.description ?? "",
@@ -187,13 +205,13 @@ export async function resolveHelpSkillCard(deps: FeishuHandlerDeps, chatId: stri
 
 export async function resolveHelpBackendCard(deps: FeishuHandlerDeps, userId: string): Promise<Record<string, unknown>> {
     const backends = await deps.orchestrator.listAvailableBackends();
-    return deps.feishuOutputAdapter.buildHelpBackendCard(backends, userId);
+    return deps.platformOutput.buildHelpBackendCard(backends, userId);
 }
 
 export async function resolveHelpTurnCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
     const turns = await deps.orchestrator.listTurns(chatId, 20);
     log.debug({ chatId, userId, turnCount: turns.length }, "resolveHelpTurnCard");
-    return deps.feishuOutputAdapter.buildTurnHistoryCard(
+    return deps.platformOutput.buildTurnHistoryCard(
         turns.map((turn) => ({
             chatId: turn.chatId,
             turnId: turn.turnId,

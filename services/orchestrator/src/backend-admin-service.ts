@@ -2,7 +2,7 @@ import type { BackendDefinition } from "./backend/registry";
 import type { BackendConfigInfo, BackendConfigService } from "./backend/config-service";
 import type { AvailableBackend, BackendSessionResolver, ResolvedBackendSession } from "./backend/session-resolver";
 import type { DefaultBackendSessionResolver } from "./backend/session-resolver";
-import { createLogger } from "../../../packages/channel-core/src/index";
+import { createLogger } from "../../../packages/logger/src/index";
 
 export class BackendAdminService {
   private readonly log = createLogger("backend-admin");

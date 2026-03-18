@@ -4,7 +4,7 @@ import type { BackendRegistry, BackendDefinition } from "./backend/registry";
 import type { BackendConfigService } from "./backend/config-service";
 import type { PluginService } from "../../../services/plugin/src/plugin-service";
 import type { ThreadRecord } from "./thread-state/thread-registry";
-import { createLogger } from "../../../packages/channel-core/src/index";
+import { createLogger } from "../../../packages/logger/src/index";
 import { createWorktree, getWorktreePath } from "../../../packages/git-utils/src/worktree";
 import { ALL_BACKEND_SKILL_DIRS } from "../../../services/plugin/src/index";
 import { OrchestratorError, ErrorCode } from "./errors";
@@ -71,7 +71,7 @@ export class ThreadRuntimeService {
     let serverCmd = overrides?.serverCmd ?? backendDef?.serverCmd ?? baseConfig.serverCmd;
     let env = backendDef?.env;
     if (backend.backendId === "codex" && this.deps.backendConfigService) {
-      const profileName = overrides?.profileName ?? "default";
+      const profileName = overrides?.profileName ?? backend.model;
       let allConfigs;
       try {
         allConfigs = await this.deps.backendConfigService.readAllConfigs();
@@ -150,6 +150,15 @@ export class ThreadRuntimeService {
       }
       const backendConfig = allConfigs.find(c => c.name === backendId);
       if (backendConfig) {
+        if (backendId === "codex") {
+          try {
+            const codexResult = backendConfig.buildServerCmd(profileName ?? config.backend.model, config.cwd);
+            config.serverCmd = codexResult.serverCmd;
+            config.env = { ...(config.env ?? {}), ...codexResult.env };
+          } catch (error) {
+            throw new Error(`CONFIG_ERROR: backend command rebuild failed for ${projectId}/${threadName}: ${toErrorMessage(error)}`);
+          }
+        }
         try {
           backendConfig.deploy(config.cwd, profileName ?? "default");
         } catch (error) {
@@ -158,14 +167,11 @@ export class ThreadRuntimeService {
       }
       const { mkdir } = await import("node:fs/promises");
       for (const dir of ALL_BACKEND_SKILL_DIRS) {
-        await mkdir(`${config.cwd}/${dir}`, { recursive: true }).catch((error) => {
-          log.warn({
-            threadName,
-            cwd: config.cwd,
-            dir,
-            err: error instanceof Error ? error.message : String(error)
-          }, "ensure plugin dir failed");
-        });
+        try {
+          await mkdir(`${config.cwd}/${dir}`, { recursive: true });
+        } catch (error) {
+          throw new Error(`PLUGIN_DIR_INIT_FAILED: ensure plugin dir failed for ${projectId}/${threadName} at ${config.cwd}/${dir}: ${toErrorMessage(error)}`);
+        }
       }
     }
 

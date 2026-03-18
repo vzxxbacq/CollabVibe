@@ -1,5 +1,5 @@
 import type { JsonRpcRequest, RpcTransport } from "./rpc-types";
-import { createLogger } from "../../channel-core/src/index";
+import { createLogger } from "../../logger/src/index";
 
 const log = createLogger("backend-rpc");
 

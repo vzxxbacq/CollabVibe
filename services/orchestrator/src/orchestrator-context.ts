@@ -1,12 +1,12 @@
 import type { AgentApi, AgentApiPool, RuntimeConfigProvider } from "../../../packages/agent-core/src/types";
 import type { MergeDiffStats } from "../../../packages/git-utils/src/merge";
-import type { IMOutputMessage } from "../../../packages/channel-core/src/im-output";
-import type { RouteBinding } from "./event/pipeline";
+import type { IMOutputMessage } from "../../contracts/im/im-output";
 import type { SnapshotRepository } from "./thread-state/snapshot-types";
 import type { ThreadRecord } from "./thread-state/thread-registry";
+import type { MergeSessionRepository } from "./merge-state/merge-session-repository";
 import { ApprovalWaitManager, ConversationStateMachine } from "./session/state-machine";
 import type { TurnStateManager } from "./session/turn-state-manager";
-import { createLogger } from "../../../packages/channel-core/src/index";
+import { createLogger } from "../../../packages/logger/src/index";
 import type { CreateThreadOptions, CreateThreadResult } from "./orchestrator";
 
 export type ProjectThreadKey = string;
@@ -29,7 +29,7 @@ export interface OrchestratorContext {
   readonly agentApiPool: AgentApiPool;
   readonly runtimeConfigProvider: RuntimeConfigProvider;
   readonly snapshotRepo?: SnapshotRepository;
-  readonly pluginDir?: string;
+  readonly mergeSessionRepository?: MergeSessionRepository;
   readonly approvalTimeoutMs: number;
 
   // Encapsulated turn state (replaces 4 raw Maps)
@@ -56,9 +56,16 @@ export interface OrchestratorContext {
 
   // Path B: route an output message through AgentEventRouter
   routeMessage(chatId: string, message: IMOutputMessage): Promise<void>;
-
-  // EventPipeline binding for merge conflict resolver turns
-  bindTurnPipeline?(route: RouteBinding): boolean;
+  registerApprovalRequest(params: {
+    chatId: string;
+    userId?: string;
+    approvalId: string;
+    threadId: string;
+    threadName: string;
+    turnId: string;
+    callId: string;
+    approvalType: "command_exec" | "file_change";
+  }): void;
 }
 
 export interface PendingApprovalContext {

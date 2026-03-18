@@ -6,7 +6,7 @@
  */
 import { access, rm, symlink, mkdir, lstat, readlink, realpath, readFile } from "node:fs/promises";
 import { join, relative, dirname, resolve as pathResolve } from "node:path";
-import { createLogger } from "../../channel-core/src/index";
+import { createLogger } from "../../logger/src/index";
 import { git } from "./git-exec";
 
 const log = createLogger("worktree");

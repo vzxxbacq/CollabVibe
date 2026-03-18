@@ -1,64 +1,66 @@
-// ── Top-level ──
-export { ConversationOrchestrator } from "./orchestrator";
-export type { CreateThreadOptions, CreateThreadResult } from "./orchestrator";
+/**
+ * @module services/orchestrator/src/index
+ *
+ * Public API of the orchestrator layer.
+ *
+ * ## External consumers should use:
+ * - `createOrchestratorLayer()` — factory for all orchestrator services
+ * - Error types for handler error handling
+ * - Type-only imports for OrchestratorLike Pick types
+ *
+ * ## Internal classes (AgentApiPool, EventPipeline, etc.) are NOT exported.
+ * They are consumed only by the factory.
+ */
+
+// ── Factory (primary entry point) ──
+export { createOrchestratorLayer, type OrchestratorLayer, type OrchestratorLayerDeps } from "./factory";
+
+// ── Error types (used by handlers for error handling) ──
 export { OrchestratorError, ErrorCode } from "./errors";
 export type { ErrorCodeValue } from "./errors";
 
-// ── Use Cases ──
-export { MergeUseCase } from "./use-cases/merge";
-export { ApprovalUseCase } from "./use-cases/approval";
+// ── Types for handler Pick interfaces ──
+// ConversationOrchestrator is exported type-only so `handlers/types.ts`
+// can define `OrchestratorLike = Pick<ConversationOrchestrator, ...>`.
+// External code should NOT instantiate it directly — use the factory.
+export { ConversationOrchestrator } from "./orchestrator";
+export type { CreateThreadOptions, CreateThreadResult } from "./orchestrator";
 
-// ── Session ──
-export { DefaultAgentApiPool } from "./session/agent-api-pool";
-export { AgentApiFactoryRegistry } from "./session/factory-registry";
-export { ApprovalWaitManager, ConversationStateMachine } from "./session/state-machine";
+// ── Plugin service (used by handlers/types.ts for PluginServiceLike) ──
+export { PluginService } from "./plugin/plugin-service";
 
-// ── Backend ──
-export { DefaultRuntimeConfigProvider } from "./backend/runtime-config-provider";
-export { BackendRegistry, createBackendRegistry } from "./backend/registry";
-export { DefaultBackendSessionResolver } from "./backend/session-resolver";
-export type { BackendSessionResolver, ResolvedBackendSession, AvailableBackend } from "./backend/session-resolver";
-export { BackendConfigService } from "./backend/config-service";
-export { BackendAdminService } from "./backend-admin-service";
-export type { ProjectResolver, ProjectContextRecord } from "./project-resolver";
+// ── Project setup (moved from src/services → orchestrator layer) ──
+export { ProjectSetupService } from "./project-setup-service";
 
-// ── Thread State ──
-export { UserThreadBindingService } from "./thread-state/user-thread-binding-service";
-export { ThreadService } from "./thread-state/thread-service";
-export { ThreadRuntimeService } from "./thread-runtime-service";
-export { InMemoryThreadTurnStateRepository } from "./thread-state/thread-turn-state-repository";
-export type { ThreadTurnState } from "./thread-state/thread-turn-state";
-export type { ThreadTurnStateRepository } from "./thread-state/thread-turn-state-repository";
-export { InMemoryTurnRepository } from "./turn-state/turn-repository";
-export type { TurnRecord, TurnStatus, TurnTokenUsage } from "./turn-state/turn-record";
-export type { TurnRepository } from "./turn-state/turn-repository";
-export { InMemoryTurnDetailRepository } from "./turn-state/turn-detail-repository";
-export type { TurnDetailRecord, TurnPlanState, TurnToolCall, TurnToolOutput, TurnMode } from "./turn-state/turn-detail-record";
-export type { TurnDetailRepository } from "./turn-state/turn-detail-repository";
-export { TurnQueryService } from "./turn-query-service";
-export { TurnCommandService } from "./turn-command-service";
-export { SnapshotService } from "./snapshot-service";
-export type { TurnListItem, TurnDetailAggregate, RecordTurnStartInput, TurnSummaryPatch, TurnMetadataPatch } from "./turn-types";
+// ── Intent result types (used by message handlers for result dispatch) ──
+export { ResultMode } from "./intent/result";
+export type { HandleIntentResult } from "./intent/result";
 
-
-// ── Event ──
-export { EventPipeline } from "./event/pipeline";
-export type { RouteBinding } from "./event/pipeline";
-export { AgentEventRouter } from "./event/router";
-
-// ── Intent ──
-
-export { handleInboundWebhook } from "./intent/webhook";
-
-// ── External packages (re-exports for convenience) ──
-export { AgentProcessManager } from "../../../packages/agent-core/src/agent-process-manager";
-export { CodexProtocolApiFactory } from "../../../packages/codex-client/src/codex-api-factory";
-export type { AgentApiFactory } from "../../../packages/agent-core/src/types";
-export { AcpApiFactory } from "../../../packages/acp-client/src/acp-api-factory";
-export type { UnifiedAgentEvent } from "../../../packages/agent-core/src/unified-agent-event";
-export { codexNotificationToUnifiedEvent } from "../../../packages/codex-client/src/codex-event-bridge";
-export { PluginService } from "../../../services/plugin/src/plugin-service";
-export { defaultPluginDirForBackend } from "../../../services/plugin/src/plugin-paths";
-
-// ── Contracts (types) ──
+// ── Contracts (shared type definitions) ──
 export * from "./contracts";
+
+// ── Types needed for OrchestratorLike / external type consumers ──
+export type { TurnRecord, TurnStatus, TurnTokenUsage } from "./turn-state/turn-record";
+export type { TurnDetailRecord, TurnPlanState, TurnToolCall, TurnToolOutput, TurnMode } from "./turn-state/turn-detail-record";
+export type { TurnListItem, TurnDetailAggregate, RecordTurnStartInput, TurnSummaryPatch, TurnMetadataPatch } from "./turn-types";
+export type { ThreadTurnState } from "./thread-state/thread-turn-state";
+export type { ProjectResolver, ProjectContextRecord } from "./project-resolver";
+export type { BackendSessionResolver, ResolvedBackendSession, AvailableBackend } from "./backend/session-resolver";
+export type { UnifiedAgentEvent } from "../../../packages/agent-core/src/unified-agent-event";
+export type { RouteBinding } from "./event/pipeline";
+
+
+// ── Dispatch (merged from services/dispatch/) ──
+export { classifyIntent, dispatchIntent } from "./intent/dispatcher";
+export type { IntentDispatchResult, IntentParams } from "./intent/dispatcher";
+export * from "./commands/platform-commands";
+export { PlatformActionRouter } from "./commands/platform-action-router";
+export { PlatformInputRouter } from "./commands/platform-input-router";
+export type { CoreDeps } from "./handler-types";
+
+// ── Backend identity (re-export from agent-core so L1 doesn't import L3) ──
+export { isBackendId, transportFor } from "../../../packages/agent-core/src/backend-identity";
+export type { BackendId } from "../../../packages/agent-core/src/backend-identity";
+
+// ── Merge types (re-export so L1 doesn't import L3 git-utils) ──
+export type { MergeDiffStats } from "../../../packages/git-utils/src/merge";

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ParsedIntent } from "../../../../packages/channel-core/src/types";
 import { createBackendIdentity } from "../../../../packages/agent-core/src/backend-identity";
-import { ConversationOrchestrator, UserThreadBindingService } from "../../src/index";
+import { AgentEventRouter, ConversationOrchestrator, EventPipeline, UserThreadBindingService } from "../../src/index";
 import { createTestThreadRegistry } from "../helpers/test-thread-registry";
 
 vi.mock("../../../../packages/git-utils/src/worktree", () => ({
@@ -16,6 +16,24 @@ function makeIntent(intent: ParsedIntent["intent"]): ParsedIntent {
   return {
     intent,
     args: {}
+  };
+}
+
+function makeOutputAdapter() {
+  return {
+    appendContent: vi.fn(async () => undefined),
+    appendReasoning: vi.fn(async () => undefined),
+    appendPlan: vi.fn(async () => undefined),
+    appendToolOutput: vi.fn(async () => undefined),
+    updateProgress: vi.fn(async () => undefined),
+    requestApproval: vi.fn(async () => undefined),
+    requestUserInput: vi.fn(async () => undefined),
+    notify: vi.fn(async () => undefined),
+    completeTurn: vi.fn(async () => undefined),
+    sendFileReview: vi.fn(async () => undefined),
+    sendMergeSummary: vi.fn(async () => undefined),
+    sendThreadOperation: vi.fn(async () => undefined),
+    sendSnapshotOperation: vi.fn(async () => undefined)
   };
 }
 
@@ -43,6 +61,13 @@ async function makeOrchestrator(codexApi: Record<string, unknown>, opts?: { with
     userThreadBindingService,
     threadRegistry
   });
+  orchestrator.setEventPipeline(new EventPipeline(
+    new AgentEventRouter(makeOutputAdapter() as never),
+    {
+      registerApprovalRequest: orchestrator.registerApprovalRequest.bind(orchestrator),
+      finishTurn: orchestrator.finishTurn.bind(orchestrator),
+    }
+  ));
   return { orchestrator, userThreadBindingService, threadRegistry, runtimeConfigProvider };
 }
 
@@ -52,6 +77,7 @@ describe("orchestrator handleIntent", () => {
   it("routes TURN_START to user text flow", async () => {
     const codexApi = {
       backendType: "codex" as const,
+      onNotification: vi.fn(),
       threadStart: vi.fn(async () => ({ thread: { id: "thr-1" } })),
       turnStart: vi.fn(async () => ({ turn: { id: "turn-1" } }))
     };
@@ -76,6 +102,7 @@ describe("orchestrator handleIntent", () => {
   it("rejects unsupported non-agent intents", async () => {
     const codexApi = {
       backendType: "codex" as const,
+      onNotification: vi.fn(),
       threadStart: vi.fn(async () => ({ thread: { id: "thr-1" } })),
       turnStart: vi.fn(async () => ({ turn: { id: "turn-1" } }))
     };
@@ -98,6 +125,7 @@ describe("orchestrator handleIntent", () => {
   it("passes traceId through handleIntent to turnStart", async () => {
     const codexApi = {
       backendType: "codex" as const,
+      onNotification: vi.fn(),
       threadStart: vi.fn(async () => ({ thread: { id: "thr-1" } })),
       turnStart: vi.fn(async () => ({ turn: { id: "turn-1" } }))
     };
@@ -121,6 +149,7 @@ describe("orchestrator handleIntent", () => {
   it("normalizes legacy sandbox value before thread/start (via createThread)", async () => {
     const codexApi = {
       backendType: "codex" as const,
+      onNotification: vi.fn(),
       threadStart: vi.fn(async () => ({ thread: { id: "thr-new" } })),
       turnStart: vi.fn(async () => ({ turn: { id: "turn-unused" } }))
     };

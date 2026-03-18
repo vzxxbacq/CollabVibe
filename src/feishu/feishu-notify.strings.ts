@@ -1,4 +1,4 @@
-import type { AppLocale } from "../../packages/channel-core/src/app-locale";
+import type { AppLocale } from "../../services/contracts/im/app-locale";
 
 export interface FeishuNotifyStrings {
   notYourCard: string;

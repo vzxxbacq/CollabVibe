@@ -1,132 +1,291 @@
 ---
-title: 核心类：Project / Thread / Turn
+title: "Core Entities: Project / Thread / Turn"
 layer: architecture
 status: active
 source_of_truth: AGENTS.md, services/admin-api/src/admin-state.ts, services/orchestrator/src/thread-state/thread-registry.ts, services/orchestrator/src/turn-state/turn-record.ts
 ---
 
-# 核心类：Project / Thread / Turn
+# Core Entities: Project / Thread / Turn
 
-最新版代码里，最核心的三个对象不是按平台拆分，而是按协作主轴拆分：
+In the current codebase, the three most important objects are not split by platform. They are split by the main collaboration axis:
 
-- `Project` 负责聚合根和项目级配置
-- `Thread` 负责一次持续协作会话
-- `Turn` 负责线程中的单次执行
+- `Project` owns the aggregate root and project-level configuration
+- `Thread` owns an ongoing collaboration session
+- `Turn` owns a single execution inside a thread
 
-这三个对象共同构成系统的最小稳定骨架。
+Together they form the smallest stable skeleton of the system.
 
-![Project Thread Turn 关系图占位图](/placeholders/guide-image-placeholder.svg)
+![Project Thread Turn relationship placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 `Project / Thread / Turn` 关系图，建议额外标出 `UserThreadBinding` 和 `RuntimeConfig`。
+> Placeholder: add a relationship diagram for `Project / Thread / Turn`, ideally also showing `UserThreadBinding` and `RuntimeConfig`.
 
-## 三者关系
+## Relationship among the three
 
 ```mermaid
 flowchart TD
-  Chat[IM Chat\\nchatId] -->|1:1 bind| Project[ProjectConfig / ProjectContextRecord\\nprojectId]
-  Project -->|1:N| Thread[ThreadRecord\\nthreadName + threadId]
-  Thread -->|1:N| Turn[TurnRecord\\nturnId]
+  Chat[IM Chat\nchatId] -->|1:1 bind| Project[ProjectConfig / ProjectContextRecord\nprojectId]
+  Project -->|1:N| Thread[ThreadRecord\nthreadName + threadId]
+  Thread -->|1:N| Turn[TurnRecord\nturnId]
 ```
 
 ## 1. Project
 
-`Project` 在代码里的落点主要是两种投影：
+`Project` appears in code mainly as two projections:
 
-| 类型 | 位置 | 作用 |
+| Type | Location | Purpose |
 | --- | --- | --- |
-| `ProjectConfig` | `services/admin-api/src/admin-state.ts` | 持久化项目配置，是真正的项目聚合根 |
-| `ProjectContextRecord` | `services/orchestrator/src/project-resolver.ts` | orchestrator 视角下的项目上下文投影 |
+| `ProjectConfig` | `services/admin-api/src/admin-state.ts` | Persisted project configuration; the true project aggregate root |
+| `ProjectContextRecord` | `services/orchestrator/src/project-resolver.ts` | The project-context projection from the orchestrator's point of view |
 
-### Project 的职责
+### Project responsibilities
 
-| 职责 | 说明 |
+| Responsibility | Description |
 | --- | --- |
-| 聚合根 | thread / turn / snapshot / user-thread-binding 最终都归属到 `projectId` |
-| 平台绑定 | `chatId` 只是 Project 的 1:1 平台绑定 |
-| 运行时默认配置 | 保存 `cwd`、`defaultBranch`、`sandbox`、`approvalPolicy` 等项目级配置 |
-| 路由起点 | 所有 IM 入口先做 `chatId -> projectId` 解引用 |
+| Aggregate root | `thread / turn / snapshot / user-thread-binding` all ultimately belong to `projectId` |
+| Platform binding | `chatId` is only the 1:1 platform binding of a Project |
+| Runtime defaults | Stores project-level defaults such as `cwd`, `defaultBranch`, `sandbox`, and `approvalPolicy` |
+| Routing starting point | Every IM entry first resolves `chatId -> projectId` |
 
-### Project 的关键字段
+### Key Project fields
 
-| 字段 | 说明 |
+| Field | Description |
 | --- | --- |
-| `id` | `projectId`，系统内部主键 |
-| `chatId` | IM 平台绑定，不是 thread/turn 的真实持久化主键 |
-| `cwd` | 项目工作目录 |
-| `defaultBranch` | 默认分支 |
-| `sandbox` | sandbox 策略 |
-| `approvalPolicy` | 审批策略 |
-| `status` | 项目启用状态 |
+| `id` | `projectId`, the internal system primary key |
+| `chatId` | IM platform binding; not the real persistent primary key for threads/turns |
+| `cwd` | Project working directory |
+| `defaultBranch` | Default branch |
+| `sandbox` | Sandbox policy |
+| `approvalPolicy` | Approval policy |
+| `status` | Project activation status |
 
-### Project 的不变式
+### Project invariants
 
-- Project 是聚合根，不能用 `chatId` 直接替代 `projectId`
-- 线程历史不跟随群聊迁移；重新绑群时只更新 Project 与 Chat 的绑定
-- orchestrator 进入领域逻辑前，必须先经 `ProjectResolver.findProjectByChatId(chatId)`
+- Project is the aggregate root; `chatId` cannot directly replace `projectId`
+- Thread history does not move with chat migration; rebinding a group chat only updates the Project-to-Chat binding
+- Before entering domain logic, the orchestrator must resolve through `ProjectResolver.findProjectByChatId(chatId)`
 
 ## 2. Thread
 
-`Thread` 在代码中由 `ThreadRecord` 表示，定义位于 `services/orchestrator/src/thread-state/thread-registry.ts`。
+`Thread` is represented by `ThreadRecord` in code and is defined in `services/orchestrator/src/thread-state/thread-registry.ts`.
 
-### Thread 的职责
+### Thread responsibilities
 
-| 职责 | 说明 |
+| Responsibility | Description |
 | --- | --- |
-| 协作主轴 | 表示一个持续存在的分支/会话/任务线 |
-| 绑定后端身份 | 保存 `BackendIdentity`，决定该线程走哪个 backend |
-| 绑定后端会话句柄 | `threadId` 是后端分配的 opaque handle |
-| 承接 turn 序列 | 一个 thread 下会持续生成多个 turn |
+| Main collaboration axis | Represents a persistent branch/session/task line |
+| Binds backend identity | Stores `BackendIdentity`, deciding which backend the thread uses |
+| Binds the backend session handle | `threadId` is the opaque handle allocated by the backend |
+| Carries the turn sequence | A thread continuously produces multiple turns |
 
-### Thread 的关键字段
+### Key Thread fields
 
-| 字段 | 说明 |
+| Field | Description |
 | --- | --- |
-| `projectId` | 所属项目 |
-| `threadName` | 项目内逻辑线程名 |
-| `threadId` | 后端线程 ID / 会话 ID |
-| `backend` | 不可拆分的 `BackendIdentity` |
+| `projectId` | Owning project |
+| `threadName` | Logical thread name within the project |
+| `threadId` | Backend thread ID / session ID |
+| `backend` | The indivisible `BackendIdentity` |
 
-### Thread 的不变式
+### Thread invariants
 
-- `ThreadRecord.backend` 是线程后端身份的唯一真实来源
-- backend 信息必须原子传递，不能拆成 `model + transport + backendName`
-- 线程创建后 backend 身份不可修改
-- `UserThreadBinding` 只能指向 thread，不能复制 backend 元数据
+- `ThreadRecord.backend` is the only true source of thread backend identity
+- backend information must be passed atomically and must not be split into `model + transport + backendName`
+- backend identity cannot be changed after the thread is created
+- `UserThreadBinding` can only point to the thread; it must not duplicate backend metadata
 
 ## 3. Turn
 
-`Turn` 在代码中由 `TurnRecord` 表示，定义位于 `services/orchestrator/src/turn-state/turn-record.ts`。
+`Turn` is no longer a single class. It is a three-model collaboration:
 
-### Turn 的职责
+| Model | Location | Role |
+| --- | --- | --- |
+| `TurnState` | `packages/channel-core/src/turn-state.ts` | Runtime in-memory model; the only streaming aggregation source |
+| `TurnRecord` | `services/orchestrator/src/turn-state/turn-record.ts` | Persistent index/state record |
+| `TurnDetailRecord` | `services/orchestrator/src/turn-state/turn-detail-record.ts` | Persistent full-detail record; the canonical history payload |
 
-| 职责 | 说明 |
+### 3.1 TurnState
+
+`TurnState` is the runtime model created by `EventPipeline` when a turn becomes active.
+
+It is **not** a platform object and **not** a persistent entity. It exists to aggregate turn execution in memory and expose a unified interface to the rest of the orchestrator.
+
+#### TurnState responsibilities
+
+| Responsibility | Description |
 | --- | --- |
-| 单次执行单元 | 表示用户发起的一次 agent 执行 |
-| 串联流式状态 | 承接运行中、待审批、完成、失败等状态变化 |
-| 记录执行结果 | 保存 diff、token usage、最后一条 agent 消息、完成时间等 |
-| 提供审计基础 | 是 snapshot、审批、恢复、历史查询的主索引之一 |
+| Runtime aggregation | Aggregates content, reasoning, plans, tool progress, tool output, token usage, and metadata |
+| Unified write interface | Exposes a single API surface for incremental events and full updates |
+| Runtime snapshot export | Produces a `snapshot()` used for persistence projection and UI summaries |
+| Platform isolation | Ensures Feishu / Slack cannot become the source of truth for Turn content |
 
-### Turn 的关键字段
+#### TurnState write interfaces
 
-| 字段 | 说明 |
+| Method | Purpose |
 | --- | --- |
-| `projectId` | 所属项目 |
-| `threadName` / `threadId` | 所属线程 |
-| `turnId` | 本次执行 ID |
-| `status` | `running` / `awaiting_approval` / `completed` / `accepted` / `reverted` / `interrupted` / `failed` |
-| `cwd` | 本次执行工作目录 |
-| `approvalRequired` | 是否进入审批 |
-| `filesChanged` / `diffSummary` | 变更摘要 |
-| `tokenUsage` | token 消耗 |
-| `createdAt` / `updatedAt` / `completedAt` | 生命周期时间点 |
+| `applyOutputMessage(message)` | Applies the normalized `IMOutputMessage` from Path B |
+| `applyMetadata(metadata)` | Applies prompt/backend/model/turn-mode metadata through a single interface |
+| `applyTurnSummary(summary)` | Applies final turn summary information |
+| `snapshot()` | Exports the runtime projection |
+| `toSummary()` | Exports a lightweight `IMTurnSummary` view |
 
-### Turn 的不变式
+#### TurnState contents
 
-- Turn 永远挂在 Thread 之下，不直接挂在 Chat 之下
-- turn 查询、恢复、快照都应以 `projectId` 为持久化归属
-- turn 状态推进通过 orchestrator 和事件管线完成，不能绕过主路径直接写平台层
+`TurnState` currently owns:
 
-## 核心数据流
+- metadata: `promptSummary / backendName / modelName / turnMode`
+- content: final streamed message body
+- reasoning
+- plan draft + structured plan
+- tool call progress
+- tool outputs
+- token usage
+- runtime duration
+
+> `lastAgentMessage` is **not** the canonical source inside `TurnState`. The canonical message source is `content`. If a compatibility field is needed outside, it is derived from `content`.
+
+### 3.2 TurnRecord
+
+`TurnRecord` is the lightweight persistent index record.
+
+#### TurnRecord responsibilities
+
+| Responsibility | Description |
+| --- | --- |
+| Lifecycle index | Tracks `running / awaiting_approval / completed / accepted / reverted / interrupted / failed` |
+| Diff and approval index | Stores `filesChanged`, `diffSummary`, approval flags, snapshot references |
+| Query anchor | Supports turn lookup, blocking-turn checks, and snapshot relations |
+
+#### Key TurnRecord fields
+
+| Field | Description |
+| --- | --- |
+| `projectId` | Owning project |
+| `threadName` / `threadId` | Owning thread |
+| `turnId` | Execution ID |
+| `status` | Lifecycle state |
+| `cwd` | Execution worktree |
+| `snapshotSha` | Snapshot anchor |
+| `approvalRequired` | Whether the turn entered approval flow |
+| `filesChanged` / `diffSummary` / `stats` | Git diff summary |
+| `tokenUsage` | Aggregated token usage |
+| `createdAt` / `updatedAt` / `completedAt` | Lifecycle timestamps |
+
+`TurnRecord` may still carry compatibility summary fields, but it is **not** the canonical full-message store.
+
+### 3.3 TurnDetailRecord
+
+`TurnDetailRecord` is the full persistent detail record and should be treated as the canonical history payload.
+
+#### TurnDetailRecord responsibilities
+
+| Responsibility | Description |
+| --- | --- |
+| Full history source | Supports “reopen full turn history at any time” |
+| Runtime projection sink | Receives snapshots projected from `TurnState` |
+| Detail rendering source | Backs historical cards / turn detail pages |
+
+#### Key TurnDetailRecord fields
+
+| Field | Description |
+| --- | --- |
+| `promptSummary` / `backendName` / `modelName` / `turnMode` | Turn metadata |
+| `message` | Canonical final content body |
+| `reasoning` | Stored reasoning body |
+| `tools` | Tool-call progress timeline |
+| `toolOutputs` | Tool outputs keyed by call |
+| `planState` | Structured plan state |
+| `agentNote` | Auxiliary runtime note |
+
+### Turn invariants
+
+- A Turn always hangs under a Thread, never directly under a Chat
+- Turn persistence and lookup are always rooted in `projectId`
+- `TurnState` is the only in-memory streaming aggregation source
+- `TurnDetailRecord.message` is the canonical persisted message source
+- Platform adapters must not become the write source of turn state
+
+### Turn and AgentStreamOutput
+
+`AgentStreamOutput` belongs to the output side of the system, not the Turn state side.
+
+Relationship:
+
+```mermaid
+flowchart LR
+  E[UnifiedAgentEvent] --> T[transformUnifiedAgentEvent]
+  T --> M[IMOutputMessage]
+  M --> S[TurnState.applyOutputMessage]
+  S --> P[TurnState.snapshot]
+  P --> D[TurnDetailRecord projection]
+  M --> R[AgentEventRouter]
+  R --> O[AgentStreamOutput]
+  O --> F[FeishuOutputAdapter / SlackOutputAdapter]
+```
+
+Meaning:
+
+- `TurnState` aggregates the runtime truth
+- `AgentStreamOutput` renders the already-normalized output to IM platforms
+- Feishu / Slack consume output; they do not define Turn semantics
+
+### Turn and user input commands
+
+Turn creation starts from user input on Path A:
+
+```text
+User message
+  -> IM handler
+  -> orchestrator.handleIntent()
+  -> recordTurnStart()
+  -> create TurnRecord + TurnDetailRecord shell
+  -> prepare/activate EventPipeline
+  -> backend turn start
+```
+
+User input affects Turn in two distinct stages:
+
+#### Stage A: before backend execution
+
+Before the backend starts streaming, the orchestrator writes turn metadata through the **unified Turn interface**:
+
+- `promptSummary`
+- `backendName`
+- `modelName`
+- `turnMode`
+
+This now flows through `TurnState.applyMetadata(...)` when runtime state exists, and only falls back to direct persistence when the runtime state has not yet been created.
+
+#### Stage B: during backend execution
+
+As the backend emits events:
+
+- `EventPipeline` converts them into `IMOutputMessage`
+- `TurnState.applyOutputMessage(...)` updates the runtime model
+- the snapshot is projected into persistence
+- the same normalized message is routed to `AgentStreamOutput`
+
+### Turn completion
+
+When the turn completes:
+
+```text
+turn_complete / turn_aborted
+  -> EventPipeline
+  -> finishTurn()
+  -> TurnState.applyTurnSummary(...)
+  -> TurnState.snapshot()
+  -> finalizeTurnState(...)
+  -> update TurnRecord + TurnDetailRecord
+  -> AgentStreamOutput.completeTurn(...)
+```
+
+This guarantees:
+
+- runtime truth is closed in the orchestrator
+- persistence is updated from runtime state
+- platform rendering happens after normalization
+
+## Core data flow
 
 ```text
 IM Event
@@ -135,8 +294,8 @@ IM Event
   -> projectId
   -> ThreadRegistry.get(projectId, threadName)
   -> ThreadRecord.backend / ThreadRecord.threadId
-  -> 创建或恢复 TurnRecord
-  -> backend 执行与事件回写
+  -> create or restore TurnRecord
+  -> backend execution and event write-back
 ```
 
 ```ts
@@ -144,19 +303,19 @@ const project = projectResolver.findProjectByChatId(chatId);
 const thread = threadRegistry.get(project.id, threadName);
 ```
 
-## 为什么这三个对象最核心
+## Why these three objects are the most important
 
-| 对象 | 没有它会发生什么 |
+| Object | What breaks without it |
 | --- | --- |
-| `Project` | 无法确定聚合根，`chatId` 会重新污染持久化主键 |
-| `Thread` | 无法稳定绑定 backend 身份和会话恢复 |
-| `Turn` | 无法承载单次执行、审批状态和历史审计 |
+| `Project` | The aggregate root becomes ambiguous and `chatId` pollutes persistence keys again |
+| `Thread` | Backend identity and session recovery cannot be bound stably |
+| `Turn` | A single execution, approval state, and historical audit cannot be represented |
 
-## 与其他对象的关系
+## Relationship to other objects
 
-| 对象 | 与三大核心类的关系 |
+| Object | Relationship to the three core entities |
 | --- | --- |
-| `BackendIdentity` | Thread 的不可变后端身份值对象 |
-| `UserThreadBinding` | 用户维度的 thread 指针，不属于核心聚合根 |
-| `RuntimeConfig` | 每个 turn 执行前临时组装，来源于 Project + Thread |
-| `UnifiedAgentEvent` | Turn 执行中在 Path B 上传播的统一事件模型 |
+| `BackendIdentity` | Immutable backend identity value object owned by Thread |
+| `UserThreadBinding` | Thread pointer at the user dimension; not part of the core aggregate root |
+| `RuntimeConfig` | Temporary assembly before each turn, sourced from Project + Thread |
+| `UnifiedAgentEvent` | Unified event model propagated on Path B during turn execution |

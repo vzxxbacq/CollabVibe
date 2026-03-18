@@ -17,8 +17,13 @@ interface ProjectThreadRow {
 }
 
 function rowToRecord(row: ProjectThreadRow): ThreadRecord {
-  const backendId = isBackendId(row.backend_name) ? row.backend_name : "codex";
-  const backend: BackendIdentity = createBackendIdentity(backendId, row.model ?? "unknown");
+  if (!isBackendId(row.backend_name)) {
+    throw new Error(`project_threads row has invalid backend_name: ${row.backend_name}`);
+  }
+  if (!row.model) {
+    throw new Error(`project_threads row is missing model for thread_id=${row.thread_id}`);
+  }
+  const backend: BackendIdentity = createBackendIdentity(row.backend_name, row.model);
   return {
     projectId: row.project_id,
     chatId: row.chat_id || undefined,
@@ -29,8 +34,13 @@ function rowToRecord(row: ProjectThreadRow): ThreadRecord {
 }
 
 function rowToListEntry(row: ProjectThreadRow): ThreadListEntry {
-  const backendId = isBackendId(row.backend_name) ? row.backend_name : "codex";
-  const backend: BackendIdentity = createBackendIdentity(backendId, row.model ?? "unknown");
+  if (!isBackendId(row.backend_name)) {
+    throw new Error(`project_threads row has invalid backend_name: ${row.backend_name}`);
+  }
+  if (!row.model) {
+    throw new Error(`project_threads row is missing model for thread_id=${row.thread_id}`);
+  }
+  const backend: BackendIdentity = createBackendIdentity(row.backend_name, row.model);
   return {
     projectId: row.project_id,
     chatId: row.chat_id || undefined,
@@ -231,5 +241,46 @@ export class SqliteThreadRegistry implements ThreadRegistry {
         `UPDATE project_threads SET status = 'merged' WHERE project_id = ? AND thread_name = ? AND status = 'active'`
       )
       .run(projectId, threadName);
+  }
+
+  replaceEmptyThreadId(params: {
+    projectId: string;
+    threadName: string;
+    oldThreadId: string;
+    newThreadId: string;
+    chatId?: string;
+    backend: BackendIdentity;
+  }): void {
+    this.beginImmediate();
+    try {
+      const result = this.db.prepare(
+        `UPDATE project_threads
+            SET thread_id = ?,
+                chat_id = ?,
+                backend_name = ?,
+                transport = ?,
+                model = ?
+          WHERE project_id = ?
+            AND thread_name = ?
+            AND thread_id = ?
+            AND status = 'active'`
+      ).run(
+        params.newThreadId,
+        params.chatId ?? "",
+        params.backend.backendId,
+        params.backend.transport,
+        params.backend.model,
+        params.projectId,
+        params.threadName,
+        params.oldThreadId,
+      );
+      if ((result.changes ?? 0) !== 1) {
+        throw new Error(`empty thread not found for replace: ${params.projectId}/${params.threadName}/${params.oldThreadId}`);
+      }
+      this.commit();
+    } catch (error) {
+      this.rollback();
+      throw error;
+    }
   }
 }

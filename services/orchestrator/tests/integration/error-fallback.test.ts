@@ -36,7 +36,7 @@ describe("orchestrator error fallback", () => {
     expect(codexApi.turnStart).not.toHaveBeenCalled();
   });
 
-  it("keeps selected binding when turn start fails", async () => {
+  it("keeps selected binding when active-thread startup fails", async () => {
     const codexApi = {
       backendType: "codex" as const,
       threadStart: vi.fn(async () => ({ thread: { id: "thr-1" } })),
@@ -55,7 +55,6 @@ describe("orchestrator error fallback", () => {
     });
     await userThreadBindingService.bind({
       projectId: "chat-1",
-      chatId: "chat-1",
       userId: "u1",
       threadName: "fix-retry",
       threadId: "thr-existing",
@@ -72,7 +71,7 @@ describe("orchestrator error fallback", () => {
       threadRegistry
     });
 
-    await expect(orchestrator.handleUserTextForUser("proj-1", "chat-1", "u1", "continue")).rejects.toThrow("turn/start timeout");
+    await expect(orchestrator.handleUserTextForUser("proj-1", "chat-1", "u1", "continue")).rejects.toThrow("agent api unavailable");
     await expect(userThreadBindingService.resolve("chat-1", "u1")).resolves.toMatchObject({
       threadName: "fix-retry",
       threadId: "thr-existing"

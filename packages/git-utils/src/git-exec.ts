@@ -8,7 +8,7 @@
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { getDefaultExcludesArgs } from "./default-excludes";
-import { createLogger } from "../../channel-core/src/index";
+import { createLogger } from "../../logger/src/index";
 
 const exec = promisify(execFileCb);
 const log = createLogger("git");

@@ -1,4 +1,4 @@
-import type { AppLocale } from "../../packages/channel-core/src/app-locale";
+import type { AppLocale } from "../../services/contracts/im/app-locale";
 
 export interface FeishuCardHandlerStrings {
   skillUploadTimeout: string;
@@ -8,6 +8,8 @@ export interface FeishuCardHandlerStrings {
   threadCreated(threadName: string, backendId: string, model: string, threadIdPrefix: string): string;
   creatingThreadTitle(threadName: string): string;
   creatingThreadBody(backendId: string): string;
+  creatingThreadFailedTitle(threadName: string): string;
+  creatingThreadFailedBody(message: string): string;
   approvalApproved: string;
   approvalRejected: string;
   approvalApprovedOnce: string;
@@ -67,6 +69,8 @@ const zhCN: FeishuCardHandlerStrings = {
   threadCreated: (threadName, backendId, model, threadIdPrefix) => `✅ Thread **${threadName}** 创建成功 (${backendId}/${model})\n🆔 ${threadIdPrefix}`,
   creatingThreadTitle: (threadName) => `⏳ 正在创建 Thread: ${threadName}`,
   creatingThreadBody: (backendId) => `正在启动 **${backendId}** 后端并建立会话，请稍候…`,
+  creatingThreadFailedTitle: (threadName) => `❌ Thread 创建失败: ${threadName}`,
+  creatingThreadFailedBody: (message) => `创建失败：${message}`,
   approvalApproved: "✅ 已批准",
   approvalRejected: "❌ 已拒绝",
   approvalApprovedOnce: "✅ 已批准（本次会话）",
@@ -126,6 +130,8 @@ const enUS: FeishuCardHandlerStrings = {
   threadCreated: (threadName, backendId, model, threadIdPrefix) => `✅ Thread **${threadName}** created (${backendId}/${model})\n🆔 ${threadIdPrefix}`,
   creatingThreadTitle: (threadName) => `⏳ Creating thread: ${threadName}`,
   creatingThreadBody: (backendId) => `Starting the **${backendId}** backend and establishing a session. Please wait…`,
+  creatingThreadFailedTitle: (threadName) => `❌ Thread creation failed: ${threadName}`,
+  creatingThreadFailedBody: (message) => `Creation failed: ${message}`,
   approvalApproved: "✅ Approved",
   approvalRejected: "❌ Rejected",
   approvalApprovedOnce: "✅ Approved (this session)",

@@ -15,3 +15,6 @@ export * from "./sqlite-audit-store";
 export * from "./sqlite-turn-repository";
 export * from "./sqlite-turn-detail-repository";
 export * from "./sqlite-thread-turn-state-repository";
+export * from "./sqlite-merge-session-repository";
+export { createPersistenceLayer, type PersistenceLayer } from "./factory";
+

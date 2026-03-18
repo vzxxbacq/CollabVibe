@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 
 import type { RpcNotification, JsonRpcRequest, JsonRpcResponse, RpcTransport, ServerRequest } from "./rpc-types";
-import { createLogger } from "../../channel-core/src/index";
+import { createLogger } from "../../logger/src/index";
 import type { BackendRpcCorrelation } from "./rpc-client";
 
 const log = createLogger("stdio-rpc");

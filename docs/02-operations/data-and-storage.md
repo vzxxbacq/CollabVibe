@@ -1,169 +1,169 @@
 ---
-title: 数据与存储
+title: "Data and Storage"
 layer: operations
 status: active
 ---
 
-# 数据与存储
+# Data and Storage
 
-![数据与存储占位图](/placeholders/guide-image-placeholder.svg)
+![Data and storage placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 `SQLite / config / logs / workspace` 之间关系图。
+> Placeholder: add a relationship diagram among `SQLite / config / logs / workspace`.
 
-本章描述 `data/` 目录的结构、每个文件或子目录的作用、以及迁移方法。
+This chapter describes the structure of the `data/` directory, the purpose of each file or subdirectory, and migration guidance.
 
-## 目录概览
+## Directory overview
 
-当前仓库中的 `data/` 结构如下：
+The current `data/` structure in the repository is:
 
-| 路径 | 类型 | 作用 |
+| Path | Type | Purpose |
 | --- | --- | --- |
-| `data/codex-im.db` | SQLite 主库 | 主数据文件 |
-| `data/codex-im.db-wal` | SQLite WAL 文件 | 写前日志，WAL 模式下保存未 checkpoint 的数据 |
-| `data/codex-im.db-shm` | SQLite SHM 文件 | WAL 共享内存索引文件 |
-| `data/config/` | 配置目录 | backend 配置与默认模板 |
-| `data/logs/` | 日志目录 | 应用运行日志 |
+| `data/codex-im.db` | Main SQLite database | Primary data file |
+| `data/codex-im.db-wal` | SQLite WAL file | Write-ahead log with uncheckpointed data in WAL mode |
+| `data/codex-im.db-shm` | SQLite SHM file | Shared-memory index file for WAL |
+| `data/config/` | Config directory | Backend configuration and default templates |
+| `data/logs/` | Log directory | Application runtime logs |
 
-## SQLite 文件组
+## SQLite file set
 
-`createDatabase()` 默认启用：
+`createDatabase()` enables the following defaults:
 
 - `PRAGMA journal_mode = WAL`
 - `PRAGMA foreign_keys = ON`
 - `PRAGMA busy_timeout = 5000`
 
-因此数据库通常不是单文件，而是一组文件：
+Because of that, the database is usually a file set rather than a single file:
 
-| 文件 | 是否必须一起迁移 | 说明 |
+| File | Must migrate together? | Description |
 | --- | --- | --- |
-| `data/codex-im.db` | 是 | 主数据库 |
-| `data/codex-im.db-wal` | 建议是 | 未 checkpoint 的事务日志 |
-| `data/codex-im.db-shm` | 建议是 | WAL 索引状态 |
+| `data/codex-im.db` | Yes | Main database |
+| `data/codex-im.db-wal` | Recommended | Transaction log that may still contain uncheckpointed data |
+| `data/codex-im.db-shm` | Recommended | WAL index state |
 
-### 迁移原则
+### Migration principles
 
-- **在线迁移时不要只复制 `.db`**
-- 停服务后迁移时，建议同时复制 `.db`、`.db-wal`、`.db-shm`
-- 如果确认已做 SQLite checkpoint，也可以只迁移 `.db`，但这不是默认建议路径
+- **During online migration, do not copy only `.db`**
+- For offline migration after stopping the service, copy `.db`, `.db-wal`, and `.db-shm` together
+- If you have explicitly checkpointed SQLite, migrating only `.db` can work, but that is not the default recommendation
 
-## SQLite 主要表
+## Main SQLite tables
 
-迁移脚本当前会创建或维护以下表：
+Current migrations create or maintain the following tables:
 
-| 表 | 作用 |
+| Table | Purpose |
 | --- | --- |
-| `projects` | 项目信息 |
-| `project_channels` | 项目与 channel 绑定 |
-| `threads` | 旧线程表，历史兼容 |
-| `turns` | turn 记录 |
-| `audit_logs` | 审计日志 |
-| `approvals` | 审批记录 |
-| `secrets` | 密钥存储 |
-| `user_thread_bindings` | 用户当前 thread 绑定 |
-| `project_threads` | project 级 thread 注册表（chat 仅保留 1:1 绑定字段） |
-| `turn_snapshots` | turn 快照 |
-| `skill_allowlist` | skill allowlist |
-| `schema_versions` | migration 版本记录 |
+| `projects` | Project information |
+| `project_channels` | Project-to-channel binding |
+| `threads` | Legacy thread table kept for compatibility |
+| `turns` | Turn records |
+| `audit_logs` | Audit logs |
+| `approvals` | Approval records |
+| `secrets` | Secret storage |
+| `user_thread_bindings` | User pointer to the current thread |
+| `project_threads` | Project-level thread registry (chat retains only the 1:1 binding field) |
+| `turn_snapshots` | Turn snapshots |
+| `skill_allowlist` | Skill allowlist |
+| `schema_versions` | Migration version records |
 
-### 当前有效持久源说明
+### Current effective sources of truth
 
-| 数据类型 | 当前关键持久源 |
+| Data type | Current key persistent source |
 | --- | --- |
-| 线程 backend 身份 | `project_threads` / `ThreadRecord.backend` |
-| 用户当前 thread 指针 | `user_thread_bindings` |
-| 审批状态 | `approvals` |
-| 审计记录 | `audit_logs` |
-| 快照记录 | `turn_snapshots` |
-| 用户角色 | `users` 表，由 `SqliteUserRepository` 管理 |
+| Thread backend identity | `project_threads` / `ThreadRecord.backend` |
+| User pointer to the current thread | `user_thread_bindings` |
+| Approval state | `approvals` |
+| Audit records | `audit_logs` |
+| Snapshot records | `turn_snapshots` |
+| User roles | `users` table, managed by `SqliteUserRepository` |
 
-> 历史 migration 中保留过一些旧字段与旧表形态，启动时会自动迁移到当前版本。
+> Historical migrations kept some older fields and table shapes. Startup automatically migrates them to the current version.
 
-## `data/config/` 目录
+## `data/config/` directory
 
-当前系统约定的配置文件类型：
+The current system expects the following configuration file types:
 
-| 文件 | 作用 |
+| File | Purpose |
 | --- | --- |
-| `data/config/codex.toml` | Codex backend 配置 |
-| `data/config/opencode.json` | OpenCode backend 配置 |
-| `data/config/default.gitignore` | 默认忽略模板 |
+| `data/config/codex.toml` | Codex backend configuration |
+| `data/config/opencode.json` | OpenCode backend configuration |
+| `data/config/default.gitignore` | Default ignore template |
 
-> 目录中如果出现额外的 `*_bak`、`copy` 等文件，通常属于人工备份或临时文件，不应作为系统标准配置的一部分写入文档或依赖于部署流程。
+> If the directory contains extra files such as `*_bak` or `copy`, they are usually manual backups or temporary files and should not be documented as standard configuration or relied on by deployment flows.
 
-### 配置目录使用规则
+### Configuration directory rules
 
-| 规则 | 说明 |
+| Rule | Description |
 | --- | --- |
-| backend 配置由 `BackendConfigService` 管理 | 启动时同步到 backend registry |
-| 文件格式依 backend 不同而不同 | 当前同时存在 TOML 与 JSON |
-| 可保留备份文件 | 但应避免误被当作生效配置 |
+| Backend config is managed by `BackendConfigService` | Synchronized into the backend registry at startup |
+| File format depends on the backend | TOML and JSON are both present today |
+| Backup files may exist | But they should not be mistaken for active configuration |
 
-## `data/logs/` 目录
+## `data/logs/` directory
 
-当前默认日志文件：
+Current default log files:
 
-| 文件 | 作用 |
+| File | Purpose |
 | --- | --- |
-| `data/logs/app.log` | 主运行日志 |
+| `data/logs/app.log` | Main runtime log |
 
-### 日志初始化逻辑
+### Log initialization logic
 
-- `src/server.ts` 在非测试环境下初始化文件日志
-- 日志目录默认由 `createFileLogSink({ dir: "data/logs" })` 创建
+- `src/server.ts` initializes file logging outside test environments
+- The log directory is created by default via `createFileLogSink({ dir: "data/logs" })`
 
-## 迁移场景
+## Migration scenarios
 
-### 场景 1：迁移到另一台机器
+### Scenario 1: migrate to another machine
 
-推荐步骤：
+Recommended steps:
 
-| 步骤 | 操作 |
+| Step | Action |
 | --- | --- |
-| 1 | 停止服务 |
-| 2 | 复制 `data/codex-im.db`、`data/codex-im.db-wal`、`data/codex-im.db-shm` |
-| 3 | 复制整个 `data/config/` |
-| 4 | 如需保留历史日志，复制 `data/logs/` |
-| 5 | 复制 `.env` 或重新配置环境变量 |
-| 6 | 确认新机器上的 `CODEX_WORKSPACE_CWD` 有效 |
-| 7 | 启动服务，自动执行 migration |
+| 1 | Stop the service |
+| 2 | Copy `data/codex-im.db`, `data/codex-im.db-wal`, and `data/codex-im.db-shm` |
+| 3 | Copy the entire `data/config/` directory |
+| 4 | If you need historical logs, copy `data/logs/` |
+| 5 | Copy `.env` or reconfigure environment variables |
+| 6 | Confirm `COLLABVIBE_WORKSPACE_CWD` is valid on the new machine |
+| 7 | Start the service; migrations run automatically |
 
-### 场景 2：只迁移数据库，不迁移日志
+### Scenario 2: migrate only the database, not logs
 
-可行，但需要同步：
+This is possible, but you still need to migrate:
 
 - `data/codex-im.db*`
 - `data/config/`
 - `.env`
 
-日志不是状态恢复必需项，但数据库与配置是。
+Logs are not required for state recovery, but the database and configuration are.
 
-### 场景 3：升级代码版本
+### Scenario 3: upgrade the code version
 
-推荐步骤：
+Recommended steps:
 
-| 步骤 | 操作 |
+| Step | Action |
 | --- | --- |
-| 1 | 备份整个 `data/` |
-| 2 | 更新代码 |
-| 3 | 启动服务 |
-| 4 | 让 `runMigrations()` 自动补齐 schema |
-| 5 | 验证 thread、approval、audit、snapshot 是否正常 |
+| 1 | Back up the entire `data/` directory |
+| 2 | Update the code |
+| 3 | Start the service |
+| 4 | Let `runMigrations()` fill in the schema automatically |
+| 5 | Verify that thread, approval, audit, and snapshot behavior is normal |
 
-## 备份建议
+## Backup recommendations
 
-| 类别 | 建议 |
+| Category | Recommendation |
 | --- | --- |
-| 数据库 | 定期备份 `data/codex-im.db*` |
-| backend 配置 | 将 `data/config/` 纳入版本化或备份 |
-| 日志 | 按需轮转与归档 |
-| workspace | 根据项目需要单独备份，不建议与 `data/` 混为一类 |
+| Database | Regularly back up `data/codex-im.db*` |
+| Backend config | Version or back up `data/config/` |
+| Logs | Rotate and archive as needed |
+| Workspace | Back up separately as needed by the project; do not treat it as the same class as `data/` |
 
-## 迁移后验证
+## Post-migration validation
 
-| 检查项 | 说明 |
+| Check | Description |
 | --- | --- |
-| 服务可启动 | migration 正常执行 |
-| 线程可恢复 | `project_threads`、`user_thread_bindings` 正常 |
-| backend 可用 | `data/config/` 被正确读取 |
-| 审批和审计可查询 | 主库数据完整 |
-| 日志可写 | `data/logs/` 权限正常 |
+| Service can start | Migration executes normally |
+| Threads can recover | `project_threads` and `user_thread_bindings` are valid |
+| Backend is usable | `data/config/` is read correctly |
+| Approvals and audit are queryable | Main database data is complete |
+| Logs are writable | `data/logs/` permissions are correct |

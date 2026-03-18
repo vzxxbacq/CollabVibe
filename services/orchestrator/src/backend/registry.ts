@@ -1,5 +1,5 @@
 import type { TransportType } from "../../../../packages/agent-core/src/backend-identity";
-import { defaultPluginDirForBackend } from "../../../../services/plugin/src/plugin-paths";
+import { defaultPluginDirForBackend } from "../../plugin/plugin-paths";
 
 export interface BackendDefinition {
     /** Unique name, e.g. "codex", "opencode", "claude-code" */

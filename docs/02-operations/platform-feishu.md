@@ -1,12 +1,12 @@
 ---
-title: Feishu 平台接入
+title: "Feishu Integration"
 layer: operations
 status: active
 ---
 
-# Feishu 平台接入
+# Feishu Integration
 
-该文档已迁移到总览章节，用于让新读者更早完成平台接入。
+This document has been moved into the overview section so new readers can complete platform integration earlier.
 
-- 新入口：[Feishu 平台接入](/00-overview/platform-feishu)
-- 保留本页仅为兼容历史链接
+- New entry: [Feishu Integration](/00-overview/platform-feishu)
+- This page is kept only for historical-link compatibility

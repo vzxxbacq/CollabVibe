@@ -1,21 +1,21 @@
 ---
-title: Slack 平台接入
+title: "Slack Integration"
 layer: overview
 status: active
 source_of_truth: packages/channel-slack/*, src/server.ts
 ---
 
-# Slack 平台接入
+# Slack Integration
 
-Slack 相关代码已具备基础输出与 Socket Mode 处理能力，但应用层尚未像 Feishu 一样完成完整接线。
+The Slack-related code already has foundational output and Socket Mode handling, but the application layer is not yet wired end-to-end the way Feishu is.
 
-## 当前代码能力
+## Current code capabilities
 
-| 模块 | 作用 |
+| Module | Responsibility |
 | --- | --- |
-| `packages/channel-slack/src/slack-socket-handler.ts` | 处理 Socket Mode 事件 |
-| `packages/channel-slack/src/slack-message-client.ts` | 调用 Slack Web API |
-| `packages/channel-slack/src/slack-output-adapter.ts` | 将统一输出渲染为 Slack Block Kit / Stream API |
+| `packages/channel-slack/src/slack-socket-handler.ts` | Handles Socket Mode events |
+| `packages/channel-slack/src/slack-message-client.ts` | Calls the Slack Web API |
+| `packages/channel-slack/src/slack-output-adapter.ts` | Renders unified output into Slack Block Kit / Stream API |
 
 ```mermaid
 flowchart LR
@@ -24,34 +24,54 @@ flowchart LR
   C --> D[Slack Block Kit / Stream API]
 ```
 
-![Slack 接入概览占位图](/placeholders/guide-image-placeholder.svg)
+![Slack integration overview placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 Slack App 配置总览截图，标出 Socket Mode、OAuth、Event Subscriptions 入口。
+> Placeholder: add a Slack App configuration overview screenshot and mark the Socket Mode, OAuth, and Event Subscriptions entry points.
 
-## 目标接入方式
+## Target integration shape
 
-| 项目 | 方案 |
+| Item | Approach |
 | --- | --- |
-| 事件接收 | Socket Mode |
-| 消息类型 | `message` / `app_mention` |
-| 交互类型 | `block_actions` |
-| 输出方式 | `chat.postMessage` / `chat.update` / `reactions.*` / Stream API |
+| Event intake | Socket Mode |
+| Message types | `message` / `app_mention` |
+| Interaction type | `block_actions` |
+| Output methods | `chat.postMessage` / `chat.update` / `reactions.*` / Stream API |
 
-## 创建 Slack App
+## Mapping Feishu cards to Slack Block Kit
 
-| 步骤 | 操作 |
+Slack does not have a built-in “mention the bot and show a native help card” mechanism. The help panel therefore has to be sent as an app-owned Block Kit message and updated in place through `block_actions`.
+
+| Feishu capability | Slack implementation |
 | --- | --- |
-| 1 | 在 Slack 开发者后台创建 App |
-| 2 | 启用 Bot User |
-| 3 | 启用 Socket Mode |
-| 4 | 创建 App-level Token |
-| 5 | 配置 Bot Token Scopes |
-| 6 | 配置 Event Subscriptions 与 Interactivity |
-| 7 | 将应用安装到目标 Workspace |
+| Empty `@bot` mention returns a help card | When `app_mention` / `message` matches empty text, `slack-message-handler` proactively sends the help panel message |
+| Switching panels inside a card | Update the same message in place via `chat.update` |
+| `card.action.trigger` | `block_actions` |
+| Main help card home | Block Kit `header + section + actions` |
+| Sub-panels (thread/history/skill/backend/turn) | Different block views in the same message |
+| Card forms | Prefer command-driven flows or modals; current thread creation uses a help-panel button plus a separate form message |
+| Approval buttons inside cards | Continue to use existing Block Kit button actions |
 
-![Slack 创建应用步骤占位图](/placeholders/guide-image-placeholder.svg)
+Constraints:
 
-> Placeholder：在这里插入 Slack App 创建流程截图，建议展示 Socket Mode 与 OAuth 页面。
+- Path A still applies: the Slack platform entry receives the event, the Platform layer parses it, shared commands or the orchestrator are invoked, and the Slack output layer renders the result.
+- Do not introduce Slack-specific backend identity or thread-state persistence fields.
+- The help panel is only UI navigation; it must not change the main data flow of `projectId -> threadRecord -> backendIdentity`.
+
+## Create the Slack App
+
+| Step | Action |
+| --- | --- |
+| 1 | Create an app in the Slack developer console |
+| 2 | Enable Bot User |
+| 3 | Enable Socket Mode |
+| 4 | Create an App-level Token |
+| 5 | Configure Bot Token Scopes |
+| 6 | Configure Event Subscriptions and Interactivity |
+| 7 | Install the app to the target workspace |
+
+![Slack app creation steps placeholder](/placeholders/guide-image-placeholder.svg)
+
+> Placeholder: add screenshots of the Slack App creation flow, ideally showing Socket Mode and OAuth pages.
 
 ```mermaid
 flowchart LR
@@ -61,78 +81,78 @@ flowchart LR
   D --> E[Install App]
 ```
 
-## 需要的 Token
+## Required tokens
 
-| Token | 用途 |
+| Token | Purpose |
 | --- | --- |
-| Bot User OAuth Token (`xoxb-`) | 调用 `chat.postMessage`、`chat.update`、`reactions.*` 等 Web API |
-| App-level Token (`xapp-`) | Socket Mode 建立 WebSocket 连接 |
+| Bot User OAuth Token (`xoxb-`) | Calls Web APIs such as `chat.postMessage`, `chat.update`, and `reactions.*` |
+| App-level Token (`xapp-`) | Establishes the WebSocket connection for Socket Mode |
 
 ```dotenv
 SLACK_BOT_TOKEN=xoxb-xxx
 SLACK_APP_TOKEN=xapp-xxx
 ```
 
-## 建议权限范围
+## Recommended scopes
 
-| Scope | 用途 |
+| Scope | Purpose |
 | --- | --- |
-| `app_mentions:read` | 接收 `app_mention` 事件 |
-| `chat:write` | 发送与更新消息 |
-| `reactions:write` | 添加/移除 emoji reaction |
-| `channels:history` | 读取公有频道消息事件 |
-| `groups:history` | 读取私有频道消息事件 |
-| `im:history` | 读取 DM 消息事件 |
-| `mpim:history` | 读取多人私信消息事件 |
-| `connections:write` | Socket Mode 建立连接（App-level Token） |
+| `app_mentions:read` | Receive `app_mention` events |
+| `chat:write` | Send and update messages |
+| `reactions:write` | Add / remove emoji reactions |
+| `channels:history` | Read public-channel message events |
+| `groups:history` | Read private-channel message events |
+| `im:history` | Read DM message events |
+| `mpim:history` | Read multi-party DM message events |
+| `connections:write` | Establish Socket Mode connections (App-level Token) |
 
-> 如果只计划通过 `app_mention` 驱动命令，可先最小化配置 `app_mentions:read` + `chat:write`，再根据接入范围补 `*:history`。
+> If you only plan to drive commands through `app_mention`, you can start with the minimum set: `app_mentions:read` + `chat:write`, then add the `*:history` scopes based on the target coverage.
 
-![Slack Scope 配置占位图](/placeholders/guide-image-placeholder.svg)
+![Slack scope configuration placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 OAuth Scope 页面截图，建议圈出最小权限集合。
+> Placeholder: add a screenshot of the OAuth Scopes page and highlight the minimum permission set.
 
-## 事件与交互
+## Events and interactions
 
-| 配置项 | 值 |
+| Setting | Value |
 | --- | --- |
 | Bot Event | `app_mention` |
 | Bot Event | `message.channels` |
 | Bot Event | `message.groups` |
 | Bot Event | `message.im` |
 | Bot Event | `message.mpim` |
-| Interactivity | 启用 Block Actions |
-| Socket Mode | 启用 |
+| Interactivity | Enable Block Actions |
+| Socket Mode | Enabled |
 
-![Slack 事件配置占位图](/placeholders/guide-image-placeholder.svg)
+![Slack events configuration placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 Event Subscriptions 与 Interactivity 配置截图。
+> Placeholder: add screenshots of Event Subscriptions and Interactivity configuration.
 
-## 与当前代码的对应关系
+## How the current code maps to Slack capabilities
 
-| Slack 能力 | 代码位置 |
+| Slack capability | Code location |
 | --- | --- |
-| 接收 `events_api` / `interactive` | `slack-socket-handler.ts` |
-| 处理 `message` / `app_mention` | `slack-socket-handler.ts` |
-| 处理 `block_actions` | `slack-socket-handler.ts` |
-| 发消息 | `chat.postMessage` |
-| 更新消息 | `chat.update` |
-| 流式消息 | `chat.startStream` / `chat.appendStream` / `chat.stopStream` |
-| reaction | `reactions.add` / `reactions.remove` |
+| Receive `events_api` / `interactive` | `slack-socket-handler.ts` |
+| Handle `message` / `app_mention` | `slack-socket-handler.ts` |
+| Handle `block_actions` | `slack-socket-handler.ts` |
+| Send messages | `chat.postMessage` |
+| Update messages | `chat.update` |
+| Stream messages | `chat.startStream` / `chat.appendStream` / `chat.stopStream` |
+| Reactions | `reactions.add` / `reactions.remove` |
 
-## 当前状态说明
+## Current status
 
-| 项目 | 状态 |
+| Item | Status |
 | --- | --- |
-| 底层包 | 已存在 |
-| 应用层 handler | 未完成 |
-| `src/server.ts` 装配 | 未完成 |
-| 生产可用性 | 需补完整接线与实测 |
+| Low-level package | Present |
+| Application-layer handler | Not finished |
+| `src/server.ts` wiring | Not finished |
+| Production readiness | Needs full wiring and real validation |
 
 ```bash
 rg -n "slack" packages/channel-slack src
 ```
 
-![Slack 验证视频占位图](/placeholders/guide-video-placeholder.svg)
+![Slack validation video placeholder](/placeholders/guide-video-placeholder.svg)
 
-> Placeholder：在这里插入 Slack 接入验证录屏；如果尚未完成，可替换为“待补录”说明视频封面。
+> Placeholder: add a Slack integration validation recording; if the integration is not complete yet, replace it with a “to be recorded” cover.

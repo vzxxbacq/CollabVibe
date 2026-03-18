@@ -1,7 +1,16 @@
-import { transformEvent, type AgentStreamOutput, type IMOutputMessage, type TransformContext } from "../../../../packages/channel-core/src/index";
+import { transformEvent, type TransformContext } from "../../../contracts/im/event-transformer";
+import type { IMOutputMessage } from "../../../contracts/im/im-output";
+import type { PlatformOutput } from "../../../contracts/im/platform-output";
 
 import { transformUnifiedAgentEvent } from "./transformer";
 import type { UnifiedAgentEvent } from "../../../../packages/agent-core/src/unified-agent-event";
+
+/**
+ * Callback that dispatches a PlatformOutput to the IM layer.
+ * Injected at the composition root (server.ts) — the orchestrator service
+ * never holds a direct reference to IM platform adapters.
+ */
+export type OutputDispatchFn = (chatId: string, output: PlatformOutput) => Promise<void>;
 
 interface RouteTarget extends TransformContext {
   threadName: string;
@@ -12,15 +21,15 @@ function projectThreadRouteKey(chatId: string, threadName: string): string {
 }
 
 export class AgentEventRouter {
-  private readonly outputAdapter: AgentStreamOutput;
+  private readonly dispatchOutput: OutputDispatchFn;
   private readonly persistMessage?: (chatId: string, message: IMOutputMessage) => Promise<void>;
 
   private readonly routes = new Map<string, RouteTarget>();
 
-  constructor(outputAdapter: AgentStreamOutput, options?: {
+  constructor(dispatchOutput: OutputDispatchFn, options?: {
     persistMessage?: (chatId: string, message: IMOutputMessage) => Promise<void>;
   }) {
-    this.outputAdapter = outputAdapter;
+    this.dispatchOutput = dispatchOutput;
     this.persistMessage = options?.persistMessage;
   }
 
@@ -48,59 +57,45 @@ export class AgentEventRouter {
     if (this.persistMessage) {
       await this.persistMessage(chatId, message);
     }
-    switch (message.kind) {
-      case "content":
-        await this.outputAdapter.appendContent(chatId, message.turnId, message.delta);
-        break;
-      case "reasoning":
-        await this.outputAdapter.appendReasoning(chatId, message.turnId, message.delta);
-        break;
-      case "plan":
-        await this.outputAdapter.appendPlan(chatId, message.turnId, message.delta);
-        break;
-      case "plan_update":
-        if (this.outputAdapter.updatePlan) {
-          await this.outputAdapter.updatePlan(chatId, message);
-        } else {
-          const summary = [message.explanation, ...message.plan.map((item) => `${item.status}: ${item.step}`)]
-            .filter(Boolean)
-            .join("\n");
-          await this.outputAdapter.appendPlan(chatId, message.turnId, summary);
-        }
-        break;
-      case "tool_output":
-        await this.outputAdapter.appendToolOutput(chatId, message);
-        break;
-      case "progress":
-        await this.outputAdapter.updateProgress(chatId, message);
-        break;
-      case "approval":
-        await this.outputAdapter.requestApproval(chatId, message);
-        break;
-      case "user_input":
-        await this.outputAdapter.requestUserInput(chatId, message);
-        break;
-      case "notification":
-        await this.outputAdapter.notify(chatId, message);
-        break;
-      case "turn_summary":
-        await this.outputAdapter.completeTurn(chatId, message);
-        break;
-      case "merge_review":
-        await this.outputAdapter.sendFileReview(chatId, message.review);
-        break;
-      case "merge_summary":
-        await this.outputAdapter.sendMergeSummary(chatId, message.summary);
-        break;
-      case "merge_timeout":
-        await this.outputAdapter.notify(chatId, {
-          kind: "notification", threadId: "", category: "warning",
-          title: `⏰ 合并审阅已超时`,
-          detail: `分支 ${message.branchName} 的合并审阅已超时，已自动取消`,
-        });
-        break;
-      default:
-        break;
+    await this.dispatchOutput(chatId, toPlatformOutput(message));
+  }
+}
+
+function toPlatformOutput(message: IMOutputMessage): PlatformOutput {
+  switch (message.kind) {
+    case "content":
+      return { kind: "content", data: message };
+    case "reasoning":
+      return { kind: "reasoning", data: message };
+    case "plan":
+      return { kind: "plan", data: message };
+    case "plan_update":
+      return { kind: "plan_update", data: message };
+    case "tool_output":
+      return { kind: "tool_output", data: message };
+    case "progress":
+      return { kind: "progress", data: message };
+    case "approval":
+      return { kind: "approval_request", data: message };
+    case "user_input":
+      return { kind: "user_input_request", data: message };
+    case "notification":
+      return { kind: "notification", data: message };
+    case "turn_summary":
+      return { kind: "turn_summary", data: message };
+    case "merge_review":
+      return { kind: "merge_review", data: message.review };
+    case "merge_summary":
+      return { kind: "merge_summary", data: message.summary };
+    case "merge_timeout":
+      return {
+        kind: "merge_timeout",
+        chatId: message.chatId,
+        branchName: message.branchName
+      };
+    default: {
+      const exhaustive: never = message;
+      return exhaustive;
     }
   }
 }

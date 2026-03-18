@@ -1,67 +1,67 @@
 ---
-title: Project 聚合迁移说明
+title: "Project Aggregate Migration"
 layer: development
 source_of_truth: services/orchestrator, services/persistence, AGENTS.md
 status: active
 ---
 
-# Project 聚合迁移说明
+# Project Aggregate Migration
 
-## 背景
+## Background
 
-旧模型把线程相关持久化数据绑定在 `chatId` 上，导致：
+The old model bound thread-related persistent data to `chatId`, which caused the following problems:
 
-- 删除群聊后重新绑定已有项目时，thread 历史不可见
-- chat 变更需要搬迁 thread / turn / snapshot
-- Project 明明是业务实体，却没有成为真正聚合根
+- after deleting a group chat and rebinding an existing project, thread history became invisible
+- chat changes required moving thread / turn / snapshot data
+- Project was clearly a business entity but was not treated as the real aggregate root
 
-## 本次迁移
+## This migration
 
-### 数据归属切换
+### Ownership shift
 
-旧：
+Old:
 
 ```text
 chatId -> thread / turn / snapshot / state
 ```
 
-新：
+New:
 
 ```text
 chatId -> projectId -> thread / turn / snapshot / state
 ```
 
-### 新规则
+### New rules
 
-1. `Project` 是聚合根
-2. `Project.chatId` 只是 1:1 平台绑定
-3. `ThreadRecord / TurnRecord / TurnSnapshotRecord / ThreadTurnState / UserThreadBinding` 全部归属 `projectId`
-4. `chatId` 保留为兼容与路由字段，不再是领域主键
+1. `Project` is the aggregate root
+2. `Project.chatId` is only a 1:1 platform binding
+3. `ThreadRecord / TurnRecord / TurnSnapshotRecord / ThreadTurnState / UserThreadBinding` all belong to `projectId`
+4. `chatId` remains only as a compatibility and routing field, not a domain primary key
 
-## 已清理历史层
+## Historical layers removed
 
 - `ThreadBindingService`
 - `ThreadBindingRepository`
 - `SqliteThreadBindingRepository`
 
-这些层本质上是在补“chat/project 到 thread 的额外映射”，在 Project 聚合模型下已经冗余。
+Those layers existed to patch in an extra “chat/project to thread” mapping. Under the Project aggregate model they are redundant.
 
-## 兼容策略
+## Compatibility strategy
 
-- 数据库表补充 `project_id`
-- 保留 `chat_id` 作为兼容读取与平台回显字段
-- orchestrator 内部统一先做 `chatId -> projectId`
+- add `project_id` to database tables
+- keep `chat_id` as a compatibility-read and platform-echo field
+- inside the orchestrator, always resolve `chatId -> projectId` first
 
-## 后续开发要求
+## Requirements for future development
 
-| 场景 | 正确做法 |
+| Scenario | Correct approach |
 | --- | --- |
-| 收到 IM 消息 | 先 `findProjectByChatId(chatId)` |
-| 查线程 | `ThreadRegistry.get(projectId, threadName)` |
-| 查 turn | `TurnRepository.getByTurnId(projectId, turnId)` |
-| 查 snapshot | `SnapshotRepository.listByThread(projectId, threadId)` |
-| 绑定用户线程 | `UserThreadBinding(projectId, userId, ...)` |
+| Receive an IM message | Resolve `findProjectByChatId(chatId)` first |
+| Query a thread | `ThreadRegistry.get(projectId, threadName)` |
+| Query a turn | `TurnRepository.getByTurnId(projectId, turnId)` |
+| Query a snapshot | `SnapshotRepository.listByThread(projectId, threadId)` |
+| Bind a user thread | `UserThreadBinding(projectId, userId, ...)` |
 
-## 禁止回退
+## Do not regress
 
-不要再新增任何以 `chatId` 为 thread 历史主键的新表或新接口，否则会重新引入群聊重绑类 bug。
+Do not add any new table or API that uses `chatId` as the primary key of thread history, or the group-chat rebinding bug class will return.

@@ -1,24 +1,24 @@
 ---
-title: Project 聚合架构
+title: "Project Aggregate Architecture"
 layer: architecture
 source_of_truth: AGENTS.md, services/orchestrator, services/persistence
 status: active
 ---
 
-# Project 聚合架构
+# Project Aggregate Architecture
 
-## 核心结论
+## Core conclusions
 
-- `Project` 是业务持久化的唯一聚合根
-- `Project` 与 `Chat` 保持 **1:1 绑定**
-- `Thread / Turn / Snapshot / ThreadTurnState / UserThreadBinding` 全部归属 `projectId`
-- `chatId` 只负责 IM 路由，不再承担线程历史数据主键职责
+- `Project` is the only aggregate root for business persistence
+- `Project` and `Chat` keep a **1:1 binding**
+- `Thread / Turn / Snapshot / ThreadTurnState / UserThreadBinding` all belong to `projectId`
+- `chatId` only participates in IM routing and no longer serves as the primary key for thread history
 
-## 聚合关系图
+## Aggregate relationship diagram
 
 ```mermaid
 flowchart TD
-  Chat[IM Chat\\nchatId] -->|1:1 bind| Project[ProjectRecord\\nprojectId]
+  Chat[IM Chat\nchatId] -->|1:1 bind| Project[ProjectRecord\nprojectId]
   Project --> Thread[ThreadRecord*]
   Project --> UserBinding[UserThreadBinding*]
   Thread --> Turn[TurnRecord*]
@@ -26,7 +26,7 @@ flowchart TD
   Thread --> Snapshot[TurnSnapshotRecord*]
 ```
 
-## 路径中的解析关系
+## Resolution path inside the main flow
 
 ```mermaid
 sequenceDiagram
@@ -42,20 +42,20 @@ sequenceDiagram
   OR-->>IM: render / stream output
 ```
 
-## 持久化主键原则
+## Persistent key principles
 
-| 数据 | 主归属 |
+| Data | Primary ownership |
 | --- | --- |
-| Project 配置 | `projectId` |
+| Project configuration | `projectId` |
 | ThreadRecord | `projectId + threadName` |
 | TurnRecord | `projectId + turnId` |
 | ThreadTurnState | `projectId + threadName` |
 | TurnSnapshotRecord | `projectId + threadId + turnId` |
 | UserThreadBinding | `projectId + userId` |
 
-## 收益
+## Benefits
 
-1. 群聊重绑不再丢失 thread 历史
-2. chat 生命周期与 project 历史状态解耦
-3. 领域归属与持久化归属一致
-4. `chatId -> projectId -> domain state` 的边界更清晰
+1. Rebinding a group chat no longer loses thread history
+2. Chat lifecycle is decoupled from project history state
+3. Domain ownership and persistence ownership are aligned
+4. The boundary of `chatId -> projectId -> domain state` becomes clearer

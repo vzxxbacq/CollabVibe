@@ -1,10 +1,12 @@
-import { TurnContext, createLogger } from "../../../../packages/channel-core/src/index";
-import type { IMOutputMessage } from "../../../../packages/channel-core/src/im-output";
-import type { CodexNotification } from "../../../../packages/codex-client/src/index";
+import { TurnState } from "../../../contracts/im/turn-state";
+import { createLogger } from "../../../../packages/logger/src/index";
+import type { TurnStateSnapshot } from "../../../contracts/im/turn-state";
+import type { IMOutputMessage } from "../../../contracts/im/im-output";
+import type { CodexNotification } from "../../../../packages/agent-core/src/transports/codex/index";
 import type { TurnDiffResult } from "../../../../packages/git-utils/src/commit";
 
 import { AgentEventRouter } from "./router";
-import { codexEventToUnifiedAgentEvent } from "../../../../packages/codex-client/src/codex-event-bridge";
+import { codexEventToUnifiedAgentEvent } from "../../../../packages/agent-core/src/transports/codex/codex-event-bridge";
 import type { UnifiedAgentEvent } from "../../../../packages/agent-core/src/unified-agent-event";
 import { transformUnifiedAgentEvent } from "./transformer";
 import { PlanTurnFinalizer } from "./plan-finalizer";
@@ -13,20 +15,18 @@ interface NotificationSource {
   onNotification(handler: (notification: CodexNotification | UnifiedAgentEvent) => void): void;
 }
 
-export interface RouteBinding {
+export interface ThreadRouteBinding {
   chatId: string;
   userId?: string;
   traceId?: string;
   threadName: string;
   threadId: string;
-  turnId: string;
   cwd?: string;
   turnMode?: "plan";
-  isMergeResolver?: boolean;
-  /** Phase 2: Agent resolving conflicts in worktree */
-  isMergeConflictResolver?: boolean;
-  /** Phase 2: single-file retry — filePath to re-check after Agent turn */
-  mergeRetryFilePath?: string;
+}
+
+export interface RouteBinding extends ThreadRouteBinding {
+  turnId: string;
 }
 
 /**
@@ -49,15 +49,12 @@ export interface PipelineCallbacks {
    * Returns the diff result (or null if no changes).
    */
   finishTurn(chatId: string, threadId: string, options?: { threadName?: string }): Promise<TurnDiffResult | null>;
-  onResolverTurnComplete(chatId: string, resolverName: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string }): Promise<void>;
-  /** Phase 2: Called when Agent finishes batch conflict resolution */
-  onMergeConflictResolved?(chatId: string, branchName: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string }): Promise<void>;
-  /** Phase 2: Called when Agent finishes retrying a single file */
-  onMergeFileRetryDone?(chatId: string, branchName: string, filePath: string, context?: { traceId?: string; threadId?: string; turnId?: string; userId?: string }): Promise<void>;
+  syncTurnState?(chatId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void>;
+  finalizeTurnState?(chatId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void>;
 }
 
 interface TurnContextEntry {
-  context: TurnContext;
+  context: TurnState;
   createdAt: number;
 }
 
@@ -65,8 +62,16 @@ function contextKey(chatId: string, turnId: string): string {
   return `${chatId}:${turnId}`;
 }
 
-function turnIdFromEvent(event: UnifiedAgentEvent, fallback: string): string {
-  return event.turnId && event.turnId.length > 0 ? event.turnId : fallback;
+function threadKey(route: ThreadRouteBinding): string {
+  return `${route.chatId}:${route.threadName}`;
+}
+
+function activeTurnKey(route: ThreadRouteBinding, turnId: string): string {
+  return `${threadKey(route)}:${turnId}`;
+}
+
+function turnIdFromEvent(event: UnifiedAgentEvent): string | null {
+  return event.turnId && event.turnId.length > 0 ? event.turnId : null;
 }
 
 function toUnified(notification: CodexNotification | UnifiedAgentEvent): UnifiedAgentEvent | null {
@@ -80,7 +85,10 @@ const log = createLogger("orchestrator");
 
 export class EventPipeline {
   private readonly contexts = new Map<string, TurnContextEntry>();
-  private readonly sourceRoutes = new WeakMap<NotificationSource, RouteBinding>();
+  private readonly sourceRoutes = new WeakMap<NotificationSource, ThreadRouteBinding>();
+  private readonly pendingTurns = new Map<string, ThreadRouteBinding>();
+  private readonly activeTurns = new Map<string, RouteBinding>();
+  private readonly latestTurnByThread = new Map<string, string>();
   private readonly attachedSources = new WeakSet<NotificationSource>();
   private readonly finishedTurns = new Set<string>();
   private readonly contextTtlMs: number;
@@ -99,19 +107,8 @@ export class EventPipeline {
     await this.eventRouter.routeMessage(chatId, message);
   }
 
-  bind(source: NotificationSource, route: RouteBinding): void {
+  attachSource(source: NotificationSource, route: ThreadRouteBinding): void {
     this.sourceRoutes.set(source, route);
-    this.planFinalizer.registerRoute(route);
-    this.eventRouter.registerRoute(route.chatId, {
-      chatId: route.chatId,
-      threadName: route.threadName,
-      threadId: route.threadId,
-      turnId: route.turnId
-    });
-
-    // Clear stale dedup entry — allows the new turn to complete even if a
-    // previous turn on the same bound-chat turn key was already finished.
-    this.finishedTurns.delete(`${route.chatId}:${route.turnId}`);
 
     if (this.attachedSources.has(source)) {
       return;
@@ -128,20 +125,52 @@ export class EventPipeline {
           chatId: activeRoute.chatId,
           threadName: activeRoute.threadName,
           threadId: activeRoute.threadId,
-          turnId: activeRoute.turnId,
           err: error instanceof Error ? error.message : String(error)
         }, "event pipeline notification handling failed");
       });
     });
   }
 
-  private getTurnContext(route: RouteBinding, turnId: string): TurnContext {
+  prepareTurn(route: ThreadRouteBinding): void {
+    this.pendingTurns.set(threadKey(route), route);
+  }
+
+  activateTurn(route: RouteBinding): void {
+    this.activeTurns.set(activeTurnKey(route, route.turnId), route);
+    this.latestTurnByThread.set(threadKey(route), route.turnId);
+    this.pendingTurns.delete(threadKey(route));
+    this.planFinalizer.registerRoute(route);
+    this.eventRouter.registerRoute(route.chatId, {
+      chatId: route.chatId,
+      threadName: route.threadName,
+      threadId: route.threadId,
+      turnId: route.turnId
+    });
+  }
+
+  async updateTurnMetadata(chatId: string, turnId: string, metadata: {
+    promptSummary?: string;
+    backendName?: string;
+    modelName?: string;
+    turnMode?: "plan";
+  }): Promise<boolean> {
+    const key = contextKey(chatId, turnId);
+    const entry = this.contexts.get(key);
+    if (!entry) {
+      return false;
+    }
+    entry.context.applyMetadata(metadata);
+    await this.callbacks.syncTurnState?.(chatId, turnId, entry.context.snapshot());
+    return true;
+  }
+
+  private getTurnContext(route: ThreadRouteBinding, turnId: string): TurnState {
     const key = contextKey(route.chatId, turnId);
     const existing = this.contexts.get(key);
     if (existing) {
       return existing.context;
     }
-    const created = new TurnContext(route.threadId, turnId, route.threadName);
+    const created = new TurnState(route.threadId, turnId, route.threadName);
     this.contexts.set(key, { context: created, createdAt: Date.now() });
     return created;
   }
@@ -154,14 +183,37 @@ export class EventPipeline {
     }
   }
 
-  private async handleNotification(route: RouteBinding, notification: CodexNotification | UnifiedAgentEvent): Promise<void> {
+  private resolveTurnRoute(sourceRoute: ThreadRouteBinding, event: UnifiedAgentEvent): RouteBinding | null {
+    const tKey = threadKey(sourceRoute);
+    const eventTurnId = turnIdFromEvent(event);
+    if (eventTurnId) {
+      const existing = this.activeTurns.get(activeTurnKey(sourceRoute, eventTurnId));
+      if (existing) {
+        return existing;
+      }
+      const pending = this.pendingTurns.get(tKey);
+      const activated: RouteBinding = {
+        ...(pending ?? sourceRoute),
+        turnId: eventTurnId
+      };
+      this.activateTurn(activated);
+      return activated;
+    }
+
+    const latestTurnId = this.latestTurnByThread.get(tKey);
+    if (!latestTurnId) {
+      return null;
+    }
+    return this.activeTurns.get(activeTurnKey(sourceRoute, latestTurnId)) ?? null;
+  }
+
+  private async handleNotification(route: ThreadRouteBinding, notification: CodexNotification | UnifiedAgentEvent): Promise<void> {
     const routeLog = log.child({
       chatId: route.chatId,
       traceId: route.traceId,
       userId: route.userId,
       threadName: route.threadName,
-      threadId: route.threadId,
-      turnId: route.turnId
+      threadId: route.threadId
     });
     this.pruneExpiredContexts(Date.now());
     const event = toUnified(notification);
@@ -170,20 +222,23 @@ export class EventPipeline {
       return;
     }
 
-    const turnId = turnIdFromEvent(event, route.turnId);
-    const callbackContext = { traceId: route.traceId, threadId: route.threadId, turnId, userId: route.userId };
-    const transformCtx = { chatId: route.chatId, threadId: route.threadId, turnId, threadName: route.threadName };
+    const turnRoute = this.resolveTurnRoute(route, event);
+    const turnId = turnRoute?.turnId ?? turnIdFromEvent(event) ?? "";
+    if (!turnRoute && !turnId) {
+      routeLog.debug({ eventType: event.type }, "event pipeline dropped event without resolvable turn context");
+      return;
+    }
+
+    const callbackContext = { traceId: (turnRoute ?? route).traceId, threadId: (turnRoute ?? route).threadId, turnId, userId: (turnRoute ?? route).userId };
+    const transformCtx = { chatId: route.chatId, threadId: (turnRoute ?? route).threadId, turnId, threadName: route.threadName };
     const message = transformUnifiedAgentEvent(event, transformCtx);
 
-    const shouldRouteToUi = !(route.isMergeConflictResolver);
+    const shouldRouteToUi = true;
     if (message) {
       this.planFinalizer.ingestMessage(route.chatId, message);
-      const turnContext = this.getTurnContext(route, turnId);
-      if (message.kind === "notification" && message.category === "token_usage") {
-        turnContext.setTokenUsage(message.tokenUsage);
-      } else if (message.kind === "notification" && message.lastAgentMessage) {
-        turnContext.setLastAgentMessage(message.lastAgentMessage);
-      }
+      const turnContext = this.getTurnContext(turnRoute ?? route, turnId);
+      turnContext.applyOutputMessage(message);
+      await this.callbacks.syncTurnState?.(route.chatId, turnId, turnContext.snapshot());
       if (shouldRouteToUi) {
         await this.eventRouter.routeMessage(route.chatId, message);
       }
@@ -192,9 +247,9 @@ export class EventPipeline {
     if (event.type === "approval_request") {
       this.callbacks.registerApprovalRequest({
         chatId: route.chatId,
-        userId: route.userId,
+        userId: (turnRoute ?? route).userId,
         approvalId: event.approvalId,
-        threadId: route.threadId,
+        threadId: (turnRoute ?? route).threadId,
         threadName: route.threadName,
         turnId,
         callId: event.callId,
@@ -213,7 +268,7 @@ export class EventPipeline {
       setTimeout(() => this.finishedTurns.delete(dedupKey), this.contextTtlMs);
 
       // Compute diff from git worktree (single source of truth) + auto-commit
-      const diff = await this.callbacks.finishTurn(route.chatId, route.threadId, {
+      const diff = await this.callbacks.finishTurn(route.chatId, (turnRoute ?? route).threadId, {
         threadName: route.threadName
       });
 
@@ -239,30 +294,18 @@ export class EventPipeline {
             stats: diff.stats
           }];
         }
+        turnContext.context.applyTurnSummary(summary);
+        await this.callbacks.finalizeTurnState?.(route.chatId, turnId, turnContext.context.snapshot());
         await this.eventRouter.routeMessage(route.chatId, summary);
         this.contexts.delete(key);
       }
       this.planFinalizer.unregister(route.chatId, turnId);
 
-      // Resolver thread completion → trigger post-resolution merge flow
-      if (event.type === "turn_complete" && route.isMergeResolver) {
-        this.callbacks.onResolverTurnComplete(route.chatId, route.threadName, callbackContext).catch((error) => {
-          routeLog.warn({ err: error instanceof Error ? error.message : String(error) }, "resolver completion callback failed");
-        });
-      }
-
-      // Phase 2: Merge conflict resolver turn completion
-      if (event.type === "turn_complete" && route.isMergeConflictResolver) {
-        if (route.mergeRetryFilePath) {
-          this.callbacks.onMergeFileRetryDone?.(route.chatId, route.threadName, route.mergeRetryFilePath, callbackContext)
-            .catch((error) => {
-              routeLog.warn({ err: error instanceof Error ? error.message : String(error), filePath: route.mergeRetryFilePath }, "merge file retry completion callback failed");
-            });
-        } else {
-          this.callbacks.onMergeConflictResolved?.(route.chatId, route.threadName, callbackContext)
-            .catch((error) => {
-              routeLog.warn({ err: error instanceof Error ? error.message : String(error) }, "merge conflict resolved callback failed");
-            });
+      if (turnRoute) {
+        this.activeTurns.delete(activeTurnKey(turnRoute, turnId));
+        const tKey = threadKey(turnRoute);
+        if (this.latestTurnByThread.get(tKey) === turnId) {
+          this.latestTurnByThread.delete(tKey);
         }
       }
     }

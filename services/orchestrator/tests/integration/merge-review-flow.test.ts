@@ -46,11 +46,24 @@ function makeContext(input: {
   repo: string;
   branchName: string;
   routeMessages: IMOutputMessage[];
-  agentApi?: { turnStart: (params: { threadId: string; input: Array<{ type: string; text: string }> }) => Promise<{ turn: { id: string } }> };
+  agentApi?: {
+    threadStart?: (params: { cwd?: string }) => Promise<{ thread: { id: string } }>;
+    turnStart: (params: { threadId: string; input: Array<{ type: string; text: string }> }) => Promise<{ turn: { id: string } }>;
+  };
 }): OrchestratorContext {
+  const defaultAgentApi = {
+    threadStart: vi.fn(async () => ({ thread: { id: "resolver-thread-1" } })),
+    turnStart: vi.fn(async () => ({ turn: { id: "turn-1" } }))
+  };
+  const agentApi = {
+    ...defaultAgentApi,
+    ...(input.agentApi ?? {})
+  };
   return {
     log: createLogger("merge-review-test"),
-    agentApiPool: {} as never,
+    agentApiPool: {
+      get: vi.fn(() => agentApi),
+    } as never,
     runtimeConfigProvider: {
       getProjectRuntimeConfig: vi.fn(async () => ({
         backend: createBackendIdentity("codex", "gpt-5-codex"),
@@ -67,18 +80,23 @@ function makeContext(input: {
     toProjectThreadKey: (chatId: string, threadName: string) => `${chatId}:${threadName}`,
     resolveProjectId: () => "proj-1",
     resolveThreadName: vi.fn(async () => input.branchName),
-    resolveAgentApi: vi.fn(async () => (input.agentApi ?? { turnStart: vi.fn(async () => ({ turn: { id: "turn-1" } })) }) as never),
+    resolveAgentApi: vi.fn(async () => agentApi as never),
     getSessionStateMachine: vi.fn(() => ({} as never)),
     getApprovalWaitManager: vi.fn(() => ({} as never)),
     ensureCanStartTurn: vi.fn(),
     finishSessionTurn: vi.fn(),
-    createThread: vi.fn(async () => ({} as never)),
+    createThread: vi.fn(async () => ({
+      threadId: "resolver-thread-1",
+      threadName: `${input.branchName}-resolver`,
+      cwd: input.repo,
+      api: agentApi as never,
+    })),
     getThreadRecord: vi.fn(() => ({ threadId: "thread-1" }) as never),
     markThreadMerged: vi.fn(),
     routeMessage: vi.fn(async (_chatId: string, message: IMOutputMessage) => {
       input.routeMessages.push(message);
     }),
-    bindTurnPipeline: vi.fn(() => true),
+    registerApprovalRequest: vi.fn(),
   };
 }
 
