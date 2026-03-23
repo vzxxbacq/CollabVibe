@@ -22,10 +22,10 @@ status: active
 | 系统装配 | `src/server.ts` |
 | Feishu 消息接入 | `src/feishu/feishu-message-handler.ts` |
 | Feishu 卡片交互 | `src/feishu/feishu-card-handler.ts` |
-| orchestrator 核心 | `services/orchestrator/src/orchestrator.ts` |
+| orchestrator 公共入口 | `services/index.ts` |
 | backend 身份模型 | `packages/agent-core/src/backend-identity.ts` |
 
 ## 推荐先读文档
 
-- [调用链与数据流](/zh/01-architecture/data-paths)
-- [分层隔离与模块契约](/zh/01-architecture/invariants)
+- [调用链与数据流](/zh/01-architecture/architecture)
+- [分层隔离与模块契约](/zh/01-architecture/architecture)

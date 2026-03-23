@@ -16,14 +16,14 @@
  *
  * Extracted from FeishuOutputAdapter for better cohesion.
  */
-import { StreamAggregator } from "../../../services/contracts/im/index";
-import { parseMergeResolverName } from "../../../services/contracts/im/merge-naming";
-import { createLogger } from "../../../packages/logger/src/index";
-import { DEFAULT_APP_LOCALE, type AppLocale } from "../../../services/contracts/im/app-locale";
-import type { IMTurnSummary } from "../../../services/contracts/im/im-output";
+import { StreamAggregator } from "../../common/stream-aggregator";
 
-import type { TurnCardDataProvider } from "../../../services/contracts/im/turn-card-data-provider";
-import { parseDiffFiles, splitDiffByFile } from "./diff-utils";
+import { createLogger } from "../../logging";
+import { DEFAULT_APP_LOCALE, type AppLocale } from "../../common/app-locale";
+import type { IMTurnSummary } from "../../../services/index";
+
+import type { TurnCardReader } from "../../common/types";
+
 import { getFeishuTurnCardStrings } from "./feishu-turn-card.strings";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -32,6 +32,10 @@ interface FeishuFileChangeState {
   filesChanged: string[];
   diffSummary: string;
   stats?: { additions: number; deletions: number };
+  /** Pre-parsed per-file summaries (provided by L2, may be absent for old data) */
+  diffFiles?: Array<{ file: string; status: "new" | "modified" | "deleted"; additions: number; deletions: number }>;
+  /** Pre-parsed per-file diff segments with content (provided by L2, may be absent for old data) */
+  diffSegments?: Array<{ file: string; status: "new" | "modified" | "deleted"; additions: number; deletions: number; content: string }>;
 }
 
 interface FeishuToolOutput {
@@ -68,7 +72,10 @@ interface HistoricalTurnCardInput {
   tokenUsage?: { input: number; output: number; total?: number };
   promptSummary?: string;
   agentNote?: string;
-  actionTaken?: "accepted" | "reverted" | "interrupted";
+  actionTaken?: "accepted" | "reverted" | "interrupting" | "interrupted";
+  interruptedBy?: string;
+  interruptRequestedAt?: string;
+  interruptedAt?: string;
   turnMode?: "plan";
 }
 
@@ -94,9 +101,14 @@ export interface TurnCardState {
   tokenUsage?: { input: number; output: number; total?: number };
   promptSummary?: string;
   agentNote?: string;
-  actionTaken?: "accepted" | "reverted" | "interrupted";
+  actionTaken?: "accepted" | "reverted" | "interrupting" | "interrupted";
+  interruptedBy?: string;
+  interruptRequestedAt?: string;
+  interruptedAt?: string;
   /** Turn mode — "plan" for plan mode, undefined for default agent mode */
   turnMode?: "plan";
+  /** Whether this turn belongs to a merge-resolver thread (L2 pre-computed) */
+  isMergeResolver?: boolean;
 }
 
 export interface TurnCardMessageClient {
@@ -135,6 +147,11 @@ interface IMPlanUpdate {
   turnId: string;
   explanation?: string;
   plan: Array<{ step: string; status: "pending" | "in_progress" | "completed" }>;
+}
+
+interface InterruptActionMeta {
+  actorName?: string;
+  requestedAt?: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -177,6 +194,13 @@ function historicalToolLine(tool: HistoricalToolState, locale: AppLocale = DEFAU
       ? s.completed
       : s.running;
   return `${icon} ${tool.label}`;
+}
+
+function formatEventTime(value?: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
 
 function truncateForStreaming(text: string, maxChars = 200): string {
@@ -298,7 +322,7 @@ export class TurnCardManager {
   private readonly cardThrottleMs: number;
 
 
-  private readonly turnCardDataProvider?: TurnCardDataProvider;
+  private readonly turnCardReader?: TurnCardReader;
   private readonly locale: AppLocale;
   private readonly log = createLogger("card");
 
@@ -309,10 +333,15 @@ export class TurnCardManager {
 
   constructor(
     private readonly client: TurnCardMessageClient,
-    options?: { cardThrottleMs?: number; locale?: AppLocale }
+    options?: {
+      cardThrottleMs?: number;
+      locale?: AppLocale;
+      turnCardReader?: TurnCardReader;
+    }
   ) {
     this.locale = options?.locale ?? DEFAULT_APP_LOCALE;
     this.cardThrottleMs = options?.cardThrottleMs ?? 5000;
+    this.turnCardReader = options?.turnCardReader;
   }
 
   // ── State Management ─────────────────────────────────────────────────────
@@ -336,6 +365,18 @@ export class TurnCardManager {
     };
     this.cardState.set(key, initial);
     return initial;
+  }
+
+  private isInterruptPending(state: TurnCardState | undefined): boolean {
+    return state?.actionTaken === "interrupting";
+  }
+
+  private isInterrupted(state: TurnCardState | undefined): boolean {
+    return state?.actionTaken === "interrupted";
+  }
+
+  private isTerminalInterrupted(state: TurnCardState | undefined): boolean {
+    return state?.actionTaken === "interrupting" || state?.actionTaken === "interrupted";
   }
 
   private nextTurnNumber(chatId: string, threadName: string): number {
@@ -465,11 +506,12 @@ export class TurnCardManager {
   // ── Stream Aggregation Delegates ─────────────────────────────────────────
 
   appendContent(chatId: string, turnId: string, delta: string): void {
+    if (this.isTerminalInterrupted(this.cardState.get(keyOf(chatId, turnId)))) return;
     if (this.supportsNativeStreaming()) {
       const state = this.getOrCreateState(chatId, turnId);
       state.message += delta;
       this.ensureCard(chatId, turnId)
-        .then(() => this.syncNativeStreamText(chatId, turnId, STREAM_MSG_ELEMENT_ID, this.renderStreamingMessage(state)))
+        .then(() => this.requestNativeStreamTextSync(chatId, turnId, STREAM_MSG_ELEMENT_ID, this.renderStreamingMessage(state), { reason: "appendContent" }))
         .catch((err) => { this.log.warn({ err, chatId, turnId }, "appendContent(native) error"); });
       return;
     }
@@ -487,11 +529,12 @@ export class TurnCardManager {
   }
 
   appendReasoning(chatId: string, turnId: string, delta: string): void {
+    if (this.isTerminalInterrupted(this.cardState.get(keyOf(chatId, turnId)))) return;
     if (this.supportsNativeStreaming()) {
       const state = this.getOrCreateState(chatId, turnId);
       state.thinking += delta;
       this.ensureCard(chatId, turnId)
-        .then(() => this.syncNativeStreamText(chatId, turnId, STREAM_THINK_ELEMENT_ID, this.renderStreamingThinking(state)))
+        .then(() => this.requestNativeStreamTextSync(chatId, turnId, STREAM_THINK_ELEMENT_ID, this.renderStreamingThinking(state), { reason: "appendReasoning" }))
         .catch((err) => { this.log.warn({ err, chatId, turnId }, "appendReasoning(native) error"); });
       return;
     }
@@ -509,11 +552,12 @@ export class TurnCardManager {
   }
 
   appendPlan(chatId: string, turnId: string, delta: string): void {
+    if (this.isTerminalInterrupted(this.cardState.get(keyOf(chatId, turnId)))) return;
     if (this.supportsNativeStreaming()) {
       const state = this.getOrCreateState(chatId, turnId);
       state.planDraft = (state.planDraft ?? "") + delta;
       this.ensureCard(chatId, turnId)
-        .then(() => this.syncNativeStreamText(chatId, turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state)))
+        .then(() => this.requestNativeStreamTextSync(chatId, turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state), { reason: "appendPlan" }))
         .catch((err) => { this.log.warn({ err, chatId, turnId }, "appendPlan(native) error"); });
       return;
     }
@@ -532,6 +576,7 @@ export class TurnCardManager {
 
   async updatePlan(chatId: string, update: IMPlanUpdate): Promise<void> {
     const state = this.getOrCreateState(chatId, update.turnId);
+    if (this.isTerminalInterrupted(state)) return;
     state.planState = {
       explanation: update.explanation,
       items: update.plan.filter((item) => item.step.trim().length > 0)
@@ -540,7 +585,7 @@ export class TurnCardManager {
     try {
       await this.ensureCard(chatId, update.turnId);
       if (this.supportsNativeStreaming()) {
-        await this.syncNativeStreamText(chatId, update.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state));
+        await this.requestNativeStreamTextSync(chatId, update.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state), { force: true, reason: "plan_update" });
       }
       await this.scheduleCardUpdate(chatId, update.turnId, true);
     } catch (err) {
@@ -549,6 +594,7 @@ export class TurnCardManager {
   }
 
   appendToolOutput(chatId: string, chunk: IMToolOutputChunk): void {
+    if (this.isTerminalInterrupted(this.cardState.get(keyOf(chatId, chunk.turnId)))) return;
     if (this.supportsNativeStreaming()) {
       const state = this.getOrCreateState(chatId, chunk.turnId);
       const existing = state.toolOutputs.get(chunk.callId);
@@ -562,7 +608,7 @@ export class TurnCardManager {
         state.toolOutputs.set(chunk.callId, { command: label, output: chunk.delta });
       }
       this.ensureCard(chatId, chunk.turnId)
-        .then(() => this.syncNativeStreamText(chatId, chunk.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state)))
+        .then(() => this.requestNativeStreamTextSync(chatId, chunk.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state), { reason: "appendToolOutput" }))
         .catch((err) => { this.log.warn({ err, chatId, turnId: chunk.turnId }, "appendToolOutput(native) error"); });
       return;
     }
@@ -590,6 +636,7 @@ export class TurnCardManager {
 
   async updateProgress(chatId: string, event: IMProgressEvent): Promise<void> {
     const state = this.getOrCreateState(chatId, event.turnId);
+    if (this.isTerminalInterrupted(state)) return;
     const s = getFeishuTurnCardStrings(this.locale);
     const icon = progressIcon(event, this.locale);
     const label = event.label;
@@ -631,9 +678,9 @@ export class TurnCardManager {
     if (this.supportsNativeStreaming()) {
       try {
         await this.ensureCard(chatId, event.turnId);
-        await this.syncNativeStreamText(chatId, event.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state));
-        await this.syncNativeStreamText(chatId, event.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state));
-        await this.syncNativeStreamText(chatId, event.turnId, STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state));
+        this.requestNativeStreamTextSync(chatId, event.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state), { reason: `progress:${event.phase}:${event.tool}` });
+        this.requestNativeStreamTextSync(chatId, event.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state), { reason: `progress:${event.phase}:${event.tool}` });
+        this.requestNativeStreamTextSync(chatId, event.turnId, STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state), { reason: `progress:${event.phase}:${event.tool}` });
       } catch (err) {
         this.log.warn({ err, chatId, turnId: event.turnId }, "updateProgress(native) error");
       }
@@ -659,12 +706,13 @@ export class TurnCardManager {
     if (!notif.turnId) return "passthrough";
 
     const state = this.getOrCreateState(chatId, notif.turnId);
+    const s = getFeishuTurnCardStrings(this.locale);
     if (notif.category === "token_usage" && notif.tokenUsage) {
       state.tokenUsage = notif.tokenUsage;
       // Refresh streaming footer so users see token count incrementing during reasoning gaps
-      if (this.supportsNativeStreaming()) {
+      if (this.supportsNativeStreaming() && !this.isTerminalInterrupted(state)) {
         await this.ensureCard(chatId, notif.turnId);
-        await this.syncNativeStreamText(chatId, notif.turnId, STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state));
+        await this.requestNativeStreamTextSync(chatId, notif.turnId, STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state), { force: true, reason: "notification:token_usage" });
       }
       return "handled";
     }
@@ -676,9 +724,12 @@ export class TurnCardManager {
     }
     if (notif.category === "agent_message" && notif.lastAgentMessage) {
       state.message = notif.lastAgentMessage;
+      if (this.isTerminalInterrupted(state)) {
+        return "handled";
+      }
       if (this.supportsNativeStreaming()) {
         await this.ensureCard(chatId, notif.turnId);
-        await this.syncNativeStreamText(chatId, notif.turnId, STREAM_MSG_ELEMENT_ID, this.renderStreamingMessage(state));
+        await this.requestNativeStreamTextSync(chatId, notif.turnId, STREAM_MSG_ELEMENT_ID, this.renderStreamingMessage(state), { force: true, reason: "notification:agent_message" });
         return "handled";
       }
       await this.scheduleCardUpdate(chatId, notif.turnId, true);
@@ -688,13 +739,26 @@ export class TurnCardManager {
       await this.ensureCard(chatId, notif.turnId);
       return "handled";
     }
+    if (notif.category === "turn_aborted") {
+      state.actionTaken = "interrupted";
+      state.interruptedAt = new Date().toISOString();
+      state.footer = s.footerAborted(s.actionInterrupted, toTokenText(state.tokenUsage), computeFileStats(state.fileChanges).totalFiles);
+      const session = this.nativeStreamSessions.get(keyOf(chatId, notif.turnId));
+      if (session?.streamingActive && !session.degraded) {
+        await this.disableNativeStreaming(chatId, notif.turnId);
+      }
+      this.cardDirty.add(keyOf(chatId, notif.turnId));
+      await this.flushCardUpdate(chatId, notif.turnId);
+      return "handled";
+    }
     // Show warning/status notifications as progress entries in the streaming card
     if (notif.category === "warning" && notif.turnId) {
+      if (this.isTerminalInterrupted(state)) return "handled";
       state.tools.push(`⚡ ${notif.title}`);
       if (this.supportsNativeStreaming()) {
         await this.ensureCard(chatId, notif.turnId);
-        await this.syncNativeStreamText(chatId, notif.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state));
-        await this.syncNativeStreamText(chatId, notif.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state));
+        this.requestNativeStreamTextSync(chatId, notif.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state), { reason: "notification:warning" });
+        this.requestNativeStreamTextSync(chatId, notif.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state), { reason: "notification:warning" });
         return "handled";
       }
       await this.scheduleCardUpdate(chatId, notif.turnId);
@@ -708,6 +772,7 @@ export class TurnCardManager {
   async completeTurn(chatId: string, summary: IMTurnSummary): Promise<void> {
     const s = getFeishuTurnCardStrings(this.locale);
     const state = this.getOrCreateState(chatId, summary.turnId);
+    const alreadyInterrupted = this.isTerminalInterrupted(state);
     state.tokenUsage = summary.tokenUsage;
     state.threadName = summary.threadName ?? state.threadName;
     if (summary.lastAgentMessage) {
@@ -719,25 +784,35 @@ export class TurnCardManager {
         state.fileChanges.push({
           filesChanged: detail.filesChanged,
           diffSummary: detail.diffSummary,
-          stats: detail.stats
+          stats: detail.stats,
+          diffFiles: detail.diffFiles ?? [],
+          diffSegments: detail.diffSegments ?? [],
         });
       }
     }
-    state.footer = s.footerDone(toTokenText(summary.tokenUsage), summary.filesChanged.length);
+    if (alreadyInterrupted) {
+      state.footer = s.footerAborted(s.actionInterrupted, toTokenText(summary.tokenUsage), summary.filesChanged.length);
+    } else {
+      state.footer = s.footerDone(toTokenText(summary.tokenUsage), summary.filesChanged.length);
+    }
 
     const nativeSession = this.nativeStreamSessions.get(keyOf(chatId, summary.turnId));
     if (nativeSession && nativeSession.streamingActive && !nativeSession.degraded) {
-      await this.syncNativeStreamText(chatId, summary.turnId, STREAM_MSG_ELEMENT_ID, this.renderStreamingMessage(state));
-      await this.syncNativeStreamText(chatId, summary.turnId, STREAM_THINK_ELEMENT_ID, this.renderStreamingThinking(state));
-      await this.syncNativeStreamText(chatId, summary.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state));
-      await this.syncNativeStreamText(chatId, summary.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state));
-      await this.syncNativeStreamText(chatId, summary.turnId, STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state));
+      await this.requestNativeStreamTextSync(chatId, summary.turnId, STREAM_MSG_ELEMENT_ID, this.renderStreamingMessage(state), { force: true, reason: "completeTurn:message" });
+      await this.requestNativeStreamTextSync(chatId, summary.turnId, STREAM_THINK_ELEMENT_ID, this.renderStreamingThinking(state), { force: true, reason: "completeTurn:thinking" });
+      await this.requestNativeStreamTextSync(chatId, summary.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state), { force: true, reason: "completeTurn:progress" });
+      await this.requestNativeStreamTextSync(chatId, summary.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state), { force: true, reason: "completeTurn:tools" });
+      await this.requestNativeStreamTextSync(chatId, summary.turnId, STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state), { force: true, reason: "completeTurn:footer" });
       await this.disableNativeStreaming(chatId, summary.turnId);
       await this.syncNativeActionElement(chatId, summary.turnId);
     }
 
     this.cardDirty.add(keyOf(chatId, summary.turnId));
     await this.flushCardUpdate(chatId, summary.turnId);
+
+    if (alreadyInterrupted) {
+      return;
+    }
 
     // Pin 卡片 + 发送完成提醒
     const key = keyOf(chatId, summary.turnId);
@@ -772,20 +847,74 @@ export class TurnCardManager {
 
   // ── Card Action (Accept / Revert / Interrupt) ────────────────────────────
 
-  async updateCardAction(chatId: string, turnId: string, action: "accepted" | "reverted" | "interrupted"): Promise<Record<string, unknown> | null> {
+  prepareInterruptingCard(chatId: string, turnId: string, meta?: InterruptActionMeta): Record<string, unknown> | null {
+    const key = keyOf(chatId, turnId);
+    const state = this.cardState.get(key);
+    this.log.info({ key, hasState: !!state }, "prepareInterruptingCard");
+    if (!state) {
+      this.log.warn({ key }, "prepareInterruptingCard: no cached state");
+      return null;
+    }
+    if (this.isInterrupted(state)) {
+      return this.renderCard(state);
+    }
+    state.actionTaken = "interrupting";
+    state.interruptedBy = meta?.actorName ?? state.interruptedBy;
+    state.interruptRequestedAt = meta?.requestedAt ?? new Date().toISOString();
+    state.footer = getFeishuTurnCardStrings(this.locale).footerAborted(
+      getFeishuTurnCardStrings(this.locale).actionInterrupting,
+      toTokenText(state.tokenUsage),
+      computeFileStats(state.fileChanges).totalFiles
+    );
+    return this.renderCard(state);
+  }
+
+  async finalizeInterruptAction(chatId: string, turnId: string): Promise<void> {
+    const key = keyOf(chatId, turnId);
+    const state = this.cardState.get(key);
+    this.log.info({ key, hasState: !!state }, "finalizeInterruptAction");
+    if (!state) {
+      return;
+    }
+    const session = this.nativeStreamSessions.get(key);
+    if (session?.streamingActive && !session.degraded) {
+      await this.disableNativeStreaming(chatId, turnId);
+    }
+    this.cardDirty.add(key);
+    await this.flushCardUpdate(chatId, turnId);
+  }
+
+  async cancelInterruptingCard(chatId: string, turnId: string): Promise<void> {
+    const key = keyOf(chatId, turnId);
+    const state = this.cardState.get(key);
+    this.log.info({ key, hasState: !!state }, "cancelInterruptingCard");
+    if (!state || state.actionTaken !== "interrupting") {
+      return;
+    }
+    state.actionTaken = undefined;
+    state.footer = "";
+    this.cardDirty.add(key);
+    await this.flushCardUpdate(chatId, turnId);
+  }
+
+  async updateCardAction(chatId: string, turnId: string, action: "accepted" | "reverted" | "interrupting" | "interrupted", meta?: InterruptActionMeta): Promise<Record<string, unknown> | null> {
     const key = keyOf(chatId, turnId);
     let state = this.cardState.get(key);
     this.log.info({ key, action, hasState: !!state }, "updateCardAction");
 
     // 从 L2 TurnCardDataProvider 恢复卡片状态（重启后恢复）
-    if (!state && this.turnCardDataProvider) {
+    if (!state && this.turnCardReader) {
       try {
-        const data = await this.turnCardDataProvider.getTurnCardData(chatId, turnId);
+        const projectId = this.turnCardReader.resolveProjectId(chatId);
+        if (!projectId) {
+          throw new Error(`project not found for chatId: ${chatId}`);
+        }
+        const data = await this.turnCardReader.getTurnCardData({ projectId, turnId });
         if (data) {
           this.log.info({ key }, "updateCardAction: recovered state from L2");
           const s = getFeishuTurnCardStrings(this.locale);
           state = {
-            chatId: data.chatId, turnId: data.turnId,
+            chatId, turnId: data.turnId,
             threadName: data.threadName,
             turnNumber: data.turnNumber,
             thinking: data.reasoning ?? "",
@@ -815,17 +944,43 @@ export class TurnCardManager {
       this.log.warn({ key }, "updateCardAction: no state, cannot update card");
       return null;
     }
+    if (action === "interrupting" && this.isInterrupted(state)) {
+      return this.renderCard(state);
+    }
     state.actionTaken = action;
+    if (action === "interrupting") {
+      state.interruptedBy = meta?.actorName ?? state.interruptedBy;
+      state.interruptRequestedAt = meta?.requestedAt ?? new Date().toISOString();
+      state.footer = getFeishuTurnCardStrings(this.locale).footerAborted(
+        getFeishuTurnCardStrings(this.locale).actionInterrupting,
+        toTokenText(state.tokenUsage),
+        computeFileStats(state.fileChanges).totalFiles
+      );
+      const session = this.nativeStreamSessions.get(key);
+      if (session?.streamingActive && !session.degraded) {
+        await this.disableNativeStreaming(chatId, turnId);
+      }
+      this.cardDirty.add(key);
+      await this.flushCardUpdate(chatId, turnId);
+      return this.renderCard(state);
+    }
+    if (action === "interrupted") {
+      state.interruptedBy = meta?.actorName ?? state.interruptedBy;
+      state.interruptRequestedAt = meta?.requestedAt ?? state.interruptRequestedAt;
+      state.interruptedAt = meta?.requestedAt ?? state.interruptedAt ?? new Date().toISOString();
+      state.footer = getFeishuTurnCardStrings(this.locale).footerAborted(
+        getFeishuTurnCardStrings(this.locale).actionInterrupted,
+        toTokenText(state.tokenUsage),
+        computeFileStats(state.fileChanges).totalFiles
+      );
+      const session = this.nativeStreamSessions.get(key);
+      if (session?.streamingActive && !session.degraded) {
+        await this.disableNativeStreaming(chatId, turnId);
+      }
+      this.cardDirty.add(key);
+      await this.flushCardUpdate(chatId, turnId);
+    }
     const card = this.renderCard(state);
-
-    // 清理内存状态，保留 SQLite 记录
-    this.log.info("updateCardAction: card rendered, cleaning up memory");
-    this.cardTokenByTurn.delete(key);
-    this.cardCreatePending.delete(key);
-    this.cardState.delete(key);
-    const timer = this.cardUpdateTimers.get(key);
-    if (timer) { clearTimeout(timer); this.cardUpdateTimers.delete(key); }
-    this.cardDirty.delete(key);
     return card;
   }
 
@@ -837,17 +992,20 @@ export class TurnCardManager {
 
   renderCard(state: TurnCardState): Record<string, unknown> {
     const isDone = state.footer.startsWith("✅");
-    if (!isDone) {
+    const isInterrupting = this.isInterruptPending(state);
+    const isInterrupted = this.isInterrupted(state);
+    const isRunning = !isDone && !isInterrupting && !isInterrupted;
+    if (isRunning) {
       const streamingSession = this.nativeStreamSessions.get(keyOf(state.chatId, state.turnId));
       if (streamingSession && streamingSession.streamingActive && !streamingSession.degraded) {
         return this.renderStreamingCard(state);
       }
     }
     const s = getFeishuTurnCardStrings(this.locale);
-    const statusText = isDone ? s.statusDone : s.statusRunning;
-    const statusColor = isDone ? "green" : "blue";
-    const headerTemplate = isDone ? "green" : "turquoise";
-    const headerIcon = isDone ? "done_outlined" : "loading_outlined";
+    const statusText = isDone ? s.statusDone : isInterrupting ? s.actionInterrupting : isInterrupted ? s.statusAbortedLabel : s.statusRunning;
+    const statusColor = isDone ? "green" : isInterrupting ? "blue" : isInterrupted ? "red" : "blue";
+    const headerTemplate = isDone ? "green" : isInterrupting ? "turquoise" : isInterrupted ? "red" : "turquoise";
+    const headerIcon = isDone ? "done_outlined" : isInterrupting ? "loading_outlined" : isInterrupted ? "close_outlined" : "loading_outlined";
     const tokenText = toTokenText(state.tokenUsage);
 
     // ── File change stats (for header tags + button label) ─────────────
@@ -876,8 +1034,25 @@ export class TurnCardManager {
         ? state.message.slice(0, 3000) + `\n\n${s.truncated}`
         : state.message;
       bodyElements.push({ tag: "markdown", content: msg });
+    } else if (isInterrupting) {
+      bodyElements.push(greyText(s.actionInterrupting));
     } else if (!isDone && state.tools.length === 0 && state.toolOutputs.size === 0 && state.fileChanges.length === 0) {
       bodyElements.push(greyText(s.waitingOutput));
+    }
+
+    if (state.interruptedBy || state.interruptRequestedAt || state.interruptedAt) {
+      bodyElements.push({ tag: "hr" });
+      if (state.interruptedBy) {
+        bodyElements.push(greyText(isInterrupted ? s.interruptedBy(state.interruptedBy) : s.interruptRequestedBy(state.interruptedBy)));
+      }
+      const requestedAt = formatEventTime(state.interruptRequestedAt);
+      if (requestedAt && !isInterrupted) {
+        bodyElements.push(greyText(s.interruptRequestedAt(requestedAt)));
+      }
+      const interruptedAt = formatEventTime(state.interruptedAt);
+      if (interruptedAt && isInterrupted) {
+        bodyElements.push(greyText(s.interruptedAt(interruptedAt)));
+      }
     }
 
     // Thinking
@@ -977,7 +1152,7 @@ export class TurnCardManager {
     }
 
     // ── Action buttons — interactive_container style (matching /help) ────
-    if (!isDone) {
+    if (isRunning) {
       bodyElements.push({ tag: "hr" });
       bodyElements.push({
         tag: "interactive_container",
@@ -1006,6 +1181,9 @@ export class TurnCardManager {
           ]
         }]
       });
+    } else if (isInterrupting || isInterrupted) {
+      bodyElements.push({ tag: "hr" });
+      bodyElements.push(greyText(isInterrupting ? s.actionInterrupting : s.actionInterrupted));
     } else if (!state.actionTaken && state.fileChanges.length > 0) {
       bodyElements.push({ tag: "hr" });
       bodyElements.push({
@@ -1055,6 +1233,7 @@ export class TurnCardManager {
       bodyElements.push({ tag: "hr" });
       const actionLabel = state.actionTaken === "accepted" ? s.actionAccepted
         : state.actionTaken === "reverted" ? s.actionReverted
+          : state.actionTaken === "interrupting" ? s.actionInterrupting
           : state.actionTaken === "interrupted" ? s.actionInterrupted
             : state.actionTaken ?? s.actionProcessed;
       bodyElements.push(greyText(actionLabel));
@@ -1062,11 +1241,11 @@ export class TurnCardManager {
 
     // ── Header title: <Mode>: keywords ────────────────────────────────
     const modeLabel = state.turnMode === "plan" ? s.planMode : s.agentMode;
-    const headerTitle = isDone
+    const headerTitle = isDone || isInterrupted
       ? (state.promptSummary
           ? `${modeLabel}: ${state.promptSummary}`
           : modeLabel)
-      : `${modeLabel} ⏳`;
+      : isInterrupting ? `${modeLabel} ⏳` : `${modeLabel} ⏳`;
 
     return {
       schema: "2.0",
@@ -1124,6 +1303,9 @@ export class TurnCardManager {
       promptSummary: input.promptSummary,
       agentNote: input.agentNote ? s.childAgentNote(input.agentNote) : undefined,
       actionTaken: input.actionTaken,
+      interruptedBy: input.interruptedBy,
+      interruptRequestedAt: input.interruptRequestedAt,
+      interruptedAt: input.interruptedAt,
       turnMode: input.turnMode
     };
   }
@@ -1213,6 +1395,9 @@ export class TurnCardManager {
 
   private async syncNativeStreamText(chatId: string, turnId: string, elementId: string, content: string): Promise<void> {
     const key = keyOf(chatId, turnId);
+    if (this.isTerminalInterrupted(this.cardState.get(key))) {
+      return;
+    }
     const session = this.nativeStreamSessions.get(key);
     if (!session || session.degraded || !session.streamingActive) {
       this.cardDirty.add(key);
@@ -1230,7 +1415,13 @@ export class TurnCardManager {
         await this.client.streamCardElement!(session.cardId, elementId, normalized, session.sequence);
       })
       .catch(async (error) => {
-        this.log.warn({ chatId, turnId, elementId, err: error instanceof Error ? error.message : String(error) }, "native stream failed; degrading to legacy card update");
+        const rateLimited = this.isFeishuRateLimitError(error);
+      this.log.warn(
+          { chatId, turnId, elementId, err: error instanceof Error ? error.message : String(error), rateLimited },
+          rateLimited
+            ? "native stream rate-limited; degrading to legacy card update"
+            : "native stream failed; degrading to legacy card update"
+        );
         session.degraded = true;
         session.streamingActive = false;
         this.cardDirty.add(key);
@@ -1239,15 +1430,45 @@ export class TurnCardManager {
     await session.pending;
   }
 
+  private requestNativeStreamTextSync(
+    chatId: string,
+    turnId: string,
+    elementId: string,
+    content: string,
+    options?: { force?: boolean; reason?: string }
+  ): Promise<void> {
+    this.log.info({
+      chatId,
+      turnId,
+      elementId,
+      reason: options?.reason ?? "unknown",
+      contentLength: (content || " ").length,
+      force: options?.force ?? false
+    }, "native stream sync immediate");
+    return this.syncNativeStreamText(chatId, turnId, elementId, content);
+  }
+
+  private isFeishuRateLimitError(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+      return false;
+    }
+    const maybeCode = (error as { code?: unknown; details?: { code?: unknown } }).code;
+    const detailsCode = (error as { details?: { code?: unknown } }).details?.code;
+    return maybeCode === 230020 || detailsCode === 230020;
+  }
+
   private async disableNativeStreaming(chatId: string, turnId: string): Promise<void> {
     const session = this.nativeStreamSessions.get(keyOf(chatId, turnId));
     if (!session || session.degraded || !session.streamingActive) {
       return;
     }
+    // Flip the in-memory gate immediately so any late async stream updates
+    // fall back to card rendering instead of continuing to push streaming deltas
+    // after the turn has entered interrupt/finalization flow.
+    session.streamingActive = false;
     session.pending = session.pending.then(async () => {
       session.sequence += 1;
       await this.client.updateCardSettings!(session.cardId, { config: { streaming_mode: false } }, session.sequence);
-      session.streamingActive = false;
     });
     await session.pending;
   }
@@ -1361,7 +1582,7 @@ export class TurnCardManager {
    */
   private renderStreamingInterruptButton(state: TurnCardState): Record<string, unknown> {
     const s = getFeishuTurnCardStrings(this.locale);
-    const isMergeResolver = parseMergeResolverName(state.threadName ?? "") !== null;
+    const isMergeResolver = state.isMergeResolver ?? false;
     const buttonLabel = isMergeResolver ? "**中断当前 Turn**" : s.stopExecution;
     const buttonHint = isMergeResolver ? "停止 Agent 当前轮次" : s.stopAgentTask;
     return {
@@ -1443,6 +1664,7 @@ export class TurnCardManager {
       ? s.doneNoFileChanges
       : state.actionTaken === "accepted" ? s.actionAccepted
         : state.actionTaken === "reverted" ? s.actionReverted
+          : state.actionTaken === "interrupting" ? s.actionInterrupting
           : state.actionTaken === "interrupted" ? s.actionInterrupted
             : s.actionProcessed;
     return {
@@ -1757,7 +1979,7 @@ export class TurnCardManager {
     });
     const segments: Array<{ file: string; content: string; status: string; additions: number; deletions: number }> = [];
     for (const change of uniqueFileChanges) {
-      const perFileSegments = splitDiffByFile(change.diffSummary);
+      const perFileSegments = change.diffSegments ?? [];
       for (const seg of perFileSegments) {
         segments.push(seg);
       }
@@ -1775,7 +1997,7 @@ function computeFileStats(fileChanges: TurnCardState["fileChanges"]): { totalFil
     const key = change.filesChanged.sort().join(",");
     if (seen.has(key)) continue;
     seen.add(key);
-    const diffFiles = parseDiffFiles(change.diffSummary);
+    const diffFiles = change.diffFiles ?? [];
     totalFiles += diffFiles.length;
     totalAdd += diffFiles.reduce((s, f) => s + f.additions, 0);
     totalDel += diffFiles.reduce((s, f) => s + f.deletions, 0);

@@ -1,4 +1,4 @@
-import type { AgentApi, RuntimeConfig, TurnInputItem } from "../../types";
+import type { AgentApi, RuntimeConfig, AgentTurnInputItem } from "../../types";
 import type { UnifiedAgentEvent } from "../../unified-agent-event";
 import { createLogger } from "../../../../logger/src/index";
 
@@ -13,6 +13,7 @@ export class AcpApiAdapter implements AgentApi {
   private currentSessionId = "";
   private currentTurnId = "";
   private turnFinished = false;
+  private pendingMode: "plan" | "code" = "code";
   /** Whether a session has been established in this process (via sessionNew or sessionLoad) */
   private sessionEstablished = false;
   /** RuntimeConfig from factory creation — used for auto-load fallback */
@@ -74,10 +75,13 @@ export class AcpApiAdapter implements AgentApi {
     return { thread: { id: response.session.id } };
   }
 
-  async turnStart(params: { threadId: string; traceId?: string; input: TurnInputItem[] }): Promise<{ turn: { id: string } }> {
+  async turnStart(params: { threadId: string; traceId?: string; input: AgentTurnInputItem[] }): Promise<{ turn: { id: string } }> {
     if (!this.sessionEstablished) {
       throw new Error("ACP session not established — call ensureSession() or threadStart() first");
     }
+    const turnMode = this.pendingMode;
+    this.client.setLogCorrelation({ turnMode });
+    await this.client.setMode(this.currentSessionId, turnMode);
     // Map rich TurnInputItem[] to ACP-native input format
     const acpInput = params.input.map(item => {
       switch (item.type) {
@@ -92,12 +96,14 @@ export class AcpApiAdapter implements AgentApi {
       traceId: params.traceId,
       input: acpInput
     });
+    this.pendingMode = "code";
     this.currentTurnId = result.turn.id;
     this.turnFinished = false;
     return result;
   }
 
   async setMode(mode: "plan" | "code"): Promise<void> {
+    this.pendingMode = mode;
     if (!this.sessionEstablished) {
       log.warn("setMode called before session established — skipping");
       return;

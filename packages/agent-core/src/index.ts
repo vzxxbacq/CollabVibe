@@ -13,9 +13,6 @@ export type {
   CodexServerCmdResult
 } from "./backend-config-types";
 
-// Constants
-export { MAIN_THREAD_NAME, SYSTEM_USER_ID } from "./constants";
-
 // Types
 export type {
   RuntimeConfig,
@@ -23,7 +20,8 @@ export type {
   ApprovalAwareAgentApi,
   AgentApiPool,
   AgentApiFactory,
-  RuntimeConfigProvider
+  RuntimeConfigProvider,
+  AgentTurnInputItem
 } from "./types";
 
 // Unified event types
@@ -48,13 +46,6 @@ export { StdioRpcTransport, spawnStdioRpcTransport } from "./stdio-transport";
 // Process management
 export { AgentProcessManager } from "./agent-process-manager";
 export type { ManagedProcess, ProcessSpawnConfig } from "./agent-process-manager";
-
-// Codex protocol event type (re-exported so channel-core doesn't depend on codex-client directly)
-export type { EventMsg } from "./transports/codex/generated/EventMsg";
-
-// Transport implementations (merged from codex-client + acp-client)
-export { CodexProtocolApiFactory } from "./transports/codex/codex-api-factory";
-export { AcpApiFactory } from "./transports/acp/acp-api-factory";
 
 // ── Transport factory assembly ──────────────────────────────────────────────
 // Exposes a public API so L2 can obtain transport factories without importing

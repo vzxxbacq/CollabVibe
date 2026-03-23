@@ -9,11 +9,9 @@ const reportPath = path.join(rootDir, 'docs', 'review', 'phase1', 'module-test-r
 const reportJsonPath = path.join(rootDir, 'docs', 'review', 'phase1', 'module-test-report.json');
 
 const moduleRuns = [
-  { name: 'l0', script: 'test:l0' },
   { name: 'l1', script: 'test:l1' },
   { name: 'l2', script: 'test:l2' },
-  { name: 'l3', script: 'test:l3' },
-  { name: 'e2e', script: 'test:e2e' }
+  { name: 'app', script: 'test:app' },
 ];
 
 fs.mkdirSync(resultsDir, { recursive: true });

@@ -178,6 +178,38 @@ Docker 应作为官方支持的部署封装，而不是唯一运行路径。
 - backend 若依赖宿主机 CLI，应在文档中明确透传方案
 - backend 若未来支持独立容器，也应通过显式编排接入，不应写死在应用镜像里
 
+## 流式节流调参
+
+Path B 的流式节流统一由 L2 `EventPipeline` / `StreamOutputCoordinator` 负责，Feishu / Slack 渠道层不再承担业务级时间窗口聚合。
+
+仅当你需要在生产环境中调优高频流式输出时，再使用以下环境变量：
+
+| 变量名 | 默认值 | 含义 |
+| --- | --- | --- |
+| `COLLABVIBE_STREAM_PERSIST_WINDOW_MS` | `500` | 普通流式状态持久化的最小间隔 |
+| `COLLABVIBE_STREAM_PERSIST_MAX_WAIT_MS` | `2000` | dirty 流式状态允许等待落盘的最长时间 |
+| `COLLABVIBE_STREAM_PERSIST_MAX_CHARS` | `2048` | 达到该字符阈值时提前触发持久化 flush |
+| `COLLABVIBE_STREAM_UI_WINDOW_MS` | `400` | 普通 UI 流式输出 flush 的最小间隔 |
+| `COLLABVIBE_STREAM_UI_MAX_WAIT_MS` | `1200` | 缓冲中的 UI 流式输出允许等待的最长时间 |
+| `COLLABVIBE_STREAM_UI_MAX_CHARS` | `1024` | 达到该字符阈值时提前触发 UI flush |
+
+运维建议：
+
+- 优先使用默认值；默认参数的目标是在保留关键事件即时可见的前提下降低高频 delta 扇出
+- `*_WINDOW_MS` 越大，写入/推送频率越低，但用户感知延迟也越高
+- `*_MAX_WAIT_MS` 更适合作为兜底上限，而不是主调节手段
+- 如果 backend 会输出超大 delta 或非常密集的工具输出，可优先调整 `*_MAX_CHARS`
+- `turn_complete`、`turn_aborted` 等终态事件仍会强制 flush，不受这些窗口限制
+- 非法值或小于等于 0 的值会被忽略，系统继续使用默认值
+
+示例：
+
+```bash
+export COLLABVIBE_STREAM_PERSIST_WINDOW_MS=700
+export COLLABVIBE_STREAM_UI_WINDOW_MS=500
+export COLLABVIBE_STREAM_UI_MAX_WAIT_MS=1500
+```
+
 ## 文档口径要求
 
 发布后，所有用户文档应统一以下口径：

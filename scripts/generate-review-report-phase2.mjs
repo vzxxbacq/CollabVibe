@@ -13,11 +13,9 @@ const reportJsonPath = path.join(reviewDir, 'module-test-report.json');
 const liveReportPath = path.join(reviewDir, 'live-codex-report.md');
 
 const moduleRuns = [
-  { name: 'l0', script: 'test:l0', type: 'vitest', group: 'logic' },
   { name: 'l1', script: 'test:l1', type: 'vitest', group: 'logic' },
   { name: 'l2', script: 'test:l2', type: 'vitest', group: 'logic' },
-  { name: 'l3', script: 'test:l3', type: 'vitest', group: 'logic' },
-  { name: 'e2e', script: 'test:e2e', type: 'vitest', group: 'integration' },
+  { name: 'app', script: 'test:app', type: 'vitest', group: 'ui' },
   { name: 'live-codex', script: 'test:live:codex', type: 'command', group: 'live' }
 ];
 

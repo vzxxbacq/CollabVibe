@@ -1,4 +1,4 @@
-import type { AppLocale } from "../../../services/contracts/im/app-locale";
+import type { AppLocale } from "../../common/app-locale";
 
 export interface FeishuOutputAdapterStrings {
   threadLabel(threadLabel: string): string;
@@ -24,6 +24,9 @@ export interface FeishuOutputAdapterStrings {
   approvalCreatedAt: string;
   approvalType: string;
   approvalPendingSummary: string;
+  approvalOperationName: string;
+  approvalReason: string;
+  approvalWorkingDirectory: string;
   approvalFilesTitle: string;
   approvalMoreFiles(count: number): string;
   approvalCommandDetails: string;
@@ -80,6 +83,9 @@ const zhCN: FeishuOutputAdapterStrings = {
   approvalCreatedAt: "创建时间",
   approvalType: "审批类型",
   approvalPendingSummary: "待审批摘要",
+  approvalOperationName: "操作名称",
+  approvalReason: "审批原因",
+  approvalWorkingDirectory: "工作目录",
   approvalFilesTitle: "涉及文件",
   approvalMoreFiles: (count) => `另外 ${count} 个文件`,
   approvalCommandDetails: "命令详情",
@@ -136,6 +142,9 @@ const enUS: FeishuOutputAdapterStrings = {
   approvalCreatedAt: "Created at",
   approvalType: "Approval type",
   approvalPendingSummary: "Pending summary",
+  approvalOperationName: "Operation",
+  approvalReason: "Reason",
+  approvalWorkingDirectory: "Working directory",
   approvalFilesTitle: "Files involved",
   approvalMoreFiles: (count) => `${count} more files`,
   approvalCommandDetails: "Command details",

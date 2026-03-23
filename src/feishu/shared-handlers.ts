@@ -26,8 +26,10 @@ import { FeishuOutputGateway } from "./platform-output-dispatcher";
 import {
   listProjects, listSnapshots as coreListSnapshots,
   resolveModelList, resolveThreadNewFormData
-} from "../../services/orchestrator/src/commands/platform-commands";
-import { createLogger } from "../../packages/logger/src/index";
+} from "../common/platform-commands";
+import { resolveProjectByChatId } from "../common/project-resolution";
+import { textNotification } from "../common/output-helpers";
+import { createLogger } from "../logging";
 import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 
 const log = createLogger("handler");
@@ -39,11 +41,11 @@ export async function sendProjectList(deps: FeishuHandlerDeps, chatId: string): 
     const { OP } = getFeishuNotifyCatalog(deps.config.locale);
     const projects = listProjects(deps);
     if (projects.length === 0) {
-        await dispatcher.dispatch(chatId, { kind: "text", text: OP.NO_PROJECTS });
+        await dispatcher.dispatch(chatId, textNotification(OP.NO_PROJECTS));
         return;
     }
     const lines = projects.map((project) => `• ${project.name} (${project.id}) — ${project.cwd}`);
-    await dispatcher.dispatch(chatId, { kind: "text", text: OP.PROJECT_LIST(lines) });
+    await dispatcher.dispatch(chatId, textNotification(OP.PROJECT_LIST(lines)));
 }
 
 // ── Snapshot list ───────────────────────────────────────────────────────────
@@ -51,12 +53,17 @@ export async function sendProjectList(deps: FeishuHandlerDeps, chatId: string): 
 export async function sendSnapshotList(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<void> {
     const dispatcher = new FeishuOutputGateway(deps);
     const { OP } = getFeishuNotifyCatalog(deps.config.locale);
-    const { snapshots, threadId, threadName, hasBinding } = await coreListSnapshots(deps, chatId, userId);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    if (!project) {
+        await dispatcher.dispatch(chatId, textNotification(OP.SNAPSHOT_EMPTY_MERGE));
+        return;
+    }
+    const { snapshots, threadId, threadName, hasBinding } = await coreListSnapshots(deps, project.id, userId);
     if (snapshots.length === 0) {
         const hint = hasBinding
             ? OP.SNAPSHOT_EMPTY_THREAD(threadName)
             : OP.SNAPSHOT_EMPTY_MERGE;
-        await dispatcher.dispatch(chatId, { kind: "text", text: hint });
+        await dispatcher.dispatch(chatId, textNotification(hint));
         return;
     }
     const latestIndex = snapshots[snapshots.length - 1]!.turnIndex;
@@ -84,7 +91,11 @@ export async function sendSnapshotList(deps: FeishuHandlerDeps, chatId: string, 
 
 export async function sendModelList(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<void> {
     const dispatcher = new FeishuOutputGateway(deps);
-    const { currentModel, availableModels, threadName } = await resolveModelList(deps, chatId, userId);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    if (!project) {
+        throw new Error("No project bound to this chat");
+    }
+    const { currentModel, availableModels, threadName } = await resolveModelList(deps, project.id, userId);
     await dispatcher.dispatch(chatId, {
         kind: "config_operation",
         data: {
@@ -102,14 +113,16 @@ export async function sendModelList(deps: FeishuHandlerDeps, chatId: string, use
 
 export async function sendThreadNewForm(deps: FeishuHandlerDeps, chatId: string, userId?: string): Promise<void> {
     const dispatcher = new FeishuOutputGateway(deps);
-    const { backends, defaultBackend, defaultModel } = await resolveThreadNewFormData(deps, chatId, userId);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    if (!project) {
+        throw new Error("No project bound to this chat");
+    }
+    const { catalog } = await resolveThreadNewFormData(deps, project.id, userId);
     await dispatcher.dispatch(chatId, {
         kind: "thread_new_form",
         data: {
             kind: "thread_new_form",
-            backends,
-            defaultBackend,
-            defaultModel
+            catalog
         }
     });
 }
@@ -117,12 +130,12 @@ export async function sendThreadNewForm(deps: FeishuHandlerDeps, chatId: string,
 // ── Resolve functions (return card JSON, do NOT send) ───────────────────────
 
 export async function resolveHelpCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const project = deps.findProjectByChatId(chatId);
-    const isAdmin = deps.roleResolver?.resolve?.(userId, project?.id) === "admin";
+    const project = resolveProjectByChatId(deps.api, chatId);
+    const isAdmin = deps.api.resolveRole({ userId, projectId: project?.id }) === "admin";
     let members: Array<{ userId: string; displayName?: string; role: string }> | undefined;
     if (isAdmin && project) {
-        const state = deps.adminStateStore.read();
-        members = await Promise.all((state.members[project.id] ?? []).map(async (m) => ({
+        const rawMembers = deps.api.listProjectMembers(project.id);
+        members = await Promise.all(rawMembers.map(async (m) => ({
             userId: m.userId,
             displayName: await deps.feishuAdapter.getUserDisplayName?.(m.userId),
             role: m.role
@@ -137,8 +150,9 @@ export async function resolveHelpCard(deps: FeishuHandlerDeps, chatId: string, u
 }
 
 export async function resolveHelpThreadCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const threads = await deps.orchestrator.handleThreadListEntries(chatId);
-    const activeThread = await deps.orchestrator.getUserActiveThread(chatId, userId);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    const threads = await deps.api.listThreads({ projectId: project!.id, actorId: userId });
+    const activeThread = await deps.api.getUserActiveThread({ projectId: project!.id, userId });
     const isOnMain = !activeThread;
     const displayName = deps.feishuAdapter.getUserDisplayName
         ? await deps.feishuAdapter.getUserDisplayName(userId)
@@ -157,14 +171,19 @@ export async function resolveHelpThreadCard(deps: FeishuHandlerDeps, chatId: str
 }
 
 export async function resolveHelpThreadNewCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const { backends, defaultBackend, defaultModel } = await resolveThreadNewFormData(deps, chatId, userId);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    if (!project) {
+        throw new Error("No project bound to this chat");
+    }
+    const { catalog } = await resolveThreadNewFormData(deps, project.id, userId);
     return deps.platformOutput.buildHelpThreadNewCard(
-        userId, backends, defaultBackend, defaultModel
+        userId, catalog
     );
 }
 
 export async function resolveHelpMergeCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const activeThread = await deps.orchestrator.getUserActiveThread(chatId, userId);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    const activeThread = project ? await deps.api.getUserActiveThread({ projectId: project.id, userId }) : null;
     const branchName = activeThread?.threadName;
     return deps.platformOutput.buildHelpMergeCard(userId, branchName);
 }
@@ -172,7 +191,11 @@ export async function resolveHelpMergeCard(deps: FeishuHandlerDeps, chatId: stri
 export async function resolveSnapshotCard(
     deps: FeishuHandlerDeps, chatId: string, userId: string, fromHelp?: boolean
 ): Promise<Record<string, unknown>> {
-    const { snapshots, threadId, threadName } = await coreListSnapshots(deps, chatId, userId);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    if (!project) {
+        throw new Error("No project bound to this chat");
+    }
+    const { snapshots, threadId, threadName } = await coreListSnapshots(deps, project.id, userId);
     const latestIndex = snapshots.length > 0 ? snapshots[snapshots.length - 1]!.turnIndex : -1;
     const displayName = deps.feishuAdapter.getUserDisplayName
         ? await deps.feishuAdapter.getUserDisplayName(userId)
@@ -191,11 +214,11 @@ export async function resolveSnapshotCard(
 }
 
 export async function resolveHelpSkillCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const project = deps.findProjectByChatId(chatId);
-    const skills = await deps.pluginService.getInstallablePlugins(project?.id);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    const skills = await deps.api.listSkills(project?.id);
     return deps.platformOutput.buildHelpSkillCard(
         skills.map(s => ({
-            name: s.name ?? s.pluginName ?? "unknown",
+            name: s.name ?? "unknown",
             description: s.description ?? "",
             installed: !!s.enabled
         })),
@@ -204,16 +227,20 @@ export async function resolveHelpSkillCard(deps: FeishuHandlerDeps, chatId: stri
 }
 
 export async function resolveHelpBackendCard(deps: FeishuHandlerDeps, userId: string): Promise<Record<string, unknown>> {
-    const backends = await deps.orchestrator.listAvailableBackends();
+    const backends = await deps.api.listAvailableBackends();
     return deps.platformOutput.buildHelpBackendCard(backends, userId);
 }
 
 export async function resolveHelpTurnCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const turns = await deps.orchestrator.listTurns(chatId, 20);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    if (!project) {
+        throw new Error("No project bound to this chat");
+    }
+    const turns = await deps.api.listTurns({ projectId: project.id, limit: 20 });
     log.debug({ chatId, userId, turnCount: turns.length }, "resolveHelpTurnCard");
     return deps.platformOutput.buildTurnHistoryCard(
         turns.map((turn) => ({
-            chatId: turn.chatId,
+            chatId,
             turnId: turn.turnId,
             threadName: turn.threadName,
             turnNumber: turn.turnNumber,
@@ -235,7 +262,7 @@ export async function resolveHelpTurnCard(deps: FeishuHandlerDeps, chatId: strin
 export async function resolveHelpProjectCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
-    const project = deps.findProjectByChatId(chatId);
+    const project = resolveProjectByChatId(deps.api, chatId);
     if (!project) {
         throw new Error("No project bound to this chat");
     }

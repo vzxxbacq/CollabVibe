@@ -121,14 +121,14 @@ npm run docs:dev
 
 | 类别 | 默认位置 |
 | --- | --- |
-| SQLite 主库 | `data/codex-im.db` |
-| backend 配置 | `data/config` |
-| 日志 | `data/logs` |
+| SQLite 主库 | `collabvibe.db` |
+| backend 配置 | `config` |
+| 日志 | `logs` |
 | 工作区 / worktree / snapshot | 本地代码目录与派生 worktree |
 
 ```bash
-ls -lah data
-ls -lah data/logs
+ls -lah .
+ls -lah logs
 ```
 
 ## 相关文档
@@ -136,6 +136,6 @@ ls -lah data/logs
 - [系统总览](/zh/00-overview/system-overview)
 - [Feishu 平台接入](/zh/00-overview/platform-feishu)
 - [Slack 平台接入](/zh/00-overview/platform-slack)
-- [调用链与数据流](/zh/01-architecture/data-paths)
+- [调用链与数据流](/zh/01-architecture/architecture)
 - [核心类：Project / Thread / Turn](/zh/01-architecture/core-entities)
-- [分层隔离与模块契约](/zh/01-architecture/invariants)
+- [分层隔离与模块契约](/zh/01-architecture/architecture)

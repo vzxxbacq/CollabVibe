@@ -1,4 +1,4 @@
-import type { PlatformAction, PlatformActionAdapter } from "../../../services/contracts/im/platform-action";
+import type { PlatformAction, PlatformActionAdapter } from "../../common/platform-action";
 
 interface SlackInboundActionLike {
   chatId?: string;

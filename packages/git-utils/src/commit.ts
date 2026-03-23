@@ -8,8 +8,11 @@
 import { access } from "node:fs/promises";
 import { git } from "./git-exec";
 import { createLogger } from "../../logger/src/index";
+import { parseDiffFiles, splitDiffByFile } from "./diff-utils";
+import type { DiffFileSegment, DiffFileSummary } from "./diff-utils";
 
 const log = createLogger("commit");
+const LARGE_GIT_OUTPUT_MAX_BUFFER = 50 * 1024 * 1024;
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
@@ -17,6 +20,8 @@ export interface TurnDiffResult {
     filesChanged: string[];
     diffSummary: string;
     stats: { additions: number; deletions: number };
+    diffFiles: DiffFileSummary[];
+    diffSegments: DiffFileSegment[];
 }
 
 async function filterIgnoredPaths(worktreePath: string, paths: string[]): Promise<string[]> {
@@ -44,6 +49,19 @@ function parseStatusPaths(status: string): string[] {
 async function hasTrackedEntries(worktreePath: string, context?: Record<string, unknown>): Promise<boolean> {
     const { stdout } = await git(["ls-files", "--cached", "-z"], worktreePath, { logContext: context });
     return stdout.length > 0;
+}
+
+async function readCachedPatchForFile(
+    worktreePath: string,
+    filePath: string,
+    context?: Record<string, unknown>
+): Promise<string> {
+    const { stdout } = await git(
+        ["-c", "core.quotePath=false", "diff", "--cached", "--patch", "--", filePath],
+        worktreePath,
+        { maxBuffer: LARGE_GIT_OUTPUT_MAX_BUFFER, logContext: { ...context, filePath } }
+    );
+    return stdout.trim();
 }
 
 /* ── Public Functions ──────────────────────────────────────────────────── */
@@ -104,7 +122,6 @@ export async function commitAndDiffWorktreeChanges(
     let filesChanged: string[] = [];
     let additions = 0;
     let deletions = 0;
-    let diffSummary = "";
 
     // --numstat gives machine-parseable per-file additions/deletions
     const { stdout: numstat } = await git(
@@ -122,13 +139,40 @@ export async function commitAndDiffWorktreeChanges(
         }
     }
 
-    // Capture unified diff for detailed display
-    const { stdout: patchOut } = await git(
-        ["-c", "core.quotePath=false", "diff", "--cached", "--patch"],
+    const { stdout: nameOnly } = await git(
+        ["-c", "core.quotePath=false", "diff", "--cached", "--name-only"],
         worktreePath,
-        { maxBuffer: 1024 * 1024, logContext: context }
+        { logContext: context }
     );
-    diffSummary = patchOut.trim();
+    const orderedFiles = nameOnly
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    if (filesChanged.length === 0 && orderedFiles.length > 0) {
+        filesChanged = orderedFiles;
+    } else if (orderedFiles.length > 0) {
+        const fileSet = new Set(filesChanged);
+        for (const file of orderedFiles) {
+            if (!fileSet.has(file)) {
+                filesChanged.push(file);
+            }
+        }
+    }
+
+    const patchParts: string[] = [];
+    const diffFiles: DiffFileSummary[] = [];
+    const diffSegments: DiffFileSegment[] = [];
+    for (const filePath of filesChanged) {
+        const patch = await readCachedPatchForFile(worktreePath, filePath, context);
+        if (!patch) {
+            continue;
+        }
+        patchParts.push(patch);
+        diffFiles.push(...parseDiffFiles(patch));
+        diffSegments.push(...splitDiffByFile(patch));
+    }
+    const diffSummary = patchParts.join("\n\n").trim();
 
     // Fallback removed: if numstat is unexpectedly empty, treat as error
     if (filesChanged.length === 0 && diffSummary) {
@@ -144,5 +188,5 @@ export async function commitAndDiffWorktreeChanges(
     await git(["commit", "-m", commitMessage, "--allow-empty-message"], worktreePath, { logContext: context });
     log.info({ worktreePath, filesChanged: filesChanged.length, additions, deletions, ...context }, "commitAndDiff: committed");
 
-    return { filesChanged, diffSummary, stats: { additions, deletions } };
+    return { filesChanged, diffSummary, stats: { additions, deletions }, diffFiles, diffSegments };
 }

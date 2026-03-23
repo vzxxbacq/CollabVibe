@@ -55,6 +55,12 @@ Start from the existing environment template or your deployment environment vari
 | `CODEX_SANDBOX` | No | Default sandbox policy |
 | `CODEX_APPROVAL_POLICY` | No | Default approval policy |
 | `APPROVAL_TIMEOUT_MS` | No | Approval timeout |
+| `COLLABVIBE_STREAM_PERSIST_WINDOW_MS` | No | Streaming persist window for Path B |
+| `COLLABVIBE_STREAM_PERSIST_MAX_WAIT_MS` | No | Streaming persist max wait |
+| `COLLABVIBE_STREAM_PERSIST_MAX_CHARS` | No | Early persist flush threshold |
+| `COLLABVIBE_STREAM_UI_WINDOW_MS` | No | Streaming UI flush window |
+| `COLLABVIBE_STREAM_UI_MAX_WAIT_MS` | No | Streaming UI max wait |
+| `COLLABVIBE_STREAM_UI_MAX_CHARS` | No | Early UI flush threshold |
 | `PORT` | No | Service listening port |
 | `SYS_ADMIN_USER_IDS` | Recommended | Initial system administrator IDs |
 
@@ -71,6 +77,8 @@ SYS_ADMIN_USER_IDS=ou_xxx
 PORT=3100
 ```
 
+These stream tuning variables are optional. In most deployments, keep the defaults unless you need to reduce burst frequency or improve perceived latency for high-volume turns.
+
 ![Environment variable configuration placeholder](/placeholders/guide-image-placeholder.svg)
 
 > Placeholder: add a screenshot of a sample `.env` file or the environment variable screen in the deployment platform.
@@ -81,13 +89,13 @@ Runtime depends on the following directories:
 
 | Path | Description |
 | --- | --- |
-| `data/codex-im.db` | Main SQLite database |
-| `data/config/` | Backend configuration directory |
-| `data/logs/` | Runtime logs |
+| `collabvibe.db` | Main SQLite database |
+| `config/` | Backend configuration directory |
+| `logs/` | Runtime logs |
 | `COLLABVIBE_WORKSPACE_CWD` | Root of the code workspace |
 
 ```bash
-mkdir -p data/config data/logs
+mkdir -p config logs
 mkdir -p /abs/path/to/workspace
 ```
 
@@ -134,10 +142,10 @@ Validate in the following order:
 2. The bot is visible in the target group chat or direct chat
 3. Sending a user message triggers an event
 4. The bot returns a message or card
-5. `data/logs/app.log` contains the corresponding logs
+5. `logs/app.log` contains the corresponding logs
 
 ```bash
-tail -f data/logs/app.log
+tail -f logs/app.log
 ```
 
 ```bash
@@ -155,6 +163,18 @@ npm run test:workspace
 npm test
 ```
 
+## 9. Optional stream tuning
+
+If your backend emits very dense streaming deltas, you can tune Path B throttling at the environment level:
+
+```dotenv
+COLLABVIBE_STREAM_PERSIST_WINDOW_MS=700
+COLLABVIBE_STREAM_UI_WINDOW_MS=500
+COLLABVIBE_STREAM_UI_MAX_WAIT_MS=1500
+```
+
+Use these only after you have validated the default behavior. Terminal events still force a final flush.
+
 ![Quickstart demo video placeholder](/placeholders/guide-video-placeholder.svg)
 
 > Placeholder: add a 1–3 minute Quickstart recording covering “start service -> send a Feishu message -> inspect logs”.
@@ -162,5 +182,5 @@ npm test
 ## What to read next
 
 - To understand the whole system: [System Overview](/00-overview/system-overview)
-- To understand the three core entities: [Core Entities: Project / Thread / Turn](/01-architecture/core-entities)
+- To understand the three core entities: [Core Entities: Project / Thread / Turn](/01-architecture/architecture)
 - To understand logging: [Logging System](/02-operations/logging-system)

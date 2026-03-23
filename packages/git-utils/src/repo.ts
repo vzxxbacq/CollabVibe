@@ -12,10 +12,10 @@ import { git } from "./git-exec";
  */
 export async function initRepo(cwd: string, cloneUrl?: string): Promise<void> {
     if (cloneUrl) {
-        await git(["clone", cloneUrl, "."], cwd);
+        await git(["clone", cloneUrl, "."], cwd, { injectDefaultExcludes: false });
     } else {
-        await git(["init"], cwd);
-        await git(["commit", "--allow-empty", "-m", "initial commit"], cwd);
+        await git(["init"], cwd, { injectDefaultExcludes: false });
+        await git(["commit", "--allow-empty", "-m", "initial commit"], cwd, { injectDefaultExcludes: false });
     }
 }
 
@@ -118,7 +118,7 @@ export async function setRemoteUrl(cwd: string, url: string): Promise<void> {
  */
 export async function shallowClone(source: string, targetDir: string): Promise<void> {
     // Note: cwd doesn't matter much for clone since it creates the targetDir
-    await git(["clone", "--depth", "1", source, targetDir], process.cwd());
+    await git(["clone", "--depth", "1", source, targetDir], process.cwd(), { injectDefaultExcludes: false });
 }
 
 /**

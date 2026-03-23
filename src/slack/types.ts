@@ -4,9 +4,8 @@
  *
  * Slack platform handler dependencies.
  */
-import type { CoreDeps } from "../../services/orchestrator/src/handler-types";
+import type { CoreDeps } from "../common/types";
 import type { SlackMessageClient, SlackOutputAdapter } from "./channel/index";
-import type { AuditService } from "../../services/orchestrator/src/audit/index";
 
 export type SlackMessageClientPort = Pick<
   SlackMessageClient,
@@ -23,5 +22,4 @@ export interface SlackHandlerDeps extends CoreDeps {
   platformOutput: SlackOutputAdapter;
   recentEventIds: Set<string>;
   eventDedupTtlMs: number;
-  auditService?: AuditService;
 }

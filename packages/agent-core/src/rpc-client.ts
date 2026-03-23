@@ -4,7 +4,7 @@ import { createLogger } from "../../logger/src/index";
 const log = createLogger("backend-rpc");
 
 export interface BackendRpcCorrelation {
-  chatId?: string;
+  projectId?: string;
   threadName?: string;
   turnId?: string;
   turnMode?: "plan" | "code";

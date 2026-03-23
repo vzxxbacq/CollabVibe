@@ -1,4 +1,7 @@
 import { parseApprovalRequestEvent } from "./approval";
+import { Buffer } from "node:buffer";
+import { decodeToolOutput } from "./tool-output-decoder";
+import { buildApprovalDisplay, nonEmptyString, stringArray, summarizeCommand, summarizeText } from "../../approval-display";
 import type { RpcNotification } from "../../rpc-types";
 import { parseDiffFileNames, parseDiffStats } from "../../../../git-utils/src/diff-parser";
 import { createLogger } from "../../../../logger/src/index";
@@ -8,13 +11,46 @@ import type { ToolRequestUserInputParams } from "./generated/v2/ToolRequestUserI
 import type { McpServerElicitationRequestParams } from "./generated/v2/McpServerElicitationRequestParams";
 
 const log = createLogger("codex-factory");
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
 }
 
 function stringOrEmpty(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function inferCommandDisplayName(command: string[] | undefined): string {
+  const first = command?.[0]?.trim().toLowerCase();
+  if (first === "npm" || first === "pnpm" || first === "yarn" || first === "bun") return "Run package manager command";
+  if (first === "git") return "Run git command";
+  return "Run shell command";
+}
+
+function extractCodexApprovalDisplay(
+  requestId: string,
+  callId: string,
+  approvalType: "command_exec" | "file_change",
+  params: Record<string, unknown>
+) {
+  const command = typeof params.command === "string"
+    ? [params.command]
+    : stringArray(params.command);
+  const reason = nonEmptyString(params.reason);
+  const cwd = nonEmptyString(params.cwd);
+  const files = stringArray(params.files);
+  return buildApprovalDisplay({
+    approvalType,
+    requestId,
+    callId,
+    reason,
+    cwd,
+    files,
+    command,
+    displayNameCandidates: [approvalType === "command_exec" ? inferCommandDisplayName(command) : "Approve file changes"],
+    summaryCandidates: [approvalType === "command_exec" ? summarizeCommand(command) : summarizeText(reason ?? files?.join(", "))],
+    fallbackDisplayName: approvalType === "command_exec" ? "Run shell command" : "Approve file changes",
+    fallbackDescription: approvalType === "command_exec" ? "command execution" : "File change approval"
+  });
 }
 
 function readTurnId(payload: Record<string, unknown>): string {
@@ -132,7 +168,11 @@ function toEventMessage(notification: RpcNotification): Record<string, unknown> 
       };
     case "turn/completed":
       return {
-        type: "task_complete",
+        type: (() => {
+          const turn = asRecord(params.turn);
+          const status = stringOrEmpty(turn?.status);
+          return status === "interrupted" ? "turn_aborted" : "task_complete";
+        })(),
         turn_id: readTurnId(params),
         last_agent_message: params.lastAgentMessage
       };
@@ -158,14 +198,6 @@ function toEventMessage(notification: RpcNotification): Record<string, unknown> 
   }
 
   return null;
-}
-
-function decodeOutput(rawChunk: string): string {
-  try {
-    return Buffer.from(rawChunk, "base64").toString("utf-8").replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-  } catch {
-    return rawChunk;
-  }
 }
 
 function itemNotificationToUnifiedEvent(notification: RpcNotification): UnifiedAgentEvent | null {
@@ -381,21 +413,27 @@ export function codexNotificationToUnifiedEvent(notification: RpcNotification): 
           }))
           : []
       };
-    case "exec_command_output_delta":
+    case "exec_command_output_delta": {
+      const output = decodeToolOutput(String((event as { chunk?: unknown }).chunk ?? ""));
       return {
         type: "tool_output",
         turnId: String((event as { turn_id?: string }).turn_id ?? ""),
         callId: String((event as { call_id?: unknown }).call_id ?? "unknown"),
-        delta: decodeOutput(String((event as { chunk?: unknown }).chunk ?? "")),
-        source: "stdout"
+        delta: output.text,
+        source: String((event as { stream?: unknown }).stream ?? "stdout") === "stderr" ? "stderr" : "stdout",
+        format: output.format,
+        byteLength: output.byteLength
       };
+    }
     case "terminal_interaction":
       return {
         type: "tool_output",
         turnId: String((event as { turn_id?: string }).turn_id ?? ""),
         callId: String((event as { call_id?: unknown }).call_id ?? "stdin"),
         delta: String((event as { stdin?: unknown }).stdin ?? ""),
-        source: "stdin"
+        source: "stdin",
+        format: "text",
+        byteLength: Buffer.byteLength(String((event as { stdin?: unknown }).stdin ?? ""), "utf8")
       };
     case "exec_command_begin":
       return {
@@ -405,18 +443,20 @@ export function codexNotificationToUnifiedEvent(notification: RpcNotification): 
         tool: "exec_command",
         label: ((event as { command?: string[] }).command ?? []).join(" ")
       };
-    case "exec_command_end":
+    case "exec_command_end": {
+      const summary = decodeToolOutput(String((event as { aggregated_output?: unknown }).aggregated_output ?? ""));
       return {
         type: "tool_end",
         turnId: String((event as { turn_id?: string }).turn_id ?? ""),
         callId: String((event as { call_id?: unknown }).call_id ?? ""),
         tool: "exec_command",
         label: ((event as { command?: string[] }).command ?? []).join(" "),
-        summary: (event as { aggregated_output?: string }).aggregated_output,
+        summary: summary.text,
         status: (event as { status?: string }).status === "completed" ? "success" : "failed",
         exitCode: (event as { exit_code?: number }).exit_code,
         duration: (event as { duration?: string }).duration
       };
+    }
     case "mcp_tool_call_begin":
       return { type: "tool_begin", turnId: String((event as { turn_id?: string }).turn_id ?? ""), tool: "mcp_tool", label: `调用 MCP 工具: ${String((event as { invocation?: { tool?: unknown } }).invocation?.tool ?? "unknown")}` };
     case "mcp_tool_call_end":
@@ -465,13 +505,8 @@ export function codexNotificationToUnifiedEvent(notification: RpcNotification): 
     case "agent_message":
       return { type: "notification", turnId: String((event as { turn_id?: string }).turn_id ?? ""), category: "agent_message", title: "Agent 回复", lastAgentMessage: String((event as { message?: unknown }).message ?? "") };
     case "skills_changed":
-      return {
-        type: "notification",
-        turnId: "",
-        category: "skills_changed",
-        title: "Skills 已更新",
-        detail: JSON.stringify((event as { skills?: unknown }).skills ?? [])
-      };
+      log.debug("codex notification dropped: skills_changed treated as internal invalidation signal");
+      return null;
     case "thread_status_resumed":
       return { type: "notification", turnId: String((event as { turn_id?: string }).turn_id ?? ""), category: "warning", title: "已收到你的选择，继续执行" };
     default:
@@ -480,7 +515,7 @@ export function codexNotificationToUnifiedEvent(notification: RpcNotification): 
   }
 }
 
-// Backward compatibility alias
+// Export alias
 export const codexEventToUnifiedAgentEvent = codexNotificationToUnifiedEvent;
 
 /**
@@ -494,28 +529,44 @@ export function codexServerRequestToUnifiedEvent(request: {
 }): UnifiedAgentEvent | null {
   if (request.method === "item/commandExecution/requestApproval") {
     const p = request.params;
+    const approvalId = String(request.id);
+    const callId = String(p.itemId ?? "");
+    const display = extractCodexApprovalDisplay(approvalId, callId, "command_exec", p);
 
     return {
       type: "approval_request",
       turnId: String(p.turnId ?? ""),
-      approvalId: String(request.id),
-      callId: String(p.itemId ?? ""),
+      approvalId,
+      callId,
       approvalType: "command_exec",
-      description: `Command approval: ${String(p.command ?? "")}`,
-      command: typeof p.command === "string" ? [p.command] : Array.isArray(p.command) ? p.command as string[] : undefined,
+      description: display.description,
+      displayName: display.displayName,
+      summary: display.summary,
+      reason: display.reason,
+      cwd: display.cwd,
+      files: display.files,
+      command: display.command,
       availableActions: ["approve", "deny", "approve_always"],
       backendType: "codex"
     };
   }
   if (request.method === "item/fileChange/requestApproval") {
     const p = request.params;
+    const approvalId = String(request.id);
+    const callId = String(p.itemId ?? "");
+    const display = extractCodexApprovalDisplay(approvalId, callId, "file_change", p);
     return {
       type: "approval_request",
       turnId: String(p.turnId ?? ""),
-      approvalId: String(request.id),
-      callId: String(p.itemId ?? ""),
+      approvalId,
+      callId,
       approvalType: "file_change",
-      description: String(p.reason ?? "File change approval"),
+      description: display.description,
+      displayName: display.displayName,
+      summary: display.summary,
+      reason: display.reason,
+      cwd: display.cwd,
+      files: display.files,
       availableActions: ["approve", "deny", "approve_always"],
       backendType: "codex"
     };

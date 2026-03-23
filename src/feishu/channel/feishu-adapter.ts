@@ -3,14 +3,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import {
-  BaseChannelAdapter,
-  ChannelError,
-  assertUnifiedMessage,
-  type UnifiedMessage,
-  type UnifiedResponse
-} from "../../../services/contracts/im/index";
-import { createLogger } from "../../../packages/logger/src/index";
+import { BaseChannelAdapter } from "../../common/channel-adapter";
+import { ChannelError } from "../../common/im-errors";
+import { assertUnifiedMessage } from "../../common/unified-message";
+import type { UnifiedMessage, UnifiedResponse } from "../../common/intent-types";
+import { createLogger } from "../../logging";
 
 import type { HttpClient } from "./http-client";
 import { ReplayCache } from "./replay-cache";

@@ -1,4 +1,4 @@
-import { DEFAULT_APP_LOCALE, type AppLocale } from "../../../services/contracts/im/app-locale";
+import { DEFAULT_APP_LOCALE, type AppLocale } from "../../common/app-locale";
 
 export interface FeishuTurnCardStrings {
   running: string;
@@ -45,8 +45,13 @@ export interface FeishuTurnCardStrings {
   doneNoFileChanges: string;
   actionAccepted: string;
   actionReverted: string;
+  actionInterrupting: string;
   actionInterrupted: string;
   actionProcessed: string;
+  interruptRequestedBy(user: string): string;
+  interruptedBy(user: string): string;
+  interruptRequestedAt(time: string): string;
+  interruptedAt(time: string): string;
   replyTitle: string;
   thinkingTitle: string;
   waitingThinking: string;
@@ -117,8 +122,13 @@ const zhCN: FeishuTurnCardStrings = {
   doneNoFileChanges: "完成 (无文件修改)",
   actionAccepted: "已批准",
   actionReverted: "已撤销",
+  actionInterrupting: "正在关闭中",
   actionInterrupted: "已中断",
   actionProcessed: "已处理",
+  interruptRequestedBy: (user) => `中止请求人：${user}`,
+  interruptedBy: (user) => `已由 ${user} 中止`,
+  interruptRequestedAt: (time) => `请求时间：${time}`,
+  interruptedAt: (time) => `中止时间：${time}`,
   replyTitle: "回复",
   thinkingTitle: "思考",
   waitingThinking: "等待思考输出...",
@@ -189,8 +199,13 @@ const enUS: FeishuTurnCardStrings = {
   doneNoFileChanges: "Done (no file changes)",
   actionAccepted: "Approved",
   actionReverted: "Reverted",
+  actionInterrupting: "Stopping...",
   actionInterrupted: "Interrupted",
   actionProcessed: "Processed",
+  interruptRequestedBy: (user) => `Interrupt requested by: ${user}`,
+  interruptedBy: (user) => `Interrupted by: ${user}`,
+  interruptRequestedAt: (time) => `Requested at: ${time}`,
+  interruptedAt: (time) => `Interrupted at: ${time}`,
   replyTitle: "Reply",
   thinkingTitle: "Thinking",
   waitingThinking: "Waiting for thinking output...",

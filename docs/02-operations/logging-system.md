@@ -36,18 +36,18 @@ log.info({ port: 3100 }, "server starting");
 
 | Path | Description |
 | --- | --- |
-| `data/logs/app.log` | Main runtime log |
-| `data/logs/*.log` | Rotated historical logs |
-| `data/logs/agent-stdio.log` | Protocol / stdio detail logs; see the logging policy |
+| `logs/app.log` | Main runtime log |
+| `logs/*.log` | Rotated historical logs |
+| `logs/agent-stdio.log` | Protocol / stdio detail logs; see the logging policy |
 
 ```bash
-ls -lah data/logs
-tail -f data/logs/app.log
+ls -lah logs
+tail -f logs/app.log
 ```
 
 ![Log directory placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add a screenshot of the `data/logs/` directory, ideally showing `app.log` and rotated files.
+> Placeholder: add a screenshot of the `logs/` directory, ideally showing `app.log` and rotated files.
 
 ## 3. Log structure
 
@@ -115,7 +115,7 @@ The file sink is provided by `createFileLogSink` and defaults to:
 
 | Config | Default |
 | --- | --- |
-| Log directory | `data/logs` |
+| Log directory | `logs` |
 | Single-file size | `10MB` |
 | Number of historical files | `5` |
 | Base filename | `app` |
@@ -123,7 +123,7 @@ The file sink is provided by `createFileLogSink` and defaults to:
 You can override these through environment variables:
 
 ```bash
-LOG_DIR=data/logs
+LOG_DIR=logs
 LOG_MAX_SIZE=10485760
 LOG_MAX_FILES=5
 ```
@@ -167,8 +167,8 @@ This naming convention comes from [Logging Policy](/logging-policy) and [Merge L
 | `backend-config` | Backend provider / model / policy configuration changes |
 
 ```bash
-rg '"name":"orchestrator"' data/logs/app.log
-rg '"turnId":"' data/logs/app.log
+rg '"name":"orchestrator"' logs/app.log
+rg '"turnId":"' logs/app.log
 ```
 
 ## 9. Troubleshooting suggestions
@@ -181,7 +181,7 @@ For troubleshooting, inspect logs in this order:
 4. If the issue is around merge / snapshot / worktree, inspect `git`, `merge`, and `commit` logs
 
 ```bash
-tail -f data/logs/app.log | rg 'turnId|traceId|error|warn'
+tail -f logs/app.log | rg 'turnId|traceId|error|warn'
 ```
 
 ![Logging troubleshooting video placeholder](/placeholders/guide-video-placeholder.svg)

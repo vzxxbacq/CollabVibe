@@ -46,28 +46,28 @@ export class AgentProcessManager {
     this.spawnProcess = spawnProcess;
   }
 
-  async start(chatId: string, runtimeConfig: ProcessSpawnConfig): Promise<ManagedProcess> {
+  async start(processKey: string, runtimeConfig: ProcessSpawnConfig): Promise<ManagedProcess> {
     if (!runtimeConfig.serverCmd) {
       throw new Error("server command missing");
     }
-    const existing = this.processes.get(chatId);
+    const existing = this.processes.get(processKey);
     if (existing) {
       if (existing.process.exitCode !== null) {
-        this.processes.delete(chatId);
+        this.processes.delete(processKey);
       } else {
         return existing.process;
       }
     }
-    log.info({ chatId, cwd: runtimeConfig.cwd, cmd: runtimeConfig.serverCmd, envKeys: runtimeConfig.env ? Object.keys(runtimeConfig.env) : [] }, "starting process");
+    log.info({ processKey, cwd: runtimeConfig.cwd, cmd: runtimeConfig.serverCmd, envKeys: runtimeConfig.env ? Object.keys(runtimeConfig.env) : [] }, "starting process");
     const process = this.spawnProcess(runtimeConfig.serverCmd, runtimeConfig);
-    this.processes.set(chatId, { process, activeTurns: 0 });
+    this.processes.set(processKey, { process, activeTurns: 0 });
 
     const cleanup = () => {
-      const current = this.processes.get(chatId);
+      const current = this.processes.get(processKey);
       if (!current || current.process !== process) {
         return;
       }
-      this.processes.delete(chatId);
+      this.processes.delete(processKey);
     };
 
     process.once("exit", cleanup);
@@ -76,16 +76,16 @@ export class AgentProcessManager {
     return process;
   }
 
-  markTurn(chatId: string, delta: 1 | -1): void {
-    const entry = this.processes.get(chatId);
+  markTurn(processKey: string, delta: 1 | -1): void {
+    const entry = this.processes.get(processKey);
     if (!entry) {
       return;
     }
     entry.activeTurns = Math.max(0, entry.activeTurns + delta);
   }
 
-  async stop(chatId: string): Promise<void> {
-    const entry = this.processes.get(chatId);
+  async stop(processKey: string): Promise<void> {
+    const entry = this.processes.get(processKey);
     if (!entry) {
       return;
     }
@@ -100,14 +100,14 @@ export class AgentProcessManager {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       entry.process.kill("SIGTERM");
-      this.processes.delete(chatId);
+      this.processes.delete(processKey);
     })();
 
     await entry.closing;
   }
 
-  async healthCheck(chatId: string): Promise<{ alive: boolean; threadCount: number }> {
-    const entry = this.processes.get(chatId);
+  async healthCheck(processKey: string): Promise<{ alive: boolean; threadCount: number }> {
+    const entry = this.processes.get(processKey);
     if (!entry) {
       return { alive: false, threadCount: 0 };
     }

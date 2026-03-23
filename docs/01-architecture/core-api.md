@@ -72,7 +72,6 @@ const API_GUARDS: Record<string, ApiGuardConfig> = {
 
   // §2 Turn
   createTurn:          { permission: Permission.TURN_WRITE,    requiresProject: true,  audit: true, auditAction: "turn.create" },
-  recordTurnStart:     { permission: Permission.TURN_WRITE,    requiresProject: true,  audit: false },
   interruptTurn:       { permission: Permission.TURN_WRITE,    requiresProject: true,  audit: true, auditAction: "turn.interrupt" },
   acceptTurn:          { permission: Permission.TURN_WRITE,    requiresProject: true,  audit: true, auditAction: "turn.accept" },
   revertTurn:          { permission: Permission.TURN_WRITE,    requiresProject: true,  audit: true, auditAction: "turn.revert" },
@@ -82,16 +81,10 @@ const API_GUARDS: Record<string, ApiGuardConfig> = {
   getTurnDetail:       { permission: null,                    requiresProject: true,  audit: false },
   getTurnCardData:     { permission: null,                    requiresProject: true,  audit: false },
   listTurns:           { permission: null,                    requiresProject: true,  audit: false },
-  updateTurnSummary:   { permission: null,                    requiresProject: true,  audit: false },
-  updateTurnMetadata:  { permission: null,                    requiresProject: true,  audit: false },
-  appendTurnEvent:     { permission: null,                    requiresProject: true,  audit: false },
-  syncTurnState:       { permission: null,                    requiresProject: true,  audit: false },
-  finalizeTurnState:   { permission: null,                    requiresProject: true,  audit: false },
 
   // §4 Snapshot
   listSnapshots:       { permission: null,                    requiresProject: true,  audit: false },
   jumpToSnapshot:      { permission: Permission.TURN_WRITE,    requiresProject: true,  audit: true, auditAction: "snapshot.jump" },
-  updateSnapshotSummary: { permission: null,                  requiresProject: true,  audit: false },
   getSnapshotDiff:     { permission: null,                    requiresProject: true,  audit: false },
 
   // §5 Merge
@@ -222,14 +215,33 @@ getProjectRecord(projectId: string): ProjectRecord | null
 createProject(input: {
   chatId: string;
   userId: string;
+  actorId: string;
   name?: string;
   cwd?: string;
+  gitUrl?: string;
+  gitToken?: string;
   workBranch?: string;
+  initialFiles?: {
+    agentsMd?: {
+      encoding: "base64";
+      contentBase64: string;
+    };
+    gitignore?: {
+      encoding: "base64";
+      contentBase64: string;
+    };
+  };
 }): Promise<{
   success: boolean;
   message: string;
   project?: { id: string; name: string; cwd: string };
 }>
+
+// initialFiles 仅用于项目初始化 bootstrap：
+// - L2 在 createProject 成功路径中写入 project.cwd
+// - contentBase64 解码为 UTF-8 文本后落盘
+// - 不负责 worktree 同步
+// - 任一文件解码/写入失败时，createProject 整体失败
 
 /** 将已存在的项目绑定到群聊（chat ↔ project 1:1）。 */
 linkProjectToChat(input: {
@@ -377,20 +389,9 @@ createTurn(input: {
   turnId: string;
 }>
 
-/** 创建 turn 持久化记录并打 git snapshot。
- *  与 createTurn 两步调用：createTurn 返回 turnId 后，L1 设置卡片元数据，
- *  再调 recordTurnStart 获取 turnNumber 用于渲染。 */
-recordTurnStart(input: {
-  projectId: string;
-  threadName: string;
-  threadId: string;
-  turnId: string;
-  cwd: string;
-  userId?: string;
-  traceId?: string;
-}): Promise<{
-  turnNumber: number;
-}>
+// NOTE: recordTurnStart 是 L2 Path B 内部操作。
+// L2 EventPipeline 收到首个 agent 事件时自动创建 turn 持久记录 + git snapshot。
+// turnNumber 通过 OutputGateway 推送给 L1，不由 createTurn 返回。
 
 /** 中断当前 turn。 */
 interruptTurn(input: {
@@ -461,44 +462,10 @@ listTurns(input: {
   createdAt: string; updatedAt: string; completedAt?: string;
 }>>
 
-/** 更新 turn 摘要信息。 */
-updateTurnSummary(input: {
-  projectId: string;
-  turnId: string;
-  lastAgentMessage?: string;
-  tokenUsage?: { input: number; output: number; total?: number };
-  filesChanged?: string[];
-}): Promise<void>
-
-/** 更新 turn 元数据。 */
-updateTurnMetadata(input: {
-  projectId: string;
-  turnId: string;
-  promptSummary?: string;
-  backendName?: string;
-  modelName?: string;
-  turnMode?: "plan";
-}): Promise<void>
-
-/** 追加 agent 输出事件到 turn 详情。 */
-appendTurnEvent(input: {
-  projectId: string;
-  message: IMOutputMessage;
-}): Promise<void>
-
-/** 同步 turn 状态快照。 */
-syncTurnState(input: {
-  projectId: string;
-  turnId: string;
-  snapshot: TurnStateSnapshot;
-}): Promise<void>
-
-/** turn 完成时写入最终状态快照。 */
-finalizeTurnState(input: {
-  projectId: string;
-  turnId: string;
-  snapshot: TurnStateSnapshot;
-}): Promise<void>
+// NOTE: Turn 数据的写入/更新（updateTurnSummary, updateTurnMetadata,
+// appendTurnEvent, syncTurnState, finalizeTurnState）是 L2 Path B 内部操作，
+// 由 EventPipeline 处理 agent 事件时自动执行，不暴露为 L1 公开 API。
+// 详见 orchestrator-internals.md §Event Pipeline。
 ```
 
 ---
@@ -527,13 +494,8 @@ jumpToSnapshot(input: {
   contextReset: boolean;
 }>
 
-/** 更新快照摘要。 */
-updateSnapshotSummary(input: {
-  projectId: string;
-  turnId: string;
-  summary: string;
-  files: string[];
-}): Promise<void>
+// NOTE: updateSnapshotSummary 是 L2 Path B 内部操作（finishTurn 自动填充），
+// 不暴露给 L1。
 
 /** 获取当前线程 vs 上一快照的 diff。 */
 getSnapshotDiff(input: {
@@ -1109,7 +1071,7 @@ switch (intent.type) {
 
 ### L1 斜杠命令 → L2 API 映射
 
-> L1 负责解析斜杠命令并转化为 L2 API 调用。L2 的 `handleIntent` 方法将在 Phase 1 删除。
+> L1 负责解析斜杠命令并转化为 L2 API 调用。
 
 | 斜杠命令 | L1 调用的 L2 API | 说明 |
 |---------|------------------|------|
@@ -1153,10 +1115,9 @@ switch (intent.type) {
 ## L1 允许的 import
 
 ```
-✅ services/orchestrator/src/index  (OrchestratorLayer + re-export 类型)
-✅ services/contracts/**            (纯类型/接口)
+✅ services/index                   (OrchestratorLayer + re-export 类型)
+✅ services                         (目录 import，解析到 services/index.ts)
 ✅ packages/logger                  (跨切面)
-❌ services/orchestrator/src/**/    (内部子模块)
-❌ services/persistence/
+❌ services/**                      (内部子模块；排除 services/index)
 ❌ packages/agent-core/
 ```

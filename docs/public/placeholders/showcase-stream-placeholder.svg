@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="400" viewBox="0 0 560 400" role="img" aria-labelledby="title desc">
+  <title id="title">Streaming Output</title>
+  <desc id="desc">Placeholder for a streaming output screenshot or GIF.</desc>
+  <rect width="560" height="400" fill="#0f172a"/>
+  <rect x="30" y="30" width="500" height="340" rx="20" fill="#111827" stroke="#334155" stroke-width="3"/>
+  <!-- streaming lines -->
+  <rect x="70" y="90" width="320" height="8" rx="4" fill="#22d3ee" opacity="0.7"/>
+  <rect x="70" y="120" width="280" height="8" rx="4" fill="#22d3ee" opacity="0.5"/>
+  <rect x="70" y="150" width="350" height="8" rx="4" fill="#22d3ee" opacity="0.4"/>
+  <rect x="70" y="180" width="240" height="8" rx="4" fill="#22d3ee" opacity="0.3"/>
+  <rect x="70" y="210" width="300" height="8" rx="4" fill="#22d3ee" opacity="0.2"/>
+  <text x="280" y="310" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#e2e8f0">Streaming Output</text>
+  <text x="280" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#94a3b8">Screenshot / GIF placeholder</text>
+</svg>

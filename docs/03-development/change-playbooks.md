@@ -8,13 +8,13 @@ status: active
 
 | Change target | Look here first |
 | --- | --- |
-| Platform message integration | `src/feishu/*`, `packages/channel-feishu/*` |
-| Thread / backend / turn | `services/orchestrator/*`, `packages/agent-core/*` |
-| Streaming events | `services/orchestrator/src/event/*`, `packages/codex-client/*`, `packages/acp-client/*` |
-| Approval flow | `services/approval/*`, `services/orchestrator/src/use-cases/approval`, `src/feishu/feishu-card-handler.ts` |
-| Access control | `services/iam/*`, `src/core/intent-dispatcher.ts` |
+| Platform message integration | `src/feishu/*`, `src/feishu/channel/*` |
+| Thread / backend / turn | `services/thread/*`, `services/backend/*`, `services/turn/*`, `packages/agent-core/*` |
+| Streaming events | `services/event/*`, `packages/agent-core/src/transports/*` |
+| Approval flow | `services/approval/*`, `src/feishu/feishu-card-handler.ts` |
+| Access control | `services/iam/*`, `src/platform/dispatcher.ts` |
 | Local persistence | `services/persistence/*`, `services/audit/*` |
-| Platform output rendering | `packages/channel-feishu/*`, `packages/channel-slack/*` |
+| Platform output rendering | `src/feishu/channel/*`, `src/slack/channel/*` |
 
 ## Pre-change checklist
 

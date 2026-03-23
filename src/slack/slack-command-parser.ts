@@ -1,4 +1,4 @@
-import type { ParsedIntent } from "../../services/contracts/im/types";
+import type { ParsedIntent } from "../common/intent-types";
 
 export interface SlackReplyCommand {
   kind: "reply";

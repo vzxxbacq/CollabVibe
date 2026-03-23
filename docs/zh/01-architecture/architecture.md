@@ -121,6 +121,13 @@ Backend (Codex stdio / ACP SSE)
 | L1 禁止直接调用后端 | 后端差异在 L3 内部处理 |
 | 新平台不得新增第三条路径 | 复用路径 A / B |
 
+### Turn lifecycle 语义
+
+- `turn/start` 成功返回 `turnId` 后，L2 `TurnLifecycleService` 必须立即建立 turn 基线：创建 turn record、写入初始 snapshot、标记 active turn。
+- `EventPipeline` 属于路径 B 的流式同步层，只负责实时事件收敛、状态同步与完成态收尾；它不是 turn start persistence 的唯一真实来源。
+- 为处理后端事件早到竞态，`EventPipeline` 可以防御性调用幂等的 `ensureTurnStarted()`，并在 turn 尚未激活前缓冲通知；这不会改变权威起点仍在 `TurnLifecycleService` 的事实。
+- `finishTurn()` 只能基于已建立的 active turn 计算 commit/diff；因此 turn-start persistence 缺失属于生命周期错误，不能靠 UI fallback 掩盖。
+
 ---
 
 ## 3. 核心不变式

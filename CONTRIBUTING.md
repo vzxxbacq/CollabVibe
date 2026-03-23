@@ -45,8 +45,6 @@ Run the relevant targeted suites before opening a PR:
 ```bash
 npm run test:app
 npm run test:orchestrator
-npm run test:channel-core
-npm run test:channel-feishu
 ```
 
 Run the full suite when your change is broad:

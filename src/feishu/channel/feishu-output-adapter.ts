@@ -5,7 +5,7 @@
  * FeishuOutputAdapter — thin router implementing IMOutputAdapter.
  *
  * Delegates to:
- * - TurnCardManager  → streaming turn card state, rendering, throttle (Path B)
+ * - TurnCardManager  → streaming turn card state and rendering (Path B)
  * - Card Builders    → static card JSON builders (Path A)
  * - FeishuAdapter    → Feishu API calls (send/update)
  *
@@ -32,14 +32,15 @@ import {
   type IMAdminMemberPanel,
   type IMAdminSkillPanel,
   type IMAdminBackendPanel,
-} from "../../../services/contracts/im/index";
-import { createLogger } from "../../../packages/logger/src/index";
-import { DEFAULT_APP_LOCALE, type AppLocale } from "../../../services/contracts/im/app-locale";
-import { MAIN_THREAD_NAME } from "../../../services/contracts/im/index";
+} from "../../../services/index";
+import { createLogger } from "../../logging";
+import { DEFAULT_APP_LOCALE, type AppLocale } from "../../common/app-locale";
+import { getApprovalCwd, getApprovalDisplayName, getApprovalFiles, getApprovalReason, getApprovalSummary } from "../../common/approval-display";
+import { MAIN_THREAD_NAME } from "../../common/thread-constants";
 
 import { getFeishuOutputAdapterStrings } from "./feishu-output-adapter.strings";
 import { TurnCardManager, type TurnCardMessageClient } from "./feishu-turn-card";
-import type { TurnCardDataProvider } from "../../../services/contracts/im/turn-card-data-provider";
+import type { TurnCardReader } from "../../common/types";
 import {
   buildThreadListCard,
   buildMergePreviewCard,
@@ -51,6 +52,9 @@ import {
   buildInitCard,
   buildInitBindMenuCard,
   buildInitCreateMenuCard,
+  buildInitProjectFileEditorCard,
+  buildInitPendingCard,
+  buildInitFailedCard,
   buildInitSuccessCard,
   buildProjectResumedCard,
   buildHelpCard,
@@ -82,8 +86,6 @@ import {
   buildMergeSummaryCard,
 } from "./feishu-card-builders";
 
-// Re-export diff utils for external consumers (tests, etc.)
-export { unquoteGitPath, parseDiffFiles, splitDiffByFile, cleanDiff, formatFileTree } from "./diff-utils";
 // Re-export card builders for external consumers (card-handler, tests)
 export {
   buildThreadListCard,
@@ -96,6 +98,9 @@ export {
   buildInitCard,
   buildInitBindMenuCard,
   buildInitCreateMenuCard,
+  buildInitProjectFileEditorCard,
+  buildInitPendingCard,
+  buildInitFailedCard,
   buildInitSuccessCard,
   buildProjectResumedCard,
   buildHelpCard,
@@ -141,7 +146,7 @@ export class FeishuOutputAdapter {
 
   constructor(
     private readonly client: FeishuMessageClient,
-    options?: { cardThrottleMs?: number; turnCardDataProvider?: TurnCardDataProvider; locale?: AppLocale }
+    options?: { cardThrottleMs?: number; turnCardReader?: TurnCardReader; locale?: AppLocale }
   ) {
     this.locale = options?.locale ?? DEFAULT_APP_LOCALE;
     this.turnCard = new TurnCardManager(client, { ...options, locale: this.locale });
@@ -228,12 +233,7 @@ export class FeishuOutputAdapter {
 
   private approvalSummary(req: IMApprovalRequest): string {
     const s = getFeishuOutputAdapterStrings(this.locale);
-    if (req.approvalType === "command_exec") {
-      return req.command?.join(" ") || req.description;
-    }
-    const changedFiles = Object.keys(req.changes ?? {});
-    if (changedFiles.length === 0) return req.description;
-    return s.approvalFilesAffected(changedFiles.length);
+    return getApprovalSummary(req, (count) => s.approvalFilesAffected(count));
   }
 
   private approvalTip(content: string): Record<string, unknown> {
@@ -262,8 +262,16 @@ export class FeishuOutputAdapter {
       ? `${threadLabel} · Turn ${turnNumber}`
       : threadLabel;
     const createdAtLabel = this.formatApprovalTime(req.createdAt);
-    const changedFiles = Object.keys(req.changes ?? {});
+    const changedFiles = getApprovalFiles(req);
     const filePreview = changedFiles.slice(0, 3);
+    const callbackFilePreview = changedFiles.slice(0, 5);
+    const displayName = getApprovalDisplayName(req);
+    const summary = this.approvalSummary(req);
+    const reason = getApprovalReason(req);
+    const cwd = getApprovalCwd(req);
+    const callbackDescription = desc.length > TRUNCATE_THRESHOLD
+      ? desc.slice(0, TRUNCATE_THRESHOLD) + "…"
+      : desc;
 
     const contentElements: Record<string, unknown>[] = [
       {
@@ -285,13 +293,35 @@ export class FeishuOutputAdapter {
         ]
       },
       { tag: "hr" },
-      {
-        tag: "markdown",
-        content: req.approvalType === "command_exec"
-          ? `**${s.approvalPendingSummary}**\n> ${isLong ? commandSummary : desc}`
-          : `**${s.approvalPendingSummary}**\n> ${this.approvalSummary(req)}`
-      }
     ];
+
+    if (displayName) {
+      contentElements.push({
+        tag: "markdown",
+        content: `**${s.approvalOperationName}**\n${displayName}`
+      });
+    }
+
+    contentElements.push({
+      tag: "markdown",
+      content: `**${s.approvalPendingSummary}**\n> ${req.approvalType === "command_exec"
+        ? (summary || (isLong ? commandSummary : desc))
+        : summary}`
+    });
+
+    if (reason && reason !== summary && reason !== displayName) {
+      contentElements.push({
+        tag: "markdown",
+        content: `**${s.approvalReason}**\n${reason}`
+      });
+    }
+
+    if (cwd) {
+      contentElements.push({
+        tag: "markdown",
+        content: `**${s.approvalWorkingDirectory}**\n\`${cwd}\``
+      });
+    }
 
     if (req.approvalType === "file_change" && filePreview.length > 0) {
       contentElements.push({
@@ -351,11 +381,17 @@ export class FeishuOutputAdapter {
               threadId: req.threadId,
               turnId: req.turnId,
               commandSummary,
-              approvalType: req.approvalType,
               threadLabel,
               createdAtLabel,
+              approvalType: req.approvalType,
               approvalTitle: this.approvalTitle(req),
-              approvalTypeLabel: this.approvalTypeLabel(req)
+              approvalTypeLabel: this.approvalTypeLabel(req),
+              displayName,
+              summary,
+              reason,
+              cwd,
+              description: callbackDescription,
+              files: callbackFilePreview
             }
           }]
         }]
@@ -520,8 +556,35 @@ export class FeishuOutputAdapter {
 
   // ── Card action (accept/revert/interrupt) ──────────────────────────────
 
-  async updateCardAction(chatId: string, turnId: string, action: "accepted" | "reverted" | "interrupted"): Promise<Record<string, unknown> | null> {
-    return this.turnCard.updateCardAction(chatId, turnId, action);
+  async updateCardAction(
+    chatId: string,
+    turnId: string,
+    action: "accepted" | "reverted" | "interrupting" | "interrupted",
+    meta?: { actorName?: string; requestedAt?: string }
+  ): Promise<Record<string, unknown> | null> {
+    return this.turnCard.updateCardAction(chatId, turnId, action, meta);
+  }
+
+  prepareInterruptingCard(
+    chatId: string,
+    turnId: string,
+    meta?: { actorName?: string; requestedAt?: string }
+  ): Record<string, unknown> | null {
+    return this.turnCard.prepareInterruptingCard(chatId, turnId, meta);
+  }
+
+  async finalizeInterruptAction(chatId: string, turnId: string): Promise<void> {
+    await this.turnCard.finalizeInterruptAction(chatId, turnId);
+  }
+
+  async cancelInterruptingCard(chatId: string, turnId: string): Promise<void> {
+    await this.turnCard.cancelInterruptingCard(chatId, turnId);
+  }
+
+  renderCurrentTurnCard(chatId: string, turnId: string): Record<string, unknown> | null {
+    const state = this.turnCard.getCachedState(chatId, turnId);
+    if (!state) return null;
+    return this.turnCard.renderCard(state);
   }
 
   // ── Sub-page rendering (for card-handler callbacks) ────────────────────
@@ -550,13 +613,16 @@ export class FeishuOutputAdapter {
     thinking?: string;
     message?: string;
     tools?: Array<{ label: string; tool: string; callId?: string; status: "running" | "completed" | "failed"; targetFile?: string }>;
-    fileChanges: Array<{ filesChanged: string[]; diffSummary: string; stats?: { additions: number; deletions: number } }>;
+    fileChanges: Array<{ filesChanged: string[]; diffSummary: string; stats?: { additions: number; deletions: number }; diffFiles?: Array<{ file: string; status: "new" | "modified" | "deleted"; additions: number; deletions: number }>; diffSegments?: Array<{ file: string; status: "new" | "modified" | "deleted"; additions: number; deletions: number; content: string }> }>;
     toolOutputs?: Array<{ callId: string; command: string; output: string }>;
     planState?: { explanation?: string; items: Array<{ step: string; status: "pending" | "in_progress" | "completed" }> };
     tokenUsage?: { input: number; output: number; total?: number };
     promptSummary?: string;
     agentNote?: string;
-    actionTaken?: "accepted" | "reverted" | "interrupted";
+    actionTaken?: "accepted" | "reverted" | "interrupting" | "interrupted";
+    interruptedBy?: string;
+    interruptRequestedAt?: string;
+    interruptedAt?: string;
     turnMode?: "plan";
   }): Record<string, unknown> {
     const state = this.turnCard.cacheHistoricalState(input);
@@ -647,7 +713,7 @@ export class FeishuOutputAdapter {
   }
 
   async sendThreadNewForm(chatId: string, data: IMThreadNewFormData): Promise<void> {
-    const card = buildThreadNewCard(data.backends, data.defaultBackend, data.defaultModel, this.locale);
+    const card = buildThreadNewCard(data.catalog, this.locale);
     await this.client.sendInteractiveCard(chatId, card);
   }
 
@@ -697,14 +763,14 @@ export class FeishuOutputAdapter {
     }
   }
 
-  async sendFileReview(chatId: string, review: import("../../../services/contracts/im/im-output").IMFileMergeReview): Promise<void> {
+  async sendFileReview(chatId: string, review: import("../../../services/event/im-output").IMFileMergeReview): Promise<void> {
     const card = review.sessionState === "recovery_required"
       ? buildMergeRecoveryRequiredCard(review, this.locale)
       : buildFileReviewCard(review, this.locale);
     await this.client.sendInteractiveCard(chatId, card);
   }
 
-  async sendMergeSummary(chatId: string, summary: import("../../../services/contracts/im/im-output").IMMergeSummary): Promise<void> {
+  async sendMergeSummary(chatId: string, summary: import("../../../services/event/im-output").IMMergeSummary): Promise<void> {
     const card = buildMergeSummaryCard(summary, this.locale);
     await this.client.sendInteractiveCard(chatId, card);
   }
@@ -875,17 +941,20 @@ export class FeishuOutputAdapter {
   ) { return buildSnapshotHistoryCard(snapshots, threadId, userId, displayName, threadName, fromHelp, this.locale); }
   buildThreadCreatedCard(info: Parameters<typeof buildThreadCreatedCard>[0]) { return buildThreadCreatedCard(info, this.locale); }
   buildThreadNewCard(
-    backends: Parameters<typeof buildThreadNewCard>[0],
-    defaultBackend?: string,
-    defaultModel?: string
-  ) { return buildThreadNewCard(backends, defaultBackend, defaultModel, this.locale); }
+    catalog: Parameters<typeof buildThreadNewCard>[0],
+  ) { return buildThreadNewCard(catalog, this.locale); }
   buildInitCard(unboundProjects?: Array<{ id: string; name: string; cwd: string; gitUrl?: string }>) {
     return buildInitCard(unboundProjects, this.locale);
   }
   buildInitBindMenuCard(unboundProjects?: Array<{ id: string; name: string; cwd: string; gitUrl?: string }>) {
     return buildInitBindMenuCard(unboundProjects, this.locale);
   }
-  buildInitCreateMenuCard() { return buildInitCreateMenuCard(this.locale); }
+  buildInitCreateMenuCard(draft?: Parameters<typeof buildInitCreateMenuCard>[0]) { return buildInitCreateMenuCard(draft, this.locale); }
+  buildInitProjectFileEditorCard(fileKey: "agents_md" | "gitignore", content: string) {
+    return buildInitProjectFileEditorCard(fileKey, content, this.locale);
+  }
+  buildInitPendingCard(info: Parameters<typeof buildInitPendingCard>[0]) { return buildInitPendingCard(info, this.locale); }
+  buildInitFailedCard(info: Parameters<typeof buildInitFailedCard>[0]) { return buildInitFailedCard(info, this.locale); }
   buildInitSuccessCard(info: Parameters<typeof buildInitSuccessCard>[0]) { return buildInitSuccessCard(info, this.locale); }
   buildModelListCard(currentModel: string, availableModels: string[], threadName?: string, userId?: string) {
     return buildModelListCard(currentModel, availableModels, threadName, userId, this.locale);
@@ -938,10 +1007,8 @@ export class FeishuOutputAdapter {
   ) { return buildHelpThreadCard(threads, userId, displayName, isOnMain, this.locale); }
   buildHelpThreadNewCard(
     userId: string,
-    backends: Array<{ name: string; description?: string; models?: string[]; profiles?: Array<{ name: string; model: string; provider: string }> }>,
-    defaultBackend?: string,
-    defaultModel?: string
-  ) { return buildHelpThreadNewCard(userId, backends, defaultBackend, defaultModel, this.locale); }
+    catalog: Parameters<typeof buildHelpThreadNewCard>[1],
+  ) { return buildHelpThreadNewCard(userId, catalog, this.locale); }
   buildHelpMergeCard(ownerId: string, branchName?: string) { return buildHelpMergeCard(ownerId, branchName, this.locale); }
   buildHelpSkillCard(skills: Parameters<typeof buildHelpSkillCard>[0], ownerId: string) { return buildHelpSkillCard(skills, ownerId, this.locale); }
   buildHelpBackendCard(backends: Parameters<typeof buildHelpBackendCard>[0], ownerId: string) { return buildHelpBackendCard(backends, ownerId, this.locale); }

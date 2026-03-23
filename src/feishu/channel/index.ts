@@ -3,7 +3,6 @@ export * from "./feishu-output-adapter";
 export * from "./fetch-http-client";
 export * from "./http-client";
 export * from "./replay-cache";
-export * from "./diff-utils";
 export * from "./feishu-card-builders";
 export * from "./feishu-turn-card";
 export * from "./feishu-inbound-adapter";

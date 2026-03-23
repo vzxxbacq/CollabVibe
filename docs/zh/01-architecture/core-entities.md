@@ -2,7 +2,7 @@
 title: 核心类：Project / Thread / Turn
 layer: architecture
 status: active
-source_of_truth: AGENTS.md, services/admin-api/src/admin-state.ts, services/orchestrator/src/thread-state/thread-registry.ts, services/orchestrator/src/turn-state/turn-record.ts
+source_of_truth: AGENTS.md, services/project/admin-state.ts, services/thread/thread-registry.ts, services/turn/turn-record.ts
 ---
 
 # 核心类：Project / Thread / Turn
@@ -34,8 +34,8 @@ flowchart TD
 
 | 类型 | 位置 | 作用 |
 | --- | --- | --- |
-| `ProjectConfig` | `services/admin-api/src/admin-state.ts` | 持久化项目配置，是真正的项目聚合根 |
-| `ProjectContextRecord` | `services/orchestrator/src/project-resolver.ts` | orchestrator 视角下的项目上下文投影 |
+| `ProjectRecord` | `services/project/project-types.ts` | 持久化项目配置，是真正的项目聚合根 |
+| `ProjectResolver` | `services/project/project-resolver.ts` | orchestrator 视角下的 `chatId -> projectId` 解引用契约 |
 
 ### Project 的职责
 
@@ -66,7 +66,7 @@ flowchart TD
 
 ## 2. Thread
 
-`Thread` 在代码中由 `ThreadRecord` 表示，定义位于 `services/orchestrator/src/thread-state/thread-registry.ts`。
+`Thread` 在代码中由 `ThreadRecord` 表示，定义位于 `services/thread/types.ts`，注册接口位于 `services/thread/thread-registry.ts`。
 
 ### Thread 的职责
 
@@ -95,7 +95,7 @@ flowchart TD
 
 ## 3. Turn
 
-`Turn` 在代码中由 `TurnRecord` 表示，定义位于 `services/orchestrator/src/turn-state/turn-record.ts`。
+`Turn` 在代码中由 `TurnRecord` 表示，定义位于 `services/turn/types.ts`，兼容 re-export 位于 `services/turn/turn-record.ts`。
 
 ### Turn 的职责
 

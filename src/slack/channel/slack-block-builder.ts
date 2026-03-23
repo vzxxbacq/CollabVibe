@@ -7,12 +7,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SlackBlock } from "./slack-message-client";
+import { getApprovalCwd, getApprovalDisplayName, getApprovalReason, getApprovalSummary } from "../../common/approval-display";
 import type {
     IMApprovalRequest,
     IMProgressEvent,
     IMTurnSummary,
     IMUserInputRequest
-} from "../../../services/contracts/im/index";
+} from "../../../services/index";
 
 // ── 基础构建块 ──────────────────────────────────────────────────────────────
 
@@ -144,9 +145,17 @@ export function buildProgressBlocks(entries: ProgressEntry[]): SlackBlock[] {
  * 构建审批 blocks — 描述 + 按钮组。
  */
 export function buildApprovalBlocks(req: IMApprovalRequest): SlackBlock[] {
-    const desc = req.command
-        ? `\`${req.command.join(" ")}\``
-        : req.description;
+    const display = getApprovalDisplayName(req);
+    const summary = getApprovalSummary(req) || "Approval required";
+    const reason = getApprovalReason(req);
+    const cwd = getApprovalCwd(req);
+    const lines = [
+        "⚠️ *Approval Required*",
+        display ? `*Operation:* ${display}` : undefined,
+        `*Summary:* ${summary}`,
+        reason && reason !== summary ? `*Reason:* ${reason}` : undefined,
+        cwd ? `*CWD:* \`${cwd}\`` : undefined
+    ].filter(Boolean).join("\n");
 
     const blockId = `approval_${req.callId}`;
     const buttonDefs: Array<{
@@ -199,7 +208,7 @@ export function buildApprovalBlocks(req: IMApprovalRequest): SlackBlock[] {
     }
 
     return [
-        section(`⚠️ *Approval Required*\n${desc}`),
+        section(lines),
         actions(blockId, buttonDefs)
     ];
 }

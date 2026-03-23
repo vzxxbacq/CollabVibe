@@ -1,4 +1,6 @@
+import { Buffer } from "node:buffer";
 import { parseDiffFileNames, parseDiffStats } from "../../../../git-utils/src/diff-parser";
+import { buildApprovalDisplay, nonEmptyString, summarizeText } from "../../approval-display";
 import type { UnifiedAgentEvent, UnifiedAgentTool } from "../../unified-agent-event";
 
 import { createApprovalOptionMapper } from "./approval-option-mapper";
@@ -8,6 +10,37 @@ const mapper = createApprovalOptionMapper();
 
 export interface AcpEventFilterOptions {
   ignorePromptResponseCompletion?: boolean;
+}
+
+function buildAcpApprovalDisplay(update: AcpSessionUpdate): {
+  displayName?: string;
+  summary?: string;
+  reason?: string;
+  cwd?: string;
+  description: string;
+} {
+  const requestId = nonEmptyString(update.requestId);
+  const callId = nonEmptyString(update.toolCallId ?? update.callId);
+  const titleCandidate = nonEmptyString(update.title)
+    ?? nonEmptyString(update.label)
+    ?? nonEmptyString(update.name);
+  const description = nonEmptyString(update.description);
+  const command = nonEmptyString((update.rawInput as Record<string, unknown> | undefined)?.command);
+  const cwd = nonEmptyString((update.rawInput as Record<string, unknown> | undefined)?.cwd ?? update.cwd);
+  const reason = description;
+  const approvalType = normalizeApprovalType(update.permissionKind);
+  return buildApprovalDisplay({
+    approvalType,
+    requestId,
+    callId,
+    description,
+    reason,
+    cwd,
+    displayNameCandidates: [titleCandidate],
+    summaryCandidates: [command, summarizeText(description?.split("\n")[0])],
+    fallbackDisplayName: approvalType === "file_change" ? "Approve file changes" : "Run shell command",
+    fallbackDescription: approvalType === "file_change" ? "File change approval" : "Approval required"
+  });
 }
 
 /**
@@ -137,7 +170,9 @@ export function acpEventToUnifiedAgentEvent(update: AcpSessionUpdate, options: A
           type: "tool_output",
           callId,
           delta: progressText,
-          source: "stdout"
+          source: "stdout",
+          format: "text",
+          byteLength: Buffer.byteLength(progressText, "utf8")
         };
       }
 
@@ -150,17 +185,22 @@ export function acpEventToUnifiedAgentEvent(update: AcpSessionUpdate, options: A
             type: "tool_output",
             callId,
             delta: inputSummary,
-            source: "stdout"
+            source: "stdout",
+            format: "text",
+            byteLength: Buffer.byteLength(inputSummary, "utf8")
           };
         }
       }
 
       if (update.contentType === "terminal") {
+        const delta = String(update.delta ?? update.content ?? "");
         return {
           type: "tool_output",
           callId,
-          delta: String(update.delta ?? update.content ?? ""),
-          source: "stdout"
+          delta,
+          source: "stdout",
+          format: "text",
+          byteLength: Buffer.byteLength(delta, "utf8")
         };
       }
       // No content to show — skip
@@ -172,13 +212,18 @@ export function acpEventToUnifiedAgentEvent(update: AcpSessionUpdate, options: A
       const availableActions = options
         .map((option) => typeof option.id === "string" ? mapper.toImAction(option.id) : null)
         .filter(Boolean) as Array<"approve" | "deny" | "approve_always">;
+      const display = buildAcpApprovalDisplay(update);
       return {
         type: "approval_request",
         approvalId: String(update.requestId ?? update.toolCallId ?? update.callId ?? ""),
         turnId: String(update.turnId ?? ""),
         callId: String(update.toolCallId ?? update.callId ?? ""),
         approvalType: normalizeApprovalType(update.permissionKind),
-        description: String(update.description ?? "Approval required"),
+        description: display.description,
+        displayName: display.displayName,
+        summary: display.summary,
+        reason: display.reason,
+        cwd: display.cwd,
         availableActions: availableActions.length > 0 ? [...new Set(availableActions)] : ["deny"],
         backendType: "acp"
       };

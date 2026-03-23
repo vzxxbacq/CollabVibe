@@ -1,4 +1,17 @@
-import type { PlatformAction, PlatformActionAdapter } from "../../../services/contracts/im/platform-action";
+import type { PlatformAction, PlatformActionAdapter } from "../../common/platform-action";
+
+function parseBackendModelSelection(rawValue: unknown): { backendId?: string; model?: string } {
+  const backendModelRaw = String(rawValue ?? "").trim();
+  const colonIdx = backendModelRaw.indexOf(":");
+  const selectedBackend = colonIdx >= 0 ? backendModelRaw.slice(0, colonIdx) : backendModelRaw;
+  const afterColon = colonIdx >= 0 ? backendModelRaw.slice(colonIdx + 1) : "";
+  const secondColon = afterColon.indexOf(":");
+  const model = secondColon >= 0 ? afterColon.slice(secondColon + 1) : afterColon;
+  return {
+    backendId: selectedBackend || undefined,
+    model: model || undefined,
+  };
+}
 
 interface FeishuCardActionPayload {
   action?: {
@@ -22,33 +35,23 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     if (action === "interrupt") return { kind: "turn_interrupt", turnId: typeof actionValue.turnId === "string" ? actionValue.turnId : undefined, threadName: typeof actionValue.threadName === "string" ? actionValue.threadName : undefined, ...base };
     if (action === "create_thread") {
       const formValue = payload.action?.form_value ?? {};
-      const backendModelRaw = String(formValue.backend_model ?? actionValue.backend_model ?? "").trim();
-      const colonIdx = backendModelRaw.indexOf(":");
-      const selectedBackend = colonIdx >= 0 ? backendModelRaw.slice(0, colonIdx) : backendModelRaw;
-      const afterColon = colonIdx >= 0 ? backendModelRaw.slice(colonIdx + 1) : "";
-      const secondColon = afterColon.indexOf(":");
-      const model = secondColon >= 0 ? afterColon.slice(secondColon + 1) : afterColon;
+      const selection = parseBackendModelSelection(formValue.backend_model ?? actionValue.backend_model);
       return {
         kind: "thread_create",
         threadName: String(formValue.thread_name ?? actionValue.thread_name ?? "").trim(),
-        backendId: selectedBackend || undefined,
-        model: model || undefined,
+        backendId: selection.backendId,
+        model: selection.model,
         ...base,
       };
     }
     if (action === "help_create_thread") {
       const formValue = payload.action?.form_value ?? {};
-      const backendModelRaw = String(formValue.backend_model ?? actionValue.backend_model ?? "").trim();
-      const colonIdx = backendModelRaw.indexOf(":");
-      const selectedBackend = colonIdx >= 0 ? backendModelRaw.slice(0, colonIdx) : backendModelRaw;
-      const afterColon = colonIdx >= 0 ? backendModelRaw.slice(colonIdx + 1) : "";
-      const secondColon = afterColon.indexOf(":");
-      const model = secondColon >= 0 ? afterColon.slice(secondColon + 1) : afterColon;
+      const selection = parseBackendModelSelection(formValue.backend_model ?? actionValue.backend_model);
       return {
         kind: "thread_create",
         threadName: String(formValue.thread_name ?? actionValue.thread_name ?? "").trim(),
-        backendId: selectedBackend || undefined,
-        model: model || undefined,
+        backendId: selection.backendId,
+        model: selection.model,
         ...base,
       };
     }
@@ -94,7 +97,22 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     if (action === "merge_back_overview") return { kind: "merge_review_back_overview", branchName: String(actionValue.branchName ?? ""), ...base };
     if (action === "merge_agent_assist_form") return { kind: "merge_review_agent_assist_form", branchName: String(actionValue.branchName ?? ""), ...base };
     if (action === "merge_accept_all") return { kind: "merge_accept_all", branchName: String(actionValue.branchName ?? ""), ...base };
-    if (action === "merge_agent_assist_submit") return { kind: "merge_agent_assist", branchName: String(actionValue.branchName ?? ""), prompt: typeof actionValue.prompt === "string" ? actionValue.prompt : undefined, ...base };
+    if (action === "merge_agent_assist_submit") {
+      const formValue = payload.action?.form_value ?? {};
+      const selection = parseBackendModelSelection(formValue.backend_model ?? actionValue.backend_model);
+      return {
+        kind: "merge_agent_assist",
+        branchName: String(actionValue.branchName ?? ""),
+        backendId: selection.backendId,
+        model: selection.model,
+        prompt: typeof formValue.merge_agent_prompt === "string"
+          ? formValue.merge_agent_prompt
+          : typeof actionValue.prompt === "string"
+            ? actionValue.prompt
+            : undefined,
+        ...base,
+      };
+    }
     if (action === "merge_batch_retry") {
       const formValue = payload.action?.form_value ?? {};
       const files = Array.isArray(formValue.batch_retry_files) ? formValue.batch_retry_files.map(String) : [];
@@ -182,9 +200,6 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     if (action === "help_home" || action === "help_threads" || action === "help_history" || action === "help_skills" || action === "help_backends" || action === "help_turns" || action === "help_merge" || action === "help_project") {
       return { kind: "help_panel", panel: action, messageId: String(payload.context?.open_message_id ?? ""), ...base };
     }
-    if (action === "help_project_save") {
-      return { kind: "help_project_save", projectId: String(actionValue.projectId ?? ""), messageId: String(payload.context?.open_message_id ?? ""), ...base };
-    }
     if (action === "help_project_push") {
       return { kind: "help_project_push", projectId: String(actionValue.projectId ?? ""), messageId: String(payload.context?.open_message_id ?? ""), ...base };
     }
@@ -208,6 +223,21 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
 
     // ── Project init / bind ────────────────────────────────────────────────
     if (action === "init_project") return { kind: "init_project", ...base };
+    if (action === "init_project_file_open") return {
+      kind: "init_project_file_open",
+      fileKey: actionValue.fileKey === "agents_md" ? "agents_md" : "gitignore",
+      ...base,
+    };
+    if (action === "init_project_file_save") return {
+      kind: "init_project_file_save",
+      fileKey: actionValue.fileKey === "agents_md" ? "agents_md" : "gitignore",
+      ...base,
+    };
+    if (action === "init_project_file_reset_template") return {
+      kind: "init_project_file_reset_template",
+      fileKey: actionValue.fileKey === "agents_md" ? "agents_md" : "gitignore",
+      ...base,
+    };
     if (action === "init_root_menu") return { kind: "init_root_menu", ...base };
     if (action === "init_bind_menu") return { kind: "init_bind_menu", ...base };
     if (action === "init_create_menu") return { kind: "init_create_menu", ...base };

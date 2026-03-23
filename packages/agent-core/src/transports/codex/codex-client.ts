@@ -1,10 +1,10 @@
-import { JsonRpcClient } from "./rpc-client";
+import { JsonRpcClient } from "../../rpc-client";
 import { toProtocolDecision, type ApprovalRequestEvent } from "./approval";
 import { createLogger } from "../../../../logger/src/index";
 import type {
   ApplyPatchApprovalDecisionParams,
+  CodexInitializeParams,
   ExecApprovalDecisionParams,
-  InitializeParams,
   ThreadResult,
   ThreadStartParams,
   TurnStatusUpdate,
@@ -37,7 +37,7 @@ export class CodexClient {
     }
   }
 
-  async initialize(params: InitializeParams): Promise<void> {
+  async initialize(params: CodexInitializeParams): Promise<void> {
     log.debug("codex client initialize");
     await this.rpc.initialize(params as Parameters<JsonRpcClient["initialize"]>[0]);
   }

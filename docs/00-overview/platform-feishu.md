@@ -2,7 +2,7 @@
 title: "Feishu Integration"
 layer: overview
 status: active
-source_of_truth: src/feishu/*, packages/channel-feishu/*, scripts/export-feishu-scopes.ts
+source_of_truth: src/feishu/*, src/feishu/channel/*, scripts/export-feishu-scopes.ts
 ---
 
 # Feishu Integration
@@ -16,12 +16,12 @@ Feishu / Lark is currently the primary platform for the system, and it is integr
 | Event intake | WebSocket Stream |
 | Main entry point | `src/feishu/feishu-ws-app.ts` |
 | Bot interactions | messages, cards, bot menu |
-| Platform output | `packages/channel-feishu/*` |
+| Platform output | `src/feishu/channel/*` |
 
 ```mermaid
 flowchart LR
   A[Feishu Event] --> B[src/feishu/*]
-  B --> C[src/core/intent-dispatcher.ts]
+  B --> C[src/platform/dispatcher.ts]
   C --> D[orchestrator]
   D --> E[FeishuOutputAdapter]
 ```

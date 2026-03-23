@@ -1,7 +1,7 @@
 import type { EventMsg } from "./generated/EventMsg";
 
 export type ApprovalRequestType = "command_exec" | "file_change";
-export type ApprovalDecision = "accept" | "decline" | "approve_always";
+export type CodexApprovalDecision = "accept" | "decline" | "approve_always";
 
 export interface ApprovalRequestEvent {
   type: ApprovalRequestType;
@@ -120,7 +120,7 @@ export function parseApprovalRequestEvent(input: unknown): ApprovalRequestEvent 
   };
 }
 
-export function toProtocolDecision(decision: ApprovalDecision): "approved" | "denied" | "approved_for_session" {
+export function toProtocolDecision(decision: CodexApprovalDecision): "approved" | "denied" | "approved_for_session" {
   if (decision === "accept") {
     return "approved";
   }

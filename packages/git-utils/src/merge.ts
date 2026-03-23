@@ -308,7 +308,10 @@ export async function mergeWorktree(
  * mainCwd to the branch.                                                      
  */
 
-import type { MergeFileStatus, MergeFileDecision } from "../../../services/contracts/im/im-output";
+/* ── Merge file classification types (canonical L3 definitions) ────────── */
+
+export type MergeFileStatus = "auto_merged" | "conflict" | "added" | "deleted" | "agent_resolved" | "agent_pending";
+export type MergeFileDecision = "accept" | "keep_main" | "use_branch" | "skip";
 
 export interface MergeFileInfo {
     path: string;
@@ -494,26 +497,68 @@ export async function applyFileDecision(
 
     switch (decision) {
         case "keep_main":
-            // Use base branch's version (we're merging baseBranch into branch)
-            await git(["checkout", baseBranch, "--", filePath], worktreeCwd, { logContext: context });
-            await git(["add", "--", filePath], worktreeCwd, { logContext: context });
+            // Use base branch's version (we're merging baseBranch into branch).
+            // The path may legitimately be absent on that side (for example deleted upstream),
+            // so stage the absence instead of failing on a missing pathspec.
+            try {
+                await git(["checkout", baseBranch, "--", filePath], worktreeCwd, { logContext: context });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (!message.includes("pathspec") || !message.includes(filePath)) {
+                    throw error;
+                }
+            }
+            await git(["add", "-A", "--", filePath], worktreeCwd, { logContext: context }).catch(async (error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                if (!message.includes("pathspec") || !message.includes(filePath)) {
+                    throw error;
+                }
+            });
             break;
         case "use_branch":
-            // Use branch's pre-merge version (HEAD before merge = branch tip)
-            await git(["checkout", "HEAD", "--", filePath], worktreeCwd, { logContext: context });
-            await git(["add", "--", filePath], worktreeCwd, { logContext: context });
+            // Use branch's pre-merge version (HEAD before merge = branch tip).
+            // Missing pathspec here usually means the branch-side version is a deletion.
+            try {
+                await git(["checkout", "HEAD", "--", filePath], worktreeCwd, { logContext: context });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (!message.includes("pathspec") || !message.includes(filePath)) {
+                    throw error;
+                }
+            }
+            await git(["add", "-A", "--", filePath], worktreeCwd, { logContext: context }).catch(async (error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                if (!message.includes("pathspec") || !message.includes(filePath)) {
+                    throw error;
+                }
+            });
             break;
         case "accept": {
-            // Accept merged/agent-resolved version — guard against conflict markers
-            const content = await readFile(join(worktreeCwd, filePath), "utf-8");
-            if (content.includes("<<<<<<<") && content.includes(">>>>>>>")) {
+            // Accept merged/agent-resolved version.
+            // The reviewed path may already be absent (for example accepted deletion),
+            // so only inspect file contents when the path still exists in the worktree.
+            let content: string | null = null;
+            try {
+                await access(join(worktreeCwd, filePath));
+                content = await readFile(join(worktreeCwd, filePath), "utf-8");
+            } catch {
+                content = null;
+            }
+            if (content && content.includes("<<<<<<<") && content.includes(">>>>>>>")) {
                 throw new Error(`文件 ${filePath} 仍有未解决的冲突标记，无法 accept`);
             }
             const { stdout } = await git(["ls-files", "-u", "--", filePath], worktreeCwd, { logContext: context });
             if (stdout.trim()) {
                 throw new Error(`文件 ${filePath} 在 git index 中仍是未解决冲突，无法 accept`);
             }
-            await git(["add", "--", filePath], worktreeCwd, { logContext: context });
+            try {
+                await git(["add", "-A", "--", filePath], worktreeCwd, { logContext: context });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                if (content !== null || !message.includes("pathspec")) {
+                    throw error;
+                }
+            }
             break;
         }
         case "skip":

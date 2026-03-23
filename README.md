@@ -20,71 +20,13 @@
 
 ## Supported Backends
 
-<table>
-  <thead>
-    <tr>
-      <th>Backend</th>
-      <th>Transport</th>
-      <th>Access Method</th>
-      <th>Status</th>
-      <th>Notes</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td rowspan="2"><strong><code>codex</code></strong></td>
-      <td rowspan="2"><code>codex</code></td>
-      <td>API</td>
-      <td>✅ Supported</td>
-      <td>Connected through the Codex protocol / stdio path</td>
-    </tr>
-    <tr>
-      <td>RefreshToken</td>
-      <td>🗺️ Planned</td>
-      <td>RefreshToken-based platform integration is on the roadmap</td>
-    </tr>
-    <tr>
-      <td><strong><code>opencode</code></strong></td>
-      <td><code>acp</code></td>
-      <td>API</td>
-      <td>✅ Supported</td>
-      <td>Connected through ACP</td>
-    </tr>
-    <tr>
-      <td rowspan="2"><strong><code>claude-code</code></strong></td>
-      <td rowspan="2"><code>acp</code></td>
-      <td>API</td>
-      <td>✅ Supported</td>
-      <td>Connected through ACP</td>
-    </tr>
-    <tr>
-      <td>RefreshToken</td>
-      <td>🗺️ Planned</td>
-      <td>RefreshToken-based platform integration is on the roadmap</td>
-    </tr>
-    <tr>
-      <td><strong><code>github-copilot</code></strong></td>
-      <td><code>TBD</code></td>
-      <td>RefreshToken</td>
-      <td>🗺️ Planned</td>
-      <td>Not wired in the current codebase</td>
-    </tr>
-    <tr>
-      <td><strong><code>gemini-cli</code></strong></td>
-      <td><code>TBD</code></td>
-      <td>RefreshToken</td>
-      <td>🗺️ Planned</td>
-      <td>Not wired in the current codebase</td>
-    </tr>
-    <tr>
-      <td><strong><code>trae-cli</code></strong></td>
-      <td><code>TBD</code></td>
-      <td>RefreshToken</td>
-      <td>🗺️ Planned</td>
-      <td>Not wired in the current codebase</td>
-    </tr>
-  </tbody>
-</table>
+| Backend | Transport | Status | Notes |
+| --- | --- | --- | --- |
+| **`codex`** | `codex` | ✅ Supported | Connected through the Codex protocol / stdio path |
+| **`opencode`** | `acp` | ✅ Supported | Connected through ACP |
+| **`claude-code`** | `acp` | ✅ Supported | Connected through ACP |
+| **`gemini-cli`** | `TBD` | 🗺️ Planned | Not wired in the current codebase |
+| **`trae-cli`** | `TBD` | 🗺️ Planned | Not wired in the current codebase |
 
 ## Supported IM Platforms
 
@@ -145,9 +87,25 @@ Minimum commonly used settings:
 npm run start:dev
 ```
 
-![Quickstart video placeholder](docs/public/placeholders/guide-video-placeholder.svg)
+## Showcase
 
-Placeholder: replace with a short walkthrough video cover that shows local boot, Feishu trigger, and streaming output.
+<table>
+  <tr>
+    <th>Multi-Agent Chat</th>
+    <th>Streaming Output</th>
+    <th>Merge Conflict Resolution</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/public/placeholders/showcase-chat-placeholder.svg" width="280" alt="Multi-agent chat" /></td>
+    <td align="center"><img src="docs/public/placeholders/showcase-stream-placeholder.svg" width="280" alt="Streaming output" /></td>
+    <td align="center"><img src="docs/public/placeholders/showcase-merge-placeholder.svg" width="280" alt="Merge conflict resolution" /></td>
+  </tr>
+  <tr>
+    <td align="center">Direct multiple coding agents from a single group chat</td>
+    <td align="center">Watch agent progress in real-time with streamed card updates</td>
+    <td align="center">Resolve merge conflicts through interactive approval cards</td>
+  </tr>
+</table>
 
 ## Notes
 

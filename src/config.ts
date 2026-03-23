@@ -1,29 +1,15 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_APP_LOCALE, parseAppLocale, type AppLocale } from "../services/contracts/im/app-locale";
-import type { OrchestratorConfig } from "../services/contracts/admin/contracts";
+import { DEFAULT_APP_LOCALE, parseAppLocale, type AppLocale } from "./common/app-locale";
+import type { AppConfig } from "../services/index";
+
+export type { AppConfig } from "../services/index";
 
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ConfigError";
   }
-}
-
-export interface AppConfig extends OrchestratorConfig {
-  locale: AppLocale;
-  platform: "feishu" | "slack";
-  feishu: {
-    appId: string;
-    appSecret: string;
-    signingSecret?: string;
-    encryptKey?: string;
-    apiBaseUrl: string;
-  };
-  slack: {
-    botToken: string;
-    appToken: string;
-  };
 }
 
 function readRequired(env: NodeJS.ProcessEnv, key: string): string {

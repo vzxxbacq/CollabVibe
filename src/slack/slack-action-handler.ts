@@ -4,14 +4,17 @@
  *
  * Slack interactive action handler for the currently supported Block Kit actions.
  */
-import { createLogger } from "../../packages/logger/src/index";
+import { createLogger } from "../logging";
 import { SlackActionAdapter } from "./channel/index";
-import { PlatformActionRouter } from "../../services/orchestrator/src/commands/platform-action-router";
+import { PlatformActionRouter } from "../common/platform-action-router";
 import { buildSlackHelpPanelPayload, sendThreadNewForm } from "./shared-handlers";
 import { SlackOutputGateway } from "./platform-output-dispatcher";
+import { resolveProjectByChatId } from "../common/project-resolution";
+import { textNotification } from "../common/output-helpers";
+import type { MergeResult } from "../../services/index";
 import type { SlackHandlerDeps } from "./types";
 
-import type { OutputGateway } from "../../services/contracts/im/platform-output";
+import type { OutputGateway } from "../common/platform-output";
 
 const log = createLogger("slack-action");
 const slackActionAdapter = new SlackActionAdapter();
@@ -20,25 +23,91 @@ function outputDispatcher(deps: SlackHandlerDeps): OutputGateway {
   return new SlackOutputGateway(deps);
 }
 
+async function dispatchMergeResult(
+  deps: SlackHandlerDeps,
+  chatId: string,
+  result: MergeResult
+): Promise<void> {
+  const dispatcher = outputDispatcher(deps);
+  switch (result.kind) {
+    case "review":
+      await deps.platformOutput.sendFileReview(chatId, result.data);
+      return;
+    case "summary":
+      await deps.platformOutput.sendMergeSummary(chatId, result.data);
+      return;
+    case "preview":
+      await dispatcher.dispatch(chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "preview",
+            branchName: "",
+            baseBranch: result.baseBranch,
+            message: "Merge preview ready.",
+            diffStats: result.diffStats,
+          },
+        },
+      });
+      return;
+    case "conflict":
+      await dispatcher.dispatch(chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "conflict",
+            branchName: "",
+            baseBranch: result.baseBranch,
+            message: "Merge conflict detected.",
+            conflicts: result.conflicts,
+          },
+        },
+      });
+      return;
+    case "success":
+      await dispatcher.dispatch(chatId, textNotification(result.message ?? "Merge completed."));
+      return;
+    case "rejected":
+      await dispatcher.dispatch(chatId, textNotification(result.message));
+      return;
+  }
+}
+
 const slackActionRouter = new PlatformActionRouter<SlackHandlerDeps, void>({
   interruptTurn: async (deps, action) => {
     const dispatcher = outputDispatcher(deps);
-    const result = await deps.orchestrator.handleTurnInterrupt(action.chatId, action.actorId);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await dispatcher.dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
+      return;
+    }
+    const projectId = project.id;
+    const result = await deps.api.interruptTurn({ projectId, actorId: action.actorId, userId: action.actorId });
     if (result.interrupted && action.turnId) {
       await deps.platformOutput.updateCardAction(action.chatId, action.turnId, "interrupted");
       return;
     }
-    await dispatcher.dispatch(action.chatId, { kind: "text", text: result.interrupted ? "Turn interrupted." : "No running turn to interrupt." });
+    await dispatcher.dispatch(action.chatId, textNotification(result.interrupted ? "Turn interrupted." : "No running turn to interrupt."));
   },
   helpPanel: async (deps, action) => {
     const dispatcher = outputDispatcher(deps);
     if (action.panel === "help_merge") {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "Merge help panel is not supported on Slack." });
+      await dispatcher.dispatch(action.chatId, textNotification("Merge help panel is not supported on Slack."));
       return;
     }
-    const panel = await buildSlackHelpPanelPayload(deps, action.chatId, action.actorId, action.panel, action.messageId);
+    const panel = await buildSlackHelpPanelPayload(
+      deps,
+      action.chatId,
+      action.actorId,
+      action.panel === "help_project" ? "help_home" : action.panel,
+      action.messageId
+    );
     if (!panel) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+      await dispatcher.dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return;
     }
     await dispatcher.dispatch(action.chatId, { kind: "help_panel", panel });
@@ -47,7 +116,7 @@ const slackActionRouter = new PlatformActionRouter<SlackHandlerDeps, void>({
     const dispatcher = outputDispatcher(deps);
     const panel = await buildSlackHelpPanelPayload(deps, action.chatId, action.actorId, "help_threads", action.messageId);
     if (!panel) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+      await dispatcher.dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return;
     }
     await dispatcher.dispatch(action.chatId, { kind: "help_panel", panel });
@@ -56,113 +125,131 @@ const slackActionRouter = new PlatformActionRouter<SlackHandlerDeps, void>({
   acceptTurn: async (deps, action) => {
     const dispatcher = outputDispatcher(deps);
     if (!action.turnId) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "Accept requires a turnId." });
+      await dispatcher.dispatch(action.chatId, textNotification("Accept requires a turnId."));
       return;
     }
-    const result = await deps.orchestrator.acceptTurn(action.chatId, action.turnId);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await dispatcher.dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
+      return;
+    }
+    const result = await deps.api.acceptTurn({ projectId: project.id, turnId: action.turnId, actorId: action.actorId });
     if (result.accepted) {
       await deps.platformOutput.updateCardAction(action.chatId, action.turnId, "accepted");
       return;
     }
-    await dispatcher.dispatch(action.chatId, { kind: "text", text: "Turn is not awaiting approval." });
+    await dispatcher.dispatch(action.chatId, textNotification("Turn is not awaiting approval."));
   },
   revertTurn: async (deps, action) => {
     const dispatcher = outputDispatcher(deps);
     if (!action.turnId) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "Revert requires a turnId." });
+      await dispatcher.dispatch(action.chatId, textNotification("Revert requires a turnId."));
       return;
     }
-    const result = await deps.orchestrator.revertTurn(action.chatId, action.turnId);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await dispatcher.dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
+      return;
+    }
+    const result = await deps.api.revertTurn({ projectId: project.id, turnId: action.turnId, actorId: action.actorId });
     if (result.rolledBack) {
       await deps.platformOutput.updateCardAction(action.chatId, action.turnId, "reverted");
       return;
     }
-    await dispatcher.dispatch(action.chatId, { kind: "text", text: "Turn could not be reverted." });
+    await dispatcher.dispatch(action.chatId, textNotification("Turn could not be reverted."));
   },
   approvalDecision: async (deps, action) => {
     const dispatcher = outputDispatcher(deps);
-    const project = deps.findProjectByChatId(action.chatId);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
     if (!project) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+      await dispatcher.dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return;
     }
     if (!action.approvalId) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "Approval action requires an approval id." });
+      await dispatcher.dispatch(action.chatId, textNotification("Approval action requires an approval id."));
       return;
     }
-    await deps.approvalHandler.handle({
+    const mappedDecision = action.decision === "approve" ? "accept" as const
+      : action.decision === "deny" ? "decline" as const
+      : "approve_always" as const;
+    await deps.api.handleApprovalCallback({
       approvalId: action.approvalId,
-      approverId: action.actorId,
-      action: action.decision,
-      projectId: project.id,
-      threadId: action.threadId,
-      turnId: action.turnId,
-      approvalType: action.approvalType
-    }, true);
-    await dispatcher.dispatch(action.chatId, { kind: "text", text: `Approval ${action.decision} applied.` });
+      decision: mappedDecision,
+      actorId: action.actorId,
+    });
+    await dispatcher.dispatch(action.chatId, textNotification(`Approval ${action.decision} applied.`));
   },
   mergeConfirm: async (deps, action) => {
     const dispatcher = outputDispatcher(deps);
     if (!action.branchName) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "Confirm merge requires a branch name." });
+      await dispatcher.dispatch(action.chatId, textNotification("Confirm merge requires a branch name."));
       return;
     }
-    const result = await deps.orchestrator.handleMergeConfirm(action.chatId, action.branchName, undefined, { userId: action.actorId });
-    await dispatcher.dispatch(action.chatId, { kind: "text", text: result.message });
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await dispatcher.dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
+      return;
+    }
+    const result = await deps.api.handleMergeConfirm({ projectId: project.id, branchName: action.branchName, actorId: action.actorId, context: { userId: action.actorId } });
+    await dispatchMergeResult(deps, action.chatId, result);
   },
   mergeCancel: async (deps, action) => {
     const dispatcher = outputDispatcher(deps);
     if (!action.branchName) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "Cancel merge requires a branch name." });
+      await dispatcher.dispatch(action.chatId, textNotification("Cancel merge requires a branch name."));
       return;
     }
-    await deps.platformOutput.sendMergeOperation(action.chatId, {
-      kind: "thread_merge",
-      action: "rejected",
-      branchName: action.branchName,
-      baseBranch: action.baseBranch ?? "main",
-      message: `Merge cancelled: ${action.branchName}`
-    });
+    await dispatcher.dispatch(action.chatId, textNotification(`Merge cancelled: ${action.branchName}`));
   },
   mergeReviewCancel: async (deps, action) => {
-    await deps.orchestrator.cancelMergeReview(action.chatId, action.branchName, { userId: action.actorId });
-    await deps.platformOutput.sendMergeOperation(action.chatId, {
-      kind: "thread_merge",
-      action: "rejected",
-      branchName: action.branchName,
-      baseBranch: action.baseBranch ?? "main",
-      message: `Merge review cancelled: ${action.branchName}`
-    });
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await outputDispatcher(deps).dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
+      return;
+    }
+    await deps.api.cancelMergeReview({ projectId: project.id, branchName: action.branchName, actorId: action.actorId, context: { userId: action.actorId } });
+    await outputDispatcher(deps).dispatch(action.chatId, textNotification(`Merge review cancelled: ${action.branchName}`));
   },
   mergeFileDecision: async (deps, action) => {
     const dispatcher = outputDispatcher(deps);
     if (!action.branchName || !action.filePath) {
-      await dispatcher.dispatch(action.chatId, { kind: "text", text: "Merge file action requires branchName and filePath." });
+      await dispatcher.dispatch(action.chatId, textNotification("Merge file action requires branchName and filePath."));
       return;
     }
-    const result = await deps.orchestrator.mergeDecideFile(action.chatId, action.branchName, action.filePath, action.decision, { userId: action.actorId });
-    if (result.kind === "file_merge_review") {
-      await deps.platformOutput.sendFileReview(action.chatId, result);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await dispatcher.dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return;
     }
-    await deps.platformOutput.sendMergeSummary(action.chatId, result);
+    const result = await deps.api.mergeDecideFile({ projectId: project.id, branchName: action.branchName, filePath: action.filePath, decision: action.decision, actorId: action.actorId, context: { userId: action.actorId } });
+    await dispatchMergeResult(deps, action.chatId, result);
   },
   mergeAcceptAll: async (deps, action) => {
-    const result = await deps.orchestrator.mergeAcceptAll(action.chatId, action.branchName, { userId: action.actorId });
-    if (result.kind === "file_merge_review") {
-      await deps.platformOutput.sendFileReview(action.chatId, result);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await outputDispatcher(deps).dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return;
     }
-    await deps.platformOutput.sendMergeSummary(action.chatId, result);
+    const result = await deps.api.mergeAcceptAll({ projectId: project.id, branchName: action.branchName, actorId: action.actorId, context: { userId: action.actorId } });
+    await dispatchMergeResult(deps, action.chatId, result);
   },
   mergeAgentAssist: async (deps, action) => {
-    const review = await deps.orchestrator.resolveConflictsViaAgent(action.chatId, action.branchName, action.prompt, { userId: action.actorId });
-    await deps.platformOutput.sendFileReview(action.chatId, review);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await outputDispatcher(deps).dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
+      return;
+    }
+    const review = await deps.api.resolveConflictsViaAgent({ projectId: project.id, branchName: action.branchName, actorId: action.actorId, prompt: action.prompt, context: { userId: action.actorId } });
+    await dispatchMergeResult(deps, action.chatId, review);
   },
   mergeCommit: async (deps, action) => {
-    const dispatcher = outputDispatcher(deps);
-    const result = await deps.orchestrator.commitMergeReview(action.chatId, action.branchName, { userId: action.actorId });
-    await dispatcher.dispatch(action.chatId, { kind: "text", text: result.message });
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    if (!project) {
+      await outputDispatcher(deps).dispatch(action.chatId, textNotification("This Slack channel is not bound to a project yet."));
+      return;
+    }
+    const result = await deps.api.commitMergeReview({ projectId: project.id, branchName: action.branchName, actorId: action.actorId, context: { userId: action.actorId } });
+    await dispatchMergeResult(deps, action.chatId, result);
   }
 });
 
@@ -197,15 +284,15 @@ export async function handleSlackAction(deps: SlackHandlerDeps, input: SlackInbo
   try {
     const routed = await slackActionRouter.route(deps, action);
     if (action.kind === "raw") {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: `Slack action ${action.actionId} is not wired yet.` });
+      await dispatcher.dispatch(input.chatId, textNotification(`Slack action ${action.actionId} is not wired yet.`));
       return;
     }
     if (typeof routed === "undefined") {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: `Slack action ${input.action} is not wired yet.` });
+      await dispatcher.dispatch(input.chatId, textNotification(`Slack action ${input.action} is not wired yet.`));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     requestLog.error({ err: message }, "slack action handler failed");
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: `Slack action error: ${message}` });
+    await dispatcher.dispatch(input.chatId, textNotification(`Slack action error: ${message}`));
   }
 }

@@ -121,14 +121,14 @@ If this is your first time reading the project, start with the platform integrat
 
 | Category | Default location |
 | --- | --- |
-| Main SQLite database | `data/codex-im.db` |
-| Backend configuration | `data/config` |
-| Logs | `data/logs` |
+| Main SQLite database | `collabvibe.db` |
+| Backend configuration | `config` |
+| Logs | `logs` |
 | Workspace / worktree / snapshots | local code directory and derived worktrees |
 
 ```bash
-ls -lah data
-ls -lah data/logs
+ls -lah .
+ls -lah logs
 ```
 
 ## Related documents
@@ -136,6 +136,6 @@ ls -lah data/logs
 - [System Overview](/00-overview/system-overview)
 - [Feishu Integration](/00-overview/platform-feishu)
 - [Slack Integration](/00-overview/platform-slack)
-- [Execution Paths and Data Flow](/01-architecture/data-paths)
-- [Core Entities: Project / Thread / Turn](/01-architecture/core-entities)
-- [Layering and Module Contracts](/01-architecture/invariants)
+- [Execution Paths and Data Flow](/01-architecture/architecture)
+- [Core Entities: Project / Thread / Turn](/01-architecture/architecture)
+- [Layering and Module Contracts](/01-architecture/architecture)

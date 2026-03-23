@@ -36,7 +36,7 @@ export interface RuntimeConfig {
   mcpServers?: McpServerConfig[];
 }
 
-export type TurnInputItem =
+export type AgentTurnInputItem =
   | { type: "text"; text: string }
   | { type: "skill"; name: string; path: string }
   | { type: "file_mention"; path: string }
@@ -49,7 +49,7 @@ export interface AgentApi {
   turnStart(params: {
     threadId: string;
     traceId?: string;
-    input: TurnInputItem[];
+    input: AgentTurnInputItem[];
   }): Promise<{ turn: { id: string } }>;
   /** Switch agent execution mode (plan = read-only analysis, code = full execution). Only ACP/Codex implement this. */
   setMode?(mode: "plan" | "code"): Promise<void>;
@@ -67,7 +67,7 @@ export interface AgentApi {
     callId: string;
     answers: Record<string, string[]>;
   }): Promise<void>;
-  onNotification?(handler: (notification: { method: string; params: Record<string, unknown> } | UnifiedAgentEvent) => void): void;
+  onNotification?(handler: (event: UnifiedAgentEvent) => void): void;
   turnInterrupt?(threadId: string, turnId: string): Promise<void>;
   threadRollback?(threadId: string, numTurns?: number): Promise<void>;
 }
@@ -89,19 +89,19 @@ export interface RuntimeConfigProvider {
 
 /** @internal Used only by ThreadRuntimeService. External callers should use ThreadRuntimeService API. */
 export interface AgentApiPool {
-  /** Create a new API from a pre-built RuntimeConfig. Caches by project-thread key (derived from bound chatId + threadName). */
-  createWithConfig(chatId: string, threadName: string, config: RuntimeConfig): Promise<AgentApi>;
+  /** Create a new API from a pre-built RuntimeConfig. Caches by project-thread key (derived from bound projectId + threadName). */
+  createWithConfig(projectId: string, threadName: string, config: RuntimeConfig): Promise<AgentApi>;
   /** Pure cache lookup — returns null if no API exists for this project-thread key. */
-  get(chatId: string, threadName: string): AgentApi | null;
-  releaseThread(chatId: string, threadName: string): Promise<void>;
-  /** Release all pool entries for a given project-bound chatId (kills subprocesses). */
-  releaseByPrefix?(chatId: string): Promise<void>;
+  get(projectId: string, threadName: string): AgentApi | null;
+  releaseThread(projectId: string, threadName: string): Promise<void>;
+  /** Release all pool entries for a given project-bound projectId (kills subprocesses). */
+  releaseByPrefix?(projectId: string): Promise<void>;
   releaseAll?(): Promise<void>;
-  healthCheck(chatId: string, threadName?: string): Promise<{ alive: boolean; threadCount: number }>;
+  healthCheck(projectId: string, threadName?: string): Promise<{ alive: boolean; threadCount: number }>;
 }
 
 export interface AgentApiFactory {
-  create(config: RuntimeConfig & { chatId: string; userId?: string; threadName: string }): Promise<AgentApi>;
+  create(config: RuntimeConfig & { projectId: string; userId?: string; threadName: string }): Promise<AgentApi>;
   dispose?(api: AgentApi): Promise<void>;
   healthCheck?(api: AgentApi): Promise<{ alive: boolean; threadCount: number }>;
 }

@@ -1,36 +1,23 @@
 import type { ClientInfo as GeneratedClientInfo } from "./generated/ClientInfo";
 import type { InitializeCapabilities as GeneratedInitializeCapabilities } from "./generated/InitializeCapabilities";
 import type { InitializeParams as GeneratedInitializeParams } from "./generated/InitializeParams";
-
-export interface JsonRpcRequest {
-  id: string;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-export interface JsonRpcNotification {
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-export interface JsonRpcResponse<T = unknown> {
-  id: string;
-  result?: T;
-  error?: {
-    code: number;
-    message: string;
-  };
-}
-
-export interface RpcTransport {
-  request<T = unknown>(request: JsonRpcRequest, timeoutMs?: number): Promise<JsonRpcResponse<T>>;
-  notify(method: string, params?: Record<string, unknown>): Promise<void>;
-}
+import type {
+  JsonRpcRequest,
+  JsonRpcNotification,
+  JsonRpcResponse,
+  RpcTransport
+} from "../../rpc-types";
+export type {
+  JsonRpcRequest,
+  JsonRpcNotification,
+  JsonRpcResponse,
+  RpcTransport
+};
 
 export type ClientInfo = GeneratedClientInfo;
 export type InitializeCapabilities = GeneratedInitializeCapabilities;
 export type StrictInitializeParams = GeneratedInitializeParams;
-export type InitializeParams = Omit<GeneratedInitializeParams, "capabilities"> & {
+export type CodexInitializeParams = Omit<GeneratedInitializeParams, "capabilities"> & {
   capabilities?: Partial<GeneratedInitializeCapabilities> | null;
 };
 
@@ -49,7 +36,7 @@ export interface ThreadResult {
 
 export type SandboxPolicy = "workspaceWrite" | "readOnly" | "dangerFullAccess" | (string & {});
 
-export type TurnInputItem =
+export type CodexTurnInputItem =
   | { type: "text"; text: string }
   | { type: "image"; url: string }
   | { type: "localImage"; path: string }
@@ -81,7 +68,7 @@ export interface ThreadStartParams {
 
 export interface TurnStartParams {
   threadId: string;
-  input: TurnInputItem[];
+  input: CodexTurnInputItem[];
   cwd?: string;
   model?: string;
   effort?: string;

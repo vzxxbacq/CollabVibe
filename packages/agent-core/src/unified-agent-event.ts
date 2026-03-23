@@ -6,6 +6,8 @@ export type UnifiedAgentTool =
   | "patch_apply"
   | "collab_agent";
 
+export type UnifiedToolOutputFormat = "text" | "binary" | "mixed";
+
 export type UnifiedAgentEvent =
   | { type: "content_delta"; turnId?: string; delta: string }
   | { type: "reasoning_delta"; turnId?: string; delta: string }
@@ -16,7 +18,15 @@ export type UnifiedAgentEvent =
     explanation?: string;
     plan: Array<{ step: string; status: "pending" | "in_progress" | "completed" }>;
   }
-  | { type: "tool_output"; turnId?: string; callId: string; delta: string; source: "stdout" | "stdin" }
+  | {
+    type: "tool_output";
+    turnId?: string;
+    callId: string;
+    delta: string;
+    source: "stdout" | "stderr" | "stdin";
+    format?: UnifiedToolOutputFormat;
+    byteLength?: number;
+  }
   | {
     type: "tool_begin" | "tool_end";
     turnId?: string;
@@ -38,6 +48,11 @@ export type UnifiedAgentEvent =
     callId: string;
     approvalType: "command_exec" | "file_change";
     description: string;
+    displayName?: string;
+    summary?: string;
+    reason?: string;
+    cwd?: string;
+    files?: string[];
     command?: string[];
     changes?: Record<string, unknown>;
     availableActions?: Array<"approve" | "deny" | "approve_always">;
@@ -60,8 +75,7 @@ export type UnifiedAgentEvent =
     | "context_compacted"
     | "undo_started"
     | "undo_completed"
-    | "deprecation"
-    | "skills_changed";
+    | "deprecation";
     title: string;
     detail?: string;
     lastAgentMessage?: string;

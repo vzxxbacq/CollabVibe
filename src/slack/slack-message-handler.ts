@@ -4,23 +4,25 @@
  *
  * Slack inbound message handler bridging Socket Mode callbacks to core intent dispatch.
  */
-import { routeIntent } from "../../services/contracts/im/intent-router";
-import type { PlatformMessageInput } from "../../services/contracts/im/platform-input";
-import { createLogger } from "../../packages/logger/src/index";
+import { routeIntent } from "../common/intent-router";
+import type { PlatformMessageInput } from "../common/platform-input";
+import { createLogger } from "../logging";
 import { SlackInboundAdapter } from "./channel/index";
-import { isBackendId } from "../../services/orchestrator/src/index";
-import { AuthorizationError } from "../../services/orchestrator/src/iam/index";
-import { OrchestratorError } from "../../services/orchestrator/src/index";
-import { ResultMode } from "../../services/orchestrator/src/index";
-import { dispatchIntent } from "../../services/orchestrator/src/intent/dispatcher";
-import { PlatformInputRouter } from "../../services/orchestrator/src/commands/platform-input-router";
+import { isBackendId } from "../../services/index";
+import { AuthorizationError } from "../../services/index";
+import { OrchestratorError } from "../../services/index";
+import type { EffectiveRole, MergeResult } from "../../services/index";
+import { ResultMode } from "../common/result";
+import type { HandleIntentResult } from "../common/result";
+import { dispatchIntent } from "../common/dispatcher";
+import { PlatformInputRouter } from "../common/platform-input-router";
 import {
   createProject,
   handleAdminIntentOutput,
   handleUserIntentOutput,
   listSkills,
   removeSkill
-} from "../../services/orchestrator/src/commands/platform-commands";
+} from "../common/platform-commands";
 import {
   buildSlackHelpPanelPayload,
   sendModelList,
@@ -32,6 +34,8 @@ import {
 } from "./shared-handlers";
 import { parseSlackCommand, type SlackMergeCommand, type SlackParsedCommand } from "./slack-command-parser";
 import { SlackOutputGateway } from "./platform-output-dispatcher";
+import { resolveProjectByChatId } from "../common/project-resolution";
+import { textNotification } from "../common/output-helpers";
 import type { SlackHandlerDeps } from "./types";
 
 const log = createLogger("slack-handler");
@@ -72,6 +76,61 @@ function dedupKey(input: SlackInboundMessage): string {
   return `${input.chatId}:${input.userId}:${input.messageTs}`;
 }
 
+async function dispatchMergeResult(
+  deps: SlackHandlerDeps,
+  input: SlackInboundMessage,
+  branchName: string,
+  result: MergeResult
+): Promise<void> {
+  const dispatcher = new SlackOutputGateway(deps);
+  switch (result.kind) {
+    case "review":
+      await deps.platformOutput.sendFileReview(input.chatId, result.data);
+      return;
+    case "summary":
+      await deps.platformOutput.sendMergeSummary(input.chatId, result.data);
+      return;
+    case "preview":
+      await dispatcher.dispatch(input.chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "preview",
+            branchName,
+            baseBranch: result.baseBranch,
+            message: "Merge preview ready.",
+            diffStats: result.diffStats
+          }
+        }
+      });
+      return;
+    case "conflict":
+      await dispatcher.dispatch(input.chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "conflict",
+            branchName,
+            baseBranch: result.baseBranch,
+            message: "Merge conflict detected.",
+            conflicts: result.conflicts
+          }
+        }
+      });
+      return;
+    case "success":
+      await dispatcher.dispatch(input.chatId, textNotification(result.message ?? "Merge completed."));
+      return;
+    case "rejected":
+      await dispatcher.dispatch(input.chatId, textNotification(result.message));
+      return;
+  }
+}
+
 async function handleSlackMergeCommand(
   deps: SlackHandlerDeps,
   input: SlackInboundMessage,
@@ -81,95 +140,74 @@ async function handleSlackMergeCommand(
   const dispatcher = new SlackOutputGateway(deps);
   const context = { traceId: input.messageTs, userId: input.userId };
   if (!command.branchName) {
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: "Merge command requires a branch name." });
+    await dispatcher.dispatch(input.chatId, textNotification("Merge command requires a branch name."));
     return;
   }
 
   if (command.action === "preview") {
-    const preview = await deps.orchestrator.handleMergePreview(input.chatId, command.branchName, context);
-    await deps.platformOutput.sendMergeOperation(input.chatId, {
-      kind: "thread_merge",
-      action: "preview",
-      branchName: command.branchName,
-      baseBranch: preview.baseBranch,
-      message: "Merge preview ready.",
-      diffStats: preview.diffStats
-    });
+    const preview = await deps.api.handleMergePreview({ projectId, branchName: command.branchName, context });
+    await dispatchMergeResult(deps, input, command.branchName, preview);
     return;
   }
 
   if (command.action === "confirm") {
-    const result = await deps.orchestrator.handleMergeConfirm(input.chatId, command.branchName, undefined, context);
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: result.message });
+    const result = await deps.api.handleMergeConfirm({ projectId, branchName: command.branchName, actorId: input.userId, context });
+    await dispatchMergeResult(deps, input, command.branchName, result);
     return;
   }
 
   if (command.action === "force") {
-    const result = await deps.orchestrator.handleMerge(projectId, input.chatId, command.branchName, { force: true }, context);
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: result.message });
+    const result = await deps.api.handleMerge({ projectId, branchName: command.branchName, actorId: input.userId, force: true, context });
+    await dispatchMergeResult(deps, input, command.branchName, result);
     return;
   }
 
   if (command.action === "review") {
-    const review = await deps.orchestrator.startMergeReview(input.chatId, command.branchName, context);
-    await deps.platformOutput.sendFileReview(input.chatId, review);
+    const review = await deps.api.startMergeReview({ projectId, branchName: command.branchName, actorId: input.userId, context });
+    await dispatchMergeResult(deps, input, command.branchName, review);
     return;
   }
 
   if (command.action === "accept_all") {
-    const result = await deps.orchestrator.mergeAcceptAll(input.chatId, command.branchName, context);
-    if (result.kind === "file_merge_review") {
-      await deps.platformOutput.sendFileReview(input.chatId, result);
-    } else {
-      await deps.platformOutput.sendMergeSummary(input.chatId, result);
-    }
+    const result = await deps.api.mergeAcceptAll({ projectId, branchName: command.branchName, actorId: input.userId, context });
+    await dispatchMergeResult(deps, input, command.branchName, result);
     return;
   }
 
   if (command.action === "commit") {
-    const result = await deps.orchestrator.commitMergeReview(input.chatId, command.branchName, context);
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: result.message });
+    const result = await deps.api.commitMergeReview({ projectId, branchName: command.branchName, actorId: input.userId, context });
+    await dispatchMergeResult(deps, input, command.branchName, result);
     return;
   }
 
   if (command.action === "cancel") {
-    await deps.orchestrator.cancelMergeReview(input.chatId, command.branchName, context);
-    await deps.platformOutput.sendMergeOperation(input.chatId, {
-      kind: "thread_merge",
-      action: "rejected",
-      branchName: command.branchName,
-      baseBranch: "main",
-      message: `Merge review cancelled: ${command.branchName}`
-    });
+    await deps.api.cancelMergeReview({ projectId, branchName: command.branchName, actorId: input.userId, context });
+    await dispatcher.dispatch(input.chatId, textNotification(`Merge review cancelled: ${command.branchName}`));
     return;
   }
 
   if (command.action === "agent") {
-    const review = await deps.orchestrator.resolveConflictsViaAgent(input.chatId, command.branchName, command.prompt, context);
-    await deps.platformOutput.sendFileReview(input.chatId, review);
+    const review = await deps.api.resolveConflictsViaAgent({ projectId, branchName: command.branchName, actorId: input.userId, prompt: command.prompt, context });
+    await dispatchMergeResult(deps, input, command.branchName, review);
     return;
   }
 
   if (command.action === "retry") {
     if (!command.filePath) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "Merge retry requires a file path." });
+      await dispatcher.dispatch(input.chatId, textNotification("Merge retry requires a file path."));
       return;
     }
-    const review = await deps.orchestrator.retryMergeFile(input.chatId, command.branchName, command.filePath, command.prompt ?? "", context);
-    await deps.platformOutput.sendFileReview(input.chatId, review);
+    const review = await deps.api.retryMergeFile({ projectId, branchName: command.branchName, filePath: command.filePath, feedback: command.prompt ?? "", actorId: input.userId, context });
+    await dispatchMergeResult(deps, input, command.branchName, review);
     return;
   }
 
   if (!command.decision || !command.filePath) {
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: "Merge decide requires `<branch> <decision> <filePath>`." });
+    await dispatcher.dispatch(input.chatId, textNotification("Merge decide requires `<branch> <decision> <filePath>`."));
     return;
   }
-  const result = await deps.orchestrator.mergeDecideFile(input.chatId, command.branchName, command.filePath, command.decision, context);
-  if (result.kind === "file_merge_review") {
-    await deps.platformOutput.sendFileReview(input.chatId, result);
-  } else {
-    await deps.platformOutput.sendMergeSummary(input.chatId, result);
-  }
+  const result = await deps.api.mergeDecideFile({ projectId, branchName: command.branchName, filePath: command.filePath, decision: command.decision, actorId: input.userId, context });
+  await dispatchMergeResult(deps, input, command.branchName, result);
 }
 
 async function handleSlackCommand(
@@ -180,23 +218,28 @@ async function handleSlackCommand(
   const dispatcher = new SlackOutputGateway(deps);
   if (command.kind === "reply") {
     if (!command.callId || !command.answer) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "Reply format: `/reply <callId> <answer>`" });
+      await dispatcher.dispatch(input.chatId, textNotification("Reply format: `/reply <callId> <answer>`"));
       return true;
     }
-    const active = await deps.orchestrator.getUserActiveThread(input.chatId, input.userId);
+    const project = resolveProjectByChatId(deps.api, input.chatId);
+    if (!project) {
+      await dispatcher.dispatch(input.chatId, textNotification("No active thread. Join or create a thread before replying."));
+      return true;
+    }
+    const active = await deps.api.getUserActiveThread({ projectId: project.id, userId: input.userId });
     if (!active) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "No active thread. Join or create a thread before replying." });
+      await dispatcher.dispatch(input.chatId, textNotification("No active thread. Join or create a thread before replying."));
       return true;
     }
-    await deps.orchestrator.respondUserInput(input.chatId, active.threadName, command.callId, { default: [command.answer] });
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: "User input response sent." });
+    await deps.api.respondUserInput({ projectId: project.id, threadName: active.threadName, callId: command.callId, answers: { default: [command.answer] } });
+    await dispatcher.dispatch(input.chatId, textNotification("User input response sent."));
     return true;
   }
 
   if (command.kind === "merge") {
-    const project = deps.findProjectByChatId(input.chatId);
+    const project = resolveProjectByChatId(deps.api, input.chatId);
     if (!project) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+      await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return true;
     }
     await handleSlackMergeCommand(deps, input, project.id, command);
@@ -209,7 +252,7 @@ async function handleSlackCommand(
     if (topic === "backends") {
       const panel = await buildSlackHelpPanelPayload(deps, input.chatId, input.userId, "help_backends");
       if (!panel) {
-        await dispatcher.dispatch(input.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+        await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
         return true;
       }
       await dispatcher.dispatch(input.chatId, { kind: "help_panel", panel });
@@ -218,7 +261,7 @@ async function handleSlackCommand(
     if (topic === "turns") {
       const panel = await buildSlackHelpPanelPayload(deps, input.chatId, input.userId, "help_turns");
       if (!panel) {
-        await dispatcher.dispatch(input.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+        await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
         return true;
       }
       await dispatcher.dispatch(input.chatId, { kind: "help_panel", panel });
@@ -227,26 +270,30 @@ async function handleSlackCommand(
     if (topic === "turn_view") {
       const turnId = String(parsedIntent.args.turnId ?? "");
       if (!turnId) {
-        await dispatcher.dispatch(input.chatId, { kind: "text", text: "Turn view requires a turnId." });
+        await dispatcher.dispatch(input.chatId, textNotification("Turn view requires a turnId."));
         return true;
       }
-      const turn = await deps.orchestrator.getTurnDetail(input.chatId, turnId);
+      const project = resolveProjectByChatId(deps.api, input.chatId);
+      if (!project) {
+        await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
+        return true;
+      }
+      const turn = await deps.api.getTurnDetail({ projectId: project.id, turnId });
       await dispatcher.dispatch(input.chatId, {
-        kind: "text",
-        text: [
+        ...textNotification([
           `*Turn* \`${turn.record.turnId}\``,
           `Thread: ${turn.record.threadName}`,
           `Status: ${turn.record.status}`,
           turn.detail.promptSummary ? `Prompt: ${turn.detail.promptSummary}` : "",
           turn.detail.message ? `Message:\n${turn.detail.message}` : "",
           turn.record.diffSummary ? `Diff:\n${turn.record.diffSummary}` : ""
-        ].filter(Boolean).join("\n")
+        ].filter(Boolean).join("\n"))
       });
       return true;
     }
     const panel = await buildSlackHelpPanelPayload(deps, input.chatId, input.userId, "help_home");
     if (!panel) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+      await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return true;
     }
     await dispatcher.dispatch(input.chatId, { kind: "help_panel", panel });
@@ -259,10 +306,9 @@ async function handleSlackCommand(
       cwd: String(parsedIntent.args.cwd ?? "")
     });
     await dispatcher.dispatch(input.chatId, {
-      kind: "text",
-      text: result.success && result.project
+      ...textNotification(result.success && result.project
         ? `Project created: *${result.project.name}*`
-        : result.message
+        : result.message)
     });
     return true;
   }
@@ -272,9 +318,9 @@ async function handleSlackCommand(
     return true;
   }
 
-  const project = deps.findProjectByChatId(input.chatId);
+  const project = resolveProjectByChatId(deps.api, input.chatId);
   if (!project) {
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+    await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
     return true;
   }
 
@@ -299,15 +345,19 @@ async function handleSlackCommand(
       profileName = second >= 0 ? afterFirst.slice(0, second) : undefined;
       model = second >= 0 ? afterFirst.slice(second + 1) : afterFirst;
       backendId = isBackendId(rawBackend) ? rawBackend : "codex";
-      const resolved = await deps.orchestrator.resolveBackend(backendId);
-      serverCmd = resolved?.serverCmd;
+      serverCmd = undefined;
     } else {
-      const session = await deps.orchestrator.resolveSession(input.chatId);
-      backendId = session.backend.backendId;
-      model = session.backend.model;
+      const catalog = await deps.api.getBackendCatalog({ projectId: project.id, userId: input.userId });
+      backendId = catalog.defaultSelection?.backendId ?? "codex";
+      model = catalog.defaultSelection?.model ?? "";
+      profileName = catalog.defaultSelection?.profileName;
     }
 
-    const created = await deps.orchestrator.createThread(project.id, input.chatId, input.userId, threadName, {
+    const created = await deps.api.createThread({
+      projectId: project.id,
+      userId: input.userId,
+      actorId: input.userId,
+      threadName,
       backendId: isBackendId(backendId) ? backendId : "codex",
       model: model || "gpt-5-codex",
       profileName,
@@ -322,8 +372,8 @@ async function handleSlackCommand(
   }
 
   if (parsedIntent.intent === "THREAD_LIST") {
-    const threads = await deps.orchestrator.handleThreadListEntries(input.chatId);
-    const activeBinding = await deps.orchestrator.getUserActiveThread(input.chatId, input.userId);
+    const threads = await deps.api.listThreads({ projectId: project.id, actorId: input.userId });
+    const activeBinding = await deps.api.getUserActiveThread({ projectId: project.id, userId: input.userId });
     await deps.platformOutput.sendThreadOperation(input.chatId, {
       kind: "thread_operation",
       action: "listed",
@@ -342,12 +392,12 @@ async function handleSlackCommand(
   if (parsedIntent.intent === "THREAD_SWITCH") {
     const action = String(parsedIntent.args.action ?? "");
     if (action === "leave") {
-      await deps.orchestrator.handleThreadLeave(input.chatId, input.userId);
+      await deps.api.leaveThread({ projectId: project.id, userId: input.userId, actorId: input.userId });
       await deps.platformOutput.sendThreadOperation(input.chatId, { kind: "thread_operation", action: "left" });
       return true;
     }
     const threadName = String(parsedIntent.args.name ?? "");
-    const joined = await deps.orchestrator.handleThreadJoin(input.chatId, input.userId, threadName);
+    const joined = await deps.api.joinThread({ projectId: project.id, userId: input.userId, actorId: input.userId, threadName });
     await deps.platformOutput.sendThreadOperation(input.chatId, {
       kind: "thread_operation",
       action: action === "resume" ? "resumed" : "joined",
@@ -364,7 +414,7 @@ async function handleSlackCommand(
   if (parsedIntent.intent === "SNAPSHOT_LIST") {
     if (String(parsedIntent.args.action ?? "") === "jump") {
       const turnId = String(parsedIntent.args.turnId ?? "");
-      const { snapshot, contextReset } = await deps.orchestrator.jumpToSnapshot(input.chatId, turnId, input.userId);
+      const { snapshot, contextReset } = await deps.api.jumpToSnapshot({ projectId: project.id, targetTurnId: turnId, userId: input.userId });
       await deps.platformOutput.sendSnapshotOperation(input.chatId, {
         kind: "snapshot_operation",
         action: "jumped",
@@ -400,7 +450,7 @@ async function handleSlackCommand(
       kind: "skill_operation",
       action: "form",
       skills: projectSkills.map((skill) => ({
-        name: skill.name ?? skill.pluginName ?? "unknown",
+        name: skill.name ?? "unknown",
         description: skill.description ?? "",
         installed: !!skill.enabled
       }))
@@ -411,15 +461,15 @@ async function handleSlackCommand(
   if (parsedIntent.intent === "SKILL_INSTALL") {
     const source = String(parsedIntent.args.source ?? "").trim();
     if (!source) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "Skill install requires a source." });
+      await dispatcher.dispatch(input.chatId, textNotification("Skill install requires a source."));
       return true;
     }
     try {
-      const installed = await deps.pluginService.install(source, project.id, input.userId);
+      const installed = await deps.api.installSkill({ source, projectId: project.id, userId: input.userId, actorId: input.userId });
       await deps.platformOutput.sendSkillOperation(input.chatId, {
         kind: "skill_operation",
         action: "installed",
-        skill: { name: installed.name, description: installed.description, installed: true }
+        skill: { name: installed.name ?? source, description: installed.description ?? "", installed: true }
       });
     } catch (error) {
       await deps.platformOutput.sendSkillOperation(input.chatId, {
@@ -434,11 +484,11 @@ async function handleSlackCommand(
   if (parsedIntent.intent === "SKILL_REMOVE") {
     const name = String(parsedIntent.args.name ?? "").trim();
     if (!name) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "Skill remove requires a skill name." });
+      await dispatcher.dispatch(input.chatId, textNotification("Skill remove requires a skill name."));
       return true;
     }
     const removed = project.id
-      ? await deps.pluginService.unbindFromProject?.(project.id, name)
+      ? await deps.api.unbindSkillFromProject({ projectId: project.id, skillName: name, actorId: input.userId })
       : await removeSkill(deps, name);
     if (removed) {
       await deps.platformOutput.sendSkillOperation(input.chatId, {
@@ -447,7 +497,7 @@ async function handleSlackCommand(
         skill: { name, description: "", installed: false }
       });
     } else {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: `Skill not found: ${name}` });
+      await dispatcher.dispatch(input.chatId, textNotification(`Skill not found: ${name}`));
     }
     return true;
   }
@@ -487,16 +537,16 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       const dispatcher = new SlackOutputGateway(deps);
       const panel = await buildSlackHelpPanelPayload(deps, input.chatId, input.userId, "help_home");
       if (!panel) {
-        await dispatcher.dispatch(input.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+        await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
         return;
       }
       await dispatcher.dispatch(input.chatId, { kind: "help_panel", panel });
       return;
     }
 
-    const project = deps.findProjectByChatId(input.chatId);
+    const project = resolveProjectByChatId(deps.api, input.chatId);
     if (!project) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "This Slack channel is not bound to a project yet." });
+      await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return;
     }
     if (project.status === "disabled") {
@@ -513,7 +563,10 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       return;
     }
 
-    const role = deps.roleResolver.resolve(input.userId, project.id, { autoRegister: true });
+    const role = deps.api.resolveRole({ userId: input.userId, projectId: project.id }) as EffectiveRole | null;
+    if (!role) {
+      throw new Error(`role resolution failed for userId=${input.userId} projectId=${project.id}`);
+    }
     const traceId = input.messageTs;
     const message = {
       // UnifiedChannel does not include Slack yet; routing logic only depends on `type`.
@@ -535,20 +588,16 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
     let displayBackend: string | undefined;
     let displayModel: string | undefined;
     if (intent.intent === "TURN_START") {
-      const selected = await deps.orchestrator.getUserActiveThread(input.chatId, input.userId);
+      const selected = await deps.api.getUserActiveThread({ projectId: project.id, userId: input.userId });
       if (selected) {
         preflightThreadId = selected.threadId;
         preflightThreadName = selected.threadName;
 
-        if (deps.orchestrator.isPendingApproval(input.chatId, selected.threadName)) {
-          await dispatcher.dispatch(input.chatId, { kind: "text", text: `Thread *${selected.threadName}* is waiting for approval.` });
+        if (deps.api.isPendingApproval({ projectId: project.id, threadName: selected.threadName })) {
+          await dispatcher.dispatch(input.chatId, textNotification(`Thread *${selected.threadName}* is waiting for approval.`));
           return;
         }
 
-        if (deps.orchestrator.getConversationState(input.chatId, selected.threadName) === "RUNNING") {
-          await dispatcher.dispatch(input.chatId, { kind: "text", text: `Thread *${selected.threadName}* is already running.` });
-          return;
-        }
 
         displayBackend = selected.backend.backendId;
         displayModel = selected.backend.model;
@@ -561,12 +610,14 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       userId: input.userId,
       text,
       traceId,
+      platform: "slack",
+      messageId: input.messageTs,
       messageType: "text",
       role
     }, intent);
 
     if (!dispatch.routed) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: `Intent ${dispatch.intent.intent} is not available for plain text here.` });
+      await dispatcher.dispatch(input.chatId, textNotification(`Intent ${dispatch.intent.intent} is not available for plain text here.`));
       return;
     }
 
@@ -592,8 +643,8 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       return;
     }
     if (result.mode === ResultMode.THREAD_LIST) {
-      const threads = await deps.orchestrator.handleThreadListEntries(input.chatId);
-      const activeBinding = await deps.orchestrator.getUserActiveThread(input.chatId, input.userId);
+      const threads = await deps.api.listThreads({ projectId: project.id, actorId: input.userId });
+      const activeBinding = await deps.api.getUserActiveThread({ projectId: project.id, userId: input.userId });
       await deps.platformOutput.sendThreadOperation(input.chatId, {
         kind: "thread_operation",
         action: "listed",
@@ -612,13 +663,19 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       const baseBranch = typeof (result as { baseBranch?: unknown }).baseBranch === "string"
         ? (result as { baseBranch: string }).baseBranch
         : "main";
-      await deps.platformOutput.sendMergeOperation(input.chatId, {
-        kind: "thread_merge",
-        action: "preview",
-        branchName: result.id,
-        baseBranch,
-        message: "Merge preview ready.",
-        diffStats: result.diffStats
+      await dispatcher.dispatch(input.chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "preview",
+            branchName: result.id,
+            baseBranch,
+            message: "Merge preview ready.",
+            diffStats: result.diffStats
+          }
+        }
       });
       return;
     }
@@ -626,14 +683,20 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       const baseBranch = typeof (result as { baseBranch?: unknown }).baseBranch === "string"
         ? (result as { baseBranch: string }).baseBranch
         : "main";
-      await deps.platformOutput.sendMergeOperation(input.chatId, {
-        kind: "thread_merge",
-        action: "conflict",
-        branchName: result.id,
-        baseBranch,
-        message: result.message ?? "Merge conflict detected.",
-        conflicts: result.conflicts,
-        resolverThread: result.resolverThread
+      await dispatcher.dispatch(input.chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "conflict",
+            branchName: result.id,
+            baseBranch,
+            message: result.message ?? "Merge conflict detected.",
+            conflicts: result.conflicts,
+            resolverThread: result.resolverThread
+          }
+        }
       });
       return;
     }
@@ -641,12 +704,18 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       const baseBranch = typeof (result as { baseBranch?: unknown }).baseBranch === "string"
         ? (result as { baseBranch: string }).baseBranch
         : "main";
-      await deps.platformOutput.sendMergeOperation(input.chatId, {
-        kind: "thread_merge",
-        action: "success",
-        branchName: result.id,
-        baseBranch,
-        message: result.message ?? "Merge completed."
+      await dispatcher.dispatch(input.chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "success",
+            branchName: result.id,
+            baseBranch,
+            message: result.message ?? "Merge completed."
+          }
+        }
       });
       return;
     }
@@ -659,10 +728,15 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       return;
     }
     if (result.mode === ResultMode.MERGE_RESOLVING) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: `Resolving ${result.conflicts.length} merge conflict(s) via agent.` });
+      await dispatcher.dispatch(input.chatId, textNotification(`Resolving ${result.conflicts.length} merge conflict(s) via agent.`));
       return;
     }
     if (result.mode !== ResultMode.TURN) {
+      return;
+    }
+
+    if (result.duplicate) {
+      requestLog.info({ turnId: result.id, dedupHit: true }, "turn start skipped: duplicate callId");
       return;
     }
 
@@ -672,38 +746,23 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
     const threadId = preflightThreadId;
     const threadName = preflightThreadName;
     const normalizedText = normalizeTurnPrompt(text);
-    const turnCwd = threadName === threadId ? project.cwd : `${project.cwd}--${threadName}`;
 
-    await deps.orchestrator.recordTurnStart(
-      project.id,
-      input.chatId,
-      threadName,
-      threadId,
-      result.id,
-      turnCwd,
-      input.userId,
-      traceId
-    );
-    await deps.orchestrator.updateTurnMetadata(input.chatId, result.id, {
-      promptSummary: normalizedText,
-      backendName: displayBackend,
-      modelName: displayModel,
-      turnMode: isPlanTurnText(text) ? "plan" : undefined
-    });
+    // NOTE: turn start persistence is handled by L2 TurnLifecycleService after turn/start succeeds;
+    // Path B EventPipeline only handles streaming sync/finalization.
     requestLog.info({ threadId, threadName, turnId: result.id }, "slack turn pipeline bound");
   } catch (error) {
     const dispatcher = new SlackOutputGateway(deps);
     if (error instanceof AuthorizationError) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: "You do not have permission for that action." });
+      await dispatcher.dispatch(input.chatId, textNotification("You do not have permission for that action."));
       return;
     }
     if (error instanceof OrchestratorError) {
-      await dispatcher.dispatch(input.chatId, { kind: "text", text: error.message });
+      await dispatcher.dispatch(input.chatId, textNotification(error.message));
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
     requestLog.error({ err: message }, "slack message handler failed");
-    await dispatcher.dispatch(input.chatId, { kind: "text", text: `Slack handler error: ${message}` });
+    await dispatcher.dispatch(input.chatId, textNotification(`Slack handler error: ${message}`));
   }
 }
 

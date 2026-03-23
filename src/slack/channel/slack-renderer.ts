@@ -1,6 +1,6 @@
 import type { SlackBlock } from "./slack-message-client";
 import { buildNotificationBlocks, section } from "./slack-block-builder";
-import type { IMNotification } from "../../../services/contracts/im/im-output";
+import type { IMNotification } from "../../../services/index";
 
 export class SlackRenderer {
   renderText(text: string): { text: string; blocks: SlackBlock[] } {

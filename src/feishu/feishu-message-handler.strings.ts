@@ -1,4 +1,4 @@
-import type { AppLocale } from "../../services/contracts/im/app-locale";
+import type { AppLocale } from "../common/app-locale";
 
 export interface FeishuMessageHandlerStrings {
   skillStagingUnavailable: string;

@@ -22,10 +22,10 @@ status: active
 | System assembly | `src/server.ts` |
 | Feishu message intake | `src/feishu/feishu-message-handler.ts` |
 | Feishu card interactions | `src/feishu/feishu-card-handler.ts` |
-| Orchestrator core | `services/orchestrator/src/orchestrator.ts` |
+| Orchestrator public entry | `services/index.ts` |
 | Backend identity model | `packages/agent-core/src/backend-identity.ts` |
 
 ## Recommended docs to read first
 
-- [Execution Paths and Data Flow](/01-architecture/data-paths)
-- [Layering and Module Contracts](/01-architecture/invariants)
+- [Execution Paths and Data Flow](/01-architecture/architecture)
+- [Layering and Module Contracts](/01-architecture/architecture)

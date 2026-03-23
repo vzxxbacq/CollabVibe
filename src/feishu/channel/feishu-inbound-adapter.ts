@@ -1,6 +1,9 @@
-import type { PlatformInboundAdapter, PlatformInput, PlatformMention } from "../../../services/contracts/im/platform-input";
+import type { PlatformInboundAdapter, PlatformInput, PlatformMention } from "../../common/platform-input";
 
 interface FeishuInboundMessageData {
+  header?: {
+    event_id?: string;
+  };
   message?: {
     chat_id?: string;
     content?: string;
@@ -42,6 +45,7 @@ export class FeishuInboundAdapter implements PlatformInboundAdapter {
       userId,
       text: parseText(String(payload.message?.content ?? "{}")),
       messageId: String(payload.message?.message_id ?? `feishu-${Date.now()}`),
+      eventId: String(payload.header?.event_id ?? "") || undefined,
       mentions,
       raw: event,
     };

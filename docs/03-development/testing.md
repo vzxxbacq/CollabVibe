@@ -11,9 +11,9 @@ status: active
 
 | Command | Purpose |
 | --- | --- |
-| `npm test` | Full test suite |
-| `npm run test:logic` | Logic-layer tests |
-| `npm run test:e2e` | End-to-end tests |
+| `npm test` | Full maintained test suite |
+| `npm run test:logic` | Package + service logic tests |
+| `npm run test:app` | Admin UI integration tests |
 | `npm run test:workspace` | Workspace and docs-structure checks |
 | `npm run docs:build` | Documentation build validation |
 
@@ -21,8 +21,6 @@ status: active
 
 | Location | Description |
 | --- | --- |
-| `tests/governance/*` | Repository structure, documentation structure, CI gate |
-| `src/__tests__/*` | Application-layer tests |
+| `packages/admin-ui/tests/integration/*` | Admin UI integration tests (jsdom) |
 | `packages/*/tests/*` | Package-level tests |
 | `services/*/tests/*` | Service-level tests |
-| `tests/e2e/*` | End-to-end tests |

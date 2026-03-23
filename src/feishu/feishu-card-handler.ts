@@ -19,7 +19,7 @@
  * ## Exports
  * - `handleFeishuCardAction(deps, data)` — primary export
  */
-import type { CardActionResponse } from "../handlers/types";
+import type { CardActionResponse } from "../common/types";
 import type { FeishuHandlerDeps } from "./types";
 import { FeishuActionAdapter } from "./channel/index";
 import { armPendingFeishuSkillInstall, clearFeishuSkillInstallState, consumeStagedFeishuSkillInstall, peekStagedFeishuSkillInstall } from "./skill-file-install-state";
@@ -29,29 +29,56 @@ import {
   resolveSnapshotCard, resolveHelpSkillCard, resolveHelpBackendCard, resolveHelpTurnCard,
   resolveHelpProjectCard
 } from "./shared-handlers";
-import { routeIntent } from "../../services/contracts/im/intent-router";
-import type { IntentType } from "../../services/contracts/im/types";
-import { MAIN_THREAD_NAME } from "../../services/contracts/im/index";
-import { parseMergeResolverName } from "../../services/contracts/im/merge-naming";
-import { isBackendId, transportFor } from "../../services/orchestrator/src/index";
-import { createLogger } from "../../packages/logger/src/index";
-import { authorizeIntent } from "../../services/orchestrator/src/iam/index";
-import { AuthorizationError } from "../../services/orchestrator/src/iam/index";
-import { ErrorCode, OrchestratorError } from "../../services/orchestrator/src/index";
+import { routeIntent } from "../common/intent-router";
+import type { IntentType } from "../common/intent-types";
+import { MAIN_THREAD_NAME } from "../common/thread-constants";
+import type { EffectiveRole, IMFileMergeReview, MergeResult } from "../../services/index";
+import { isBackendId, transportFor } from "../../services/index";
+import { createLogger } from "../logging";
+import { authorizeIntent } from "../common/command-guard";
+import { AuthorizationError } from "../../services/index";
+import { ErrorCode, OrchestratorError } from "../../services/index";
 import { execFile as execFileCb } from "node:child_process";
 import { join as pathJoin } from "node:path";
 import { promisify } from "node:util";
 import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 import { getFeishuCardHandlerStrings } from "./feishu-card-handler.strings";
 import { getFeishuCardBuilderStrings } from "./channel/feishu-card-builders.strings";
+import {
+  clearInitProjectDraft,
+  getOrCreateInitProjectDraft,
+  resetInitProjectDraftFile,
+  updateInitProjectDraft,
+} from "./init-project-draft-state";
 import { rm } from "node:fs/promises";
-import { PlatformActionRouter } from "../../services/orchestrator/src/commands/platform-action-router";
+import {
+  buildApprovalResultSummaryFromActionValue,
+  readApprovalActionFiles,
+  readApprovalActionValue
+} from "../common/approval-display";
+import { PlatformActionRouter } from "../common/platform-action-router";
+import { resolveProjectByChatId } from "../common/project-resolution";
 
 const execFileAsync = promisify(execFileCb);
 
 const log = createLogger("action");
 const feishuActionAdapter = new FeishuActionAdapter();
 const installTaskStore = new Map<string, Array<{ taskId: string; label: string; status: "running" | "success" | "failed"; detail?: string }>>();
+type InitProjectTaskStatus = "running" | "failed";
+interface InitProjectTask {
+  taskId: string;
+  chatId: string;
+  operatorId: string;
+  messageId?: string;
+  projectName: string;
+  cwd: string;
+  gitUrl?: string;
+  workBranch?: string;
+  status: InitProjectTaskStatus;
+  error?: string;
+  startedAt: string;
+}
+const initProjectTaskStore = new Map<string, InitProjectTask>();
 
 class TurnRecoveryError extends Error {
   constructor(
@@ -88,28 +115,367 @@ function rawCard(data: Record<string, unknown>): CardActionResponse {
   return { card: { type: "raw", data } };
 }
 
+function extractRawCardData(response?: CardActionResponse): Record<string, unknown> | undefined {
+  return response?.card?.data;
+}
+
+type AsyncCardTone = "blue" | "orange" | "grey" | "red";
+
+function asyncToneMeta(tone: AsyncCardTone): {
+  template: "blue" | "wathet" | "orange" | "grey" | "red";
+  iconToken: string;
+  iconColor: string;
+  tagColor: "blue" | "orange" | "grey" | "red";
+} {
+  switch (tone) {
+    case "orange":
+      return { template: "orange", iconToken: "loading_outlined", iconColor: "orange", tagColor: "orange" };
+    case "grey":
+      return { template: "grey", iconToken: "loading_outlined", iconColor: "grey", tagColor: "grey" };
+    case "red":
+      return { template: "red", iconToken: "close_outlined", iconColor: "red", tagColor: "red" };
+    case "blue":
+    default:
+      return { template: "wathet", iconToken: "loading_outlined", iconColor: "blue", tagColor: "blue" };
+  }
+}
+
+function buildAsyncCardShell(
+  locale: "zh-CN" | "en-US",
+  options: {
+    title: string;
+    subtitle?: string;
+    body: string;
+    tone: AsyncCardTone;
+    tagText: string;
+  }
+): Record<string, unknown> {
+  const meta = asyncToneMeta(options.tone);
+  return {
+    schema: "2.0",
+    config: { width_mode: "fill", update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: options.title },
+      ...(options.subtitle ? { subtitle: { tag: "plain_text", content: options.subtitle } } : {}),
+      template: meta.template,
+      icon: { tag: "standard_icon", token: meta.iconToken, color: meta.iconColor },
+      text_tag_list: [
+        {
+          tag: "text_tag",
+          text: { tag: "plain_text", content: options.tagText },
+          color: meta.tagColor
+        }
+      ]
+    },
+    body: {
+      direction: "vertical",
+      vertical_spacing: "8px",
+      padding: "8px 12px 12px 12px",
+      elements: [
+        {
+          tag: "column_set",
+          flex_mode: "none",
+          background_style: "grey",
+          horizontal_spacing: "default",
+          columns: [{
+            tag: "column",
+            width: "weighted",
+            weight: 1,
+            elements: [{ tag: "markdown", content: options.body }]
+          }]
+        }
+      ]
+    }
+  };
+}
+
+function buildAsyncProgressCard(
+  locale: "zh-CN" | "en-US",
+  title: string,
+  body: string,
+  options?: { subtitle?: string; tone?: Exclude<AsyncCardTone, "red"> }
+): Record<string, unknown> {
+  const s = getFeishuCardHandlerStrings(locale);
+  return buildAsyncCardShell(locale, {
+    title,
+    subtitle: options?.subtitle,
+    body: `${body}\n\n${s.asyncProgressHint}`,
+    tone: options?.tone ?? "blue",
+    tagText: s.asyncInProgressTag
+  });
+}
+
+function buildAsyncFailureCard(
+  locale: "zh-CN" | "en-US",
+  title: string,
+  message: string,
+  options?: { subtitle?: string }
+): Record<string, unknown> {
+  const s = getFeishuCardHandlerStrings(locale);
+  return buildAsyncCardShell(locale, {
+    title,
+    subtitle: options?.subtitle,
+    body: message,
+    tone: "red",
+    tagText: s.asyncFailedTag
+  });
+}
+
+async function deliverAsyncCardResult(
+  deps: FeishuHandlerDeps,
+  chatId: string,
+  messageId: string | undefined,
+  card: Record<string, unknown>
+): Promise<void> {
+  if (messageId) {
+    await deps.feishuAdapter.updateInteractiveCard(messageId, card);
+    return;
+  }
+  await deps.platformOutput.sendRawCard(chatId, card);
+}
+
+function startAsyncCardTask(
+  deps: FeishuHandlerDeps,
+  options: {
+    chatId: string;
+    messageId?: string;
+    run: () => Promise<Record<string, unknown> | undefined>;
+    onError?: (error: unknown) => Promise<Record<string, unknown> | undefined>;
+  }
+): void {
+  void (async () => {
+    try {
+      const card = await options.run();
+      if (card) {
+        await deliverAsyncCardResult(deps, options.chatId, options.messageId, card);
+      }
+    } catch (error) {
+      log.warn({
+        chatId: options.chatId,
+        messageId: options.messageId,
+        err: error instanceof Error ? error.message : String(error)
+      }, "async card task failed");
+      if (!options.onError) return;
+      const card = await options.onError(error);
+      if (card) {
+        await deliverAsyncCardResult(deps, options.chatId, options.messageId, card);
+      }
+    }
+  })();
+}
+
+function encodeUtf8Base64(content: string): string {
+  return Buffer.from(content, "utf-8").toString("base64");
+}
+
+function updateInitDraftFromForm(chatId: string, userId: string, formValues?: Record<string, string>): ReturnType<typeof getOrCreateInitProjectDraft> {
+  return updateInitProjectDraft(chatId, userId, {
+    projectName: String(formValues?.project_name ?? getOrCreateInitProjectDraft(chatId, userId).projectName ?? ""),
+    projectCwd: String(formValues?.project_cwd ?? getOrCreateInitProjectDraft(chatId, userId).projectCwd ?? ""),
+    gitUrl: String(formValues?.git_url ?? getOrCreateInitProjectDraft(chatId, userId).gitUrl ?? ""),
+    gitToken: String(formValues?.git_token ?? getOrCreateInitProjectDraft(chatId, userId).gitToken ?? ""),
+    workBranch: String(formValues?.work_branch ?? getOrCreateInitProjectDraft(chatId, userId).workBranch ?? ""),
+  });
+}
+
+function requireProjectByChatId(deps: FeishuHandlerDeps, chatId: string) {
+  const project = resolveProjectByChatId(deps.api, chatId);
+  if (!project) {
+    throw new Error(`project binding not found for chatId=${chatId}`);
+  }
+  return project;
+}
+
+async function registerExistingChatMembers(deps: FeishuHandlerDeps, chatId: string, projectId: string): Promise<void> {
+  try {
+    const memberIds = await deps.feishuAdapter.listChatMembers?.(chatId);
+    if (!memberIds?.length) return;
+    for (const uid of memberIds) {
+      deps.api.resolveRole({ userId: uid, projectId });
+    }
+    log.info({ projectId, count: memberIds.length }, "bulk-registered existing chat members");
+  } catch (err) {
+    log.warn({ projectId, err: err instanceof Error ? err.message : String(err) }, "bulk member registration failed");
+  }
+}
+
+function isRecoveryRequiredReview(review: IMFileMergeReview): boolean {
+  return review.sessionState === "recovery_required";
+}
+
+function renderMergeReviewCard(deps: FeishuHandlerDeps, review: IMFileMergeReview): CardActionResponse {
+  return rawCard(
+    isRecoveryRequiredReview(review)
+      ? deps.platformOutput.buildMergeRecoveryRequiredCard(review)
+      : deps.platformOutput.buildFileReviewCard(review)
+  );
+}
+
+function buildMergeReviewCanceledCard(
+  deps: FeishuHandlerDeps,
+  branchName: string,
+  baseBranch: string | undefined,
+  actorId: string
+): Record<string, unknown> {
+  const s = getFeishuCardHandlerStrings(deps.config.locale);
+  return {
+    schema: "2.0",
+    config: { width_mode: "fill", update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: s.mergeReviewCanceledTitle(branchName) },
+      subtitle: { tag: "plain_text", content: s.branchUnchanged },
+      template: "grey"
+    },
+    body: {
+      direction: "vertical",
+      vertical_spacing: "8px",
+      padding: "4px 12px 12px 12px",
+      elements: [{
+        tag: "markdown",
+        content: s.mergeReviewCanceledBody(branchName, baseBranch)
+      },
+      { tag: "hr" },
+      {
+        tag: "interactive_container",
+        width: "fill",
+        height: "auto",
+        has_border: true,
+        border_color: "grey",
+        corner_radius: "8px",
+        padding: "10px 12px 10px 12px",
+        behaviors: [{ type: "callback", value: { action: "help_merge", ownerId: actorId, branchName } }],
+        elements: [{
+          tag: "markdown",
+          content: s.backToMergePanel,
+          icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
+        }]
+      }]
+    }
+  };
+}
+
+function renderMergeResultCard(
+  deps: FeishuHandlerDeps,
+  chatId: string,
+  branchName: string,
+  baseBranch: string,
+  result: MergeResult
+): CardActionResponse {
+  switch (result.kind) {
+    case "review":
+      return renderMergeReviewCard(deps, result.data);
+    case "summary":
+      return rawCard(deps.platformOutput.buildMergeSummaryCard(result.data));
+    case "preview":
+      return rawCard(
+        deps.platformOutput.buildMergePreviewCard(
+          chatId,
+          branchName,
+          result.baseBranch,
+          result.diffStats,
+          true,
+          undefined,
+          undefined,
+          undefined
+        )
+      );
+    case "success": {
+      const project = resolveProjectByChatId(deps.api, chatId);
+      const threadAction = project?.id ? { projectId: project.id, chatId } : undefined;
+      return rawCard(
+        deps.platformOutput.buildMergeResultCard(
+          branchName,
+          result.baseBranch,
+          true,
+          result.message ?? "",
+          undefined,
+          threadAction
+        )
+      );
+    }
+    case "conflict":
+      return rawCard(
+        deps.platformOutput.buildMergePreviewCard(
+          chatId,
+          branchName,
+          result.baseBranch,
+          { additions: 0, deletions: 0, filesChanged: [] },
+          false,
+          result.conflicts,
+          undefined,
+          undefined
+        )
+      );
+    case "rejected":
+      return rawCard(deps.platformOutput.buildMergeResultCard(branchName, baseBranch, false, result.message));
+  }
+}
+
 const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActionResponse | void>({
   interruptTurn: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "TURN_INTERRUPT");
-    await deps.orchestrator.handleTurnInterrupt(action.chatId, action.actorId || undefined);
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    const requestedAt = new Date().toISOString();
+    const interruptingCard = action.turnId
+      ? deps.platformOutput.prepareInterruptingCard(action.chatId, action.turnId, {
+          actorName: action.actorId,
+          requestedAt
+        })
+      : null;
+    if (action.turnId) {
+      log.info({ chatId: action.chatId, turnId: action.turnId }, "interrupt callback responded with interrupting card");
+    }
+
+    void (async () => {
+      try {
+        log.info({ chatId: action.chatId, turnId: action.turnId }, "interrupt async flow started");
+        const result = await deps.api.interruptTurn({ projectId, actorId: action.actorId, userId: action.actorId || undefined });
+        log.info({ chatId: action.chatId, turnId: action.turnId, interrupted: result.interrupted }, "interrupt async backend request finished");
+        if (!action.turnId) {
+          return;
+        }
+        if (!result.interrupted) {
+          await deps.platformOutput.cancelInterruptingCard(action.chatId, action.turnId);
+          return;
+        }
+        await deps.platformOutput.finalizeInterruptAction(action.chatId, action.turnId);
+      } catch (error) {
+        log.warn({
+          chatId: action.chatId,
+          turnId: action.turnId,
+          err: error instanceof Error ? error.message : String(error)
+        }, "interrupt async flow failed");
+        if (action.turnId) {
+          try {
+            await deps.platformOutput.cancelInterruptingCard(action.chatId, action.turnId);
+          } catch (cancelError) {
+            log.warn({
+              chatId: action.chatId,
+              turnId: action.turnId,
+              err: cancelError instanceof Error ? cancelError.message : String(cancelError)
+            }, "cancelInterruptingCard after interrupt failure failed");
+          }
+        }
+      }
+    })();
 
     // Merge resolver: interrupt only stops the current turn.
     // The merge review session is NOT cancelled — user must use the summary card cancel button for that.
-
-    const card = await deps.platformOutput.updateCardAction(action.chatId, action.turnId ?? "", "interrupted");
-    return card ? rawCard(card) : undefined;
+    return interruptingCard ? rawCard(interruptingCard) : undefined;
   },
   acceptTurn: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "TURN_START");
     if (!action.turnId) return;
-    await deps.orchestrator.acceptTurn(action.chatId, action.turnId);
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    await deps.api.acceptTurn({ projectId, turnId: action.turnId, actorId: action.actorId });
     const card = await deps.platformOutput.updateCardAction(action.chatId, action.turnId, "accepted");
     return card ? rawCard(card) : undefined;
   },
   revertTurn: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "TURN_START");
     if (!action.turnId) return;
-    await deps.orchestrator.revertTurn(action.chatId, action.turnId);
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    await deps.api.revertTurn({ projectId, turnId: action.turnId, actorId: action.actorId });
     const card = await deps.platformOutput.updateCardAction(action.chatId, action.turnId, "reverted");
     return card ? rawCard(card) : undefined;
   },
@@ -144,9 +510,10 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     }
 
     try {
-      const binding = await deps.orchestrator.getUserActiveThread(action.chatId, action.actorId);
+      const projectId = requireProjectByChatId(deps, action.chatId).id;
+      const binding = await deps.api.getUserActiveThread({ projectId, userId: action.actorId });
       const threadName = threadNameFromCard || binding?.threadName || "__main__";
-      await deps.orchestrator.respondUserInput(action.chatId, threadName, callId, answers);
+      await deps.api.respondUserInput({ projectId, threadName, callId, answers });
 
       const summary = questionMeta.map(q => {
         const value = answers[q.id]?.[0] ?? "";
@@ -253,76 +620,44 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_NEW");
     return rawCard(await resolveHelpThreadNewCard(deps, action.chatId, action.actorId));
   },
-  helpProjectSave: async (deps, action) => {
-    const { getFeishuCardBuilderStrings } = await import("./channel/feishu-card-builders.strings");
-    const payload = action.raw as CardActionData;
-    const formValues = payload.action?.form_value ?? {};
-    const actionValue = (payload.action?.value ?? {}) as Record<string, unknown>;
-    const projectId = String(actionValue.projectId ?? "");
-    if (!projectId) return;
-    const bs = getFeishuCardBuilderStrings(deps.config.locale);
-    const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
-
-    try {
-      const { writeFileSync, mkdirSync } = await import("node:fs");
-      const { join } = await import("node:path");
-      const { execSync } = await import("node:child_process");
-      const state = deps.adminStateStore.read();
-      const project = state.projects.find((p: { id: string }) => p.id === projectId);
-      if (!project) throw new Error("Project not found");
-
-      // Update project fields
-      const gitUrl = String(formValues.git_url ?? "").trim();
-      const workBranch = String(formValues.work_branch ?? "").trim();
-      if (gitUrl !== (project.gitUrl ?? "")) project.gitUrl = gitUrl;
-      if (workBranch && workBranch !== project.workBranch) project.workBranch = workBranch;
-      deps.adminStateStore.write(state);
-
-      // Write .gitignore and AGENTS.md
-      const cwd = project.cwd;
-      mkdirSync(cwd, { recursive: true });
-      const gitignore = String(formValues.gitignore_content ?? "");
-      const agentsMd = String(formValues.agents_md_content ?? "");
-      writeFileSync(join(cwd, ".gitignore"), gitignore, "utf-8");
-      writeFileSync(join(cwd, "AGENTS.md"), agentsMd, "utf-8");
-
-      // Update git remote if changed
-      if (gitUrl) {
-        try { execSync(`git remote set-url origin ${gitUrl}`, { cwd, stdio: "ignore" }); } catch { /* ignore */ }
-      }
-
-      await notify(deps, action.chatId, bs.helpProjectSaveSuccess);
-      return rawCard(await resolveHelpProjectCard(deps, action.chatId, action.actorId));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error({ projectId, err: msg }, "help_project_save failed");
-      await notify(deps, action.chatId, ERR.generic(bs.helpProjectSaveFailed(msg)));
-    }
-  },
   helpProjectPush: async (deps, action) => {
     const { getFeishuCardBuilderStrings } = await import("./channel/feishu-card-builders.strings");
-    const actionValue = ((action.raw as CardActionData)?.action?.value ?? {}) as Record<string, unknown>;
+    const payload = action.raw as CardActionData;
+    const actionValue = (payload.action?.value ?? {}) as Record<string, unknown>;
+    const messageId = String(payload.context?.open_message_id ?? "");
     const projectId = String(actionValue.projectId ?? "");
     if (!projectId) return;
     const bs = getFeishuCardBuilderStrings(deps.config.locale);
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
-
-    try {
-      const { execSync } = await import("node:child_process");
-      const state = deps.adminStateStore.read();
-      const project = state.projects.find((p: { id: string }) => p.id === projectId);
-      if (!project) throw new Error("Project not found");
-      execSync(`git push origin ${project.workBranch}`, { cwd: project.cwd, stdio: "pipe" });
-      await notify(deps, action.chatId, bs.helpProjectPushSuccess);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error({ projectId, err: msg }, "help_project_push failed");
-      await notify(deps, action.chatId, ERR.generic(bs.helpProjectPushFailed(msg)));
-    }
+    const project = deps.api.getProjectRecord(projectId);
+    if (!project) return;
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        await execFileAsync("git", ["push", "origin", project.workBranch], { cwd: project.cwd });
+        await notify(deps, action.chatId, bs.helpProjectPushSuccess);
+        return resolveHelpProjectCard(deps, action.chatId, action.actorId);
+      },
+      onError: async (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.error({ projectId, err: msg }, "help_project_push failed");
+        await notify(deps, action.chatId, ERR.generic(bs.helpProjectPushFailed(msg)));
+        return resolveHelpProjectCard(deps, action.chatId, action.actorId);
+      }
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncPushTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncPushBody(project.workBranch),
+      { subtitle: project.name || projectId, tone: "blue" }
+    ));
   },
   helpSkillInstall: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "SKILL_INSTALL");
-    const actionValue = (((action.raw as CardActionData)?.action?.value ?? {}) as Record<string, unknown>);
+    const payload = action.raw as CardActionData;
+    const actionValue = ((payload.action?.value ?? {}) as Record<string, unknown>);
+    const messageId = String(payload.context?.open_message_id ?? "");
     if (!checkHelpCardOwner(actionValue, action.actorId)) {
       const ownerId = String(actionValue.ownerId ?? "");
       if (ownerId) {
@@ -333,13 +668,25 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     }
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
     if (!action.skillName) return;
-    const project = deps.findProjectByChatId(action.chatId);
-    try {
-      await deps.pluginService.install(action.skillName, project?.id, action.actorId);
-    } catch (error) {
-      await notify(deps, action.chatId, ERR.skillInstall(error instanceof Error ? error.message : String(error)));
-    }
-    return rawCard(await resolveHelpSkillCard(deps, action.chatId, action.actorId));
+    const project = resolveProjectByChatId(deps.api, action.chatId);
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        await deps.api.installSkill({ source: action.skillName, projectId: project?.id, userId: action.actorId, actorId: action.actorId });
+        return resolveHelpSkillCard(deps, action.chatId, action.actorId);
+      },
+      onError: async (error) => {
+        await notify(deps, action.chatId, ERR.skillInstall(error instanceof Error ? error.message : String(error)));
+        return resolveHelpSkillCard(deps, action.chatId, action.actorId);
+      }
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncEnableSkillTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncEnableSkillBody(action.skillName),
+      { subtitle: project?.name }
+    ));
   },
   helpSkillRemove: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "SKILL_REMOVE");
@@ -354,12 +701,12 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     }
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
     if (!action.name) return;
-    const project = deps.findProjectByChatId(action.chatId);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
     try {
       if (project?.id) {
-        await deps.pluginService.unbindFromProject?.(project.id, action.name);
+        await deps.api.unbindSkillFromProject({ projectId: project.id, skillName: action.name, actorId: action.actorId });
       } else {
-        await deps.pluginService.remove(action.name);
+        await deps.api.removeSkill({ name: action.name, actorId: action.actorId });
       }
     } catch (error) {
       await notify(deps, action.chatId, ERR.skillRemove(error instanceof Error ? error.message : String(error)));
@@ -368,9 +715,21 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   },
   mergeConfirm: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
-    return handleMergeAction(deps, action.chatId, "confirm_merge", { branchName: action.branchName }, {
-      userId: action.actorId,
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => extractRawCardData(await handleMergeAction(deps, action.chatId, "confirm_merge", { branchName: action.branchName }, {
+        userId: action.actorId,
+      })),
     });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncRunMergeTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncRunMergeBody(action.branchName),
+      { subtitle: action.branchName, tone: "orange" }
+    ));
   },
   mergeCancel: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
@@ -383,57 +742,61 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   },
   mergeReviewCancel: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
-    const s = getFeishuCardHandlerStrings(deps.config.locale);
-    await deps.orchestrator.cancelMergeReview(action.chatId, action.branchName, { userId: action.actorId });
-    return rawCard({
-      schema: "2.0",
-      config: { width_mode: "fill", update_multi: true },
-      header: {
-        title: { tag: "plain_text", content: s.mergeReviewCanceledTitle(action.branchName) },
-        subtitle: { tag: "plain_text", content: s.branchUnchanged },
-        template: "grey"
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        await deps.api.cancelMergeReview({ projectId, branchName: action.branchName, actorId: action.actorId, context: { userId: action.actorId } });
+        return buildMergeReviewCanceledCard(deps, action.branchName, action.baseBranch, action.actorId);
       },
-      body: {
-        direction: "vertical",
-        vertical_spacing: "8px",
-        padding: "4px 12px 12px 12px",
-        elements: [{
-          tag: "markdown",
-          content: s.mergeReviewCanceledBody(action.branchName, action.baseBranch)
-        },
-        { tag: "hr" },
-        {
-          tag: "interactive_container",
-          width: "fill",
-          height: "auto",
-          has_border: true,
-          border_color: "grey",
-          corner_radius: "8px",
-          padding: "10px 12px 10px 12px",
-          behaviors: [{ type: "callback", value: { action: "help_merge", ownerId: action.actorId, branchName: action.branchName } }],
-          elements: [{
-            tag: "markdown",
-            content: s.backToMergePanel,
-            icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
-          }]
-        }]
-      }
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncCancelMergeReviewFailedTitle,
+        error instanceof Error ? error.message : String(error),
+        { subtitle: action.branchName }
+      )
     });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncCancelMergeReviewTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncCancelMergeReviewBody(action.branchName),
+      { subtitle: action.branchName, tone: "grey" }
+    ));
   },
   mergeReviewStart: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
     const payload = action.raw as CardActionData;
     const actionValue = (payload.action?.value ?? {}) as Record<string, unknown>;
-    return startMergeReviewFlow(deps, {
+    const messageId = String(payload.context?.open_message_id ?? "");
+    startAsyncCardTask(deps, {
       chatId: action.chatId,
-      operatorId: action.actorId,
-      messageId: String(payload.context?.open_message_id ?? ""),
-      actionValue: {
-        ...actionValue,
-        branchName: action.branchName,
-        baseBranch: action.baseBranch ?? actionValue.baseBranch
-      }
-    }, action.branchName);
+      messageId,
+      run: async () => extractRawCardData(await startMergeReviewFlow(deps, {
+        chatId: action.chatId,
+        operatorId: action.actorId,
+        messageId,
+        actionValue: {
+          ...actionValue,
+          branchName: action.branchName,
+          baseBranch: action.baseBranch ?? actionValue.baseBranch
+        }
+      }, action.branchName)),
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncStartMergeReviewFailedTitle,
+        error instanceof Error ? error.message : String(error),
+        { subtitle: action.branchName }
+      )
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncStartMergeReviewTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncStartMergeReviewBody(action.branchName),
+      { subtitle: action.branchName, tone: "orange" }
+    ));
   },
   mergePreview: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
@@ -450,13 +813,14 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
     if (!action.branchName) return;
     try {
-      const preview = await deps.orchestrator.handleMergePreview(action.chatId, action.branchName, {
+      const projectId = requireProjectByChatId(deps, action.chatId).id;
+      const preview = await deps.api.handleMergePreview({ projectId, branchName: action.branchName, context: {
         userId: action.actorId || undefined,
         traceId: String(payload.context?.open_message_id ?? "") || undefined,
         threadId: typeof actionValue.threadId === "string" ? actionValue.threadId : undefined,
         turnId: typeof actionValue.turnId === "string" ? actionValue.turnId : undefined,
-      });
-      if (!preview.canMerge) {
+      } });
+      if (preview.kind === "conflict") {
         return startMergeReviewFlow(deps, {
           chatId: action.chatId,
           operatorId: action.actorId,
@@ -464,20 +828,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
           actionValue,
         }, action.branchName);
       }
-      const diffStats = preview.diffStats ?? { additions: 0, deletions: 0, filesChanged: [] };
-      const baseBranch = typeof (preview as { baseBranch?: unknown }).baseBranch === "string"
-        ? (preview as { baseBranch: string }).baseBranch
-        : "main";
-      return rawCard(deps.platformOutput.buildMergePreviewCard(
-        action.chatId,
-        action.branchName,
-        baseBranch,
-        diffStats,
-        preview.canMerge,
-        preview.conflicts,
-        undefined,
-        action.actorId
-      ));
+      return renderMergeResultCard(deps, action.chatId, action.branchName, "main", preview);
     } catch (error) {
       await notify(deps, action.chatId, ERR.mergePreview(error instanceof Error ? error.message : String(error)));
       return;
@@ -488,30 +839,53 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const payload = action.raw as CardActionData;
     const formValues = (payload.action as Record<string, unknown>)?.form_value as Record<string, string> | undefined;
     const feedback = formValues?.merge_feedback?.trim() || "";
+    const messageId = String(payload.context?.open_message_id ?? "");
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
     if (!action.branchName || !action.filePath) return;
-    try {
-      const review = await deps.orchestrator.retryMergeFile(action.chatId, action.branchName, action.filePath, feedback, {
-        userId: action.actorId || undefined,
-        traceId: String(payload.context?.open_message_id ?? "") || undefined,
-        threadId: typeof payload.action?.value?.threadId === "string" ? payload.action.value.threadId : undefined,
-        turnId: typeof payload.action?.value?.turnId === "string" ? payload.action.value.turnId : undefined,
-      });
-      const s = getFeishuCardHandlerStrings(deps.config.locale);
-      await notify(deps, action.chatId, s.mergeRetrying(action.filePath));
-      return rawCard(deps.platformOutput.buildFileReviewCard(review));
-    } catch (error) {
-      await notify(deps, action.chatId, ERR.generic(error instanceof Error ? error.message : String(error)));
-      return;
-    }
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        const review = await deps.api.retryMergeFile({ projectId, branchName: action.branchName, filePath: action.filePath, feedback, actorId: action.actorId, context: {
+          userId: action.actorId || undefined,
+          traceId: String(payload.context?.open_message_id ?? "") || undefined,
+          threadId: typeof payload.action?.value?.threadId === "string" ? payload.action.value.threadId : undefined,
+          turnId: typeof payload.action?.value?.turnId === "string" ? payload.action.value.turnId : undefined,
+        } });
+        const s = getFeishuCardHandlerStrings(deps.config.locale);
+        await notify(deps, action.chatId, s.mergeRetrying(action.filePath));
+        return extractRawCardData(renderMergeResultCard(deps, action.chatId, action.branchName, "main", review));
+      },
+      onError: async (error) => {
+        await notify(deps, action.chatId, ERR.generic(error instanceof Error ? error.message : String(error)));
+        return buildAsyncFailureCard(
+          deps.config.locale,
+          getFeishuCardHandlerStrings(deps.config.locale).asyncRetryMergeFileFailedTitle,
+          error instanceof Error ? error.message : String(error),
+          { subtitle: action.filePath }
+        );
+      }
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncRetryMergeFileTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncRetryMergeFileBody(action.filePath),
+      { subtitle: action.branchName, tone: "orange" }
+    ));
   },
   mergeReviewOpenFileDetail: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
     if (!action.branchName) return;
     try {
-      const review = await deps.orchestrator.getMergeReview(action.chatId, action.branchName);
-      if (review.sessionState === "recovery_required") {
+      const projectId = requireProjectByChatId(deps, action.chatId).id;
+      const reviewResult = await deps.api.getMergeReview({ projectId, branchName: action.branchName });
+      if (reviewResult.kind !== "review") {
+        return renderMergeResultCard(deps, action.chatId, action.branchName, "main", reviewResult);
+      }
+      const review = reviewResult.data;
+      if (isRecoveryRequiredReview(review)) {
         return rawCard(deps.platformOutput.buildMergeRecoveryRequiredCard(review));
       }
       return rawCard(deps.platformOutput.buildMergeFileDetailCard(review));
@@ -525,11 +899,13 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
     if (!action.branchName) return;
     try {
-      const review = await deps.orchestrator.getMergeReview(action.chatId, action.branchName);
-      if (review.sessionState === "recovery_required") {
-        return rawCard(deps.platformOutput.buildMergeRecoveryRequiredCard(review));
+      const projectId = requireProjectByChatId(deps, action.chatId).id;
+      const reviewResult = await deps.api.getMergeReview({ projectId, branchName: action.branchName });
+      if (reviewResult.kind !== "review") {
+        return renderMergeResultCard(deps, action.chatId, action.branchName, "main", reviewResult);
       }
-      return rawCard(deps.platformOutput.buildFileReviewCard(review));
+      const review = reviewResult.data;
+      return renderMergeReviewCard(deps, review);
     } catch (error) {
       await notify(deps, action.chatId, ERR.generic(error instanceof Error ? error.message : String(error)));
       return;
@@ -540,11 +916,20 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
     if (!action.branchName) return;
     try {
-      const review = await deps.orchestrator.getMergeReview(action.chatId, action.branchName);
-      if (review.sessionState === "recovery_required") {
+      const projectId = requireProjectByChatId(deps, action.chatId).id;
+      const reviewResult = await deps.api.getMergeReview({ projectId, branchName: action.branchName });
+      if (reviewResult.kind !== "review") {
+        return renderMergeResultCard(deps, action.chatId, action.branchName, "main", reviewResult);
+      }
+      const review = reviewResult.data;
+      if (isRecoveryRequiredReview(review)) {
         return rawCard(deps.platformOutput.buildMergeRecoveryRequiredCard(review));
       }
-      const backends = await deps.orchestrator.listAvailableBackends();
+      const catalog = await deps.api.getBackendCatalog({ projectId, userId: action.actorId });
+      const backends = catalog.backends.map((backend) => ({
+        name: backend.backendId,
+        models: Array.from(new Set(backend.options.map((option) => option.model))),
+      }));
       return rawCard(deps.platformOutput.buildMergeAgentAssistCard(review, backends));
     } catch (error) {
       await notify(deps, action.chatId, ERR.generic(error instanceof Error ? error.message : String(error)));
@@ -553,18 +938,40 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   },
   mergeBatchRetry: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
     if (!action.branchName || !action.files || action.files.length === 0) return;
-    try {
-      const review = await deps.orchestrator.retryMergeFiles(
-        action.chatId, action.branchName, action.files, action.feedback,
-        { userId: action.actorId }
-      );
-      return rawCard(deps.platformOutput.buildFileReviewCard(review));
-    } catch (error) {
-      await notify(deps, action.chatId, ERR.generic(error instanceof Error ? error.message : String(error)));
-      return;
-    }
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        const review = await deps.api.retryMergeFiles({ actorId: action.actorId,
+          projectId,
+          branchName: action.branchName,
+          filePaths: action.files,
+          feedback: action.feedback,
+          context: { userId: action.actorId }
+        });
+        return extractRawCardData(renderMergeResultCard(deps, action.chatId, action.branchName, "main", review));
+      },
+      onError: async (error) => {
+        await notify(deps, action.chatId, ERR.generic(error instanceof Error ? error.message : String(error)));
+        return buildAsyncFailureCard(
+          deps.config.locale,
+          getFeishuCardHandlerStrings(deps.config.locale).asyncBatchRetryMergeFailedTitle,
+          error instanceof Error ? error.message : String(error),
+          { subtitle: action.branchName }
+        );
+      }
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncBatchRetryMergeTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncBatchRetryMergeBody(action.files.length),
+      { subtitle: action.branchName, tone: "orange" }
+    ));
   },
   turnViewFileChanges: async (deps, action) => {
     const targetChatId = action.targetChatId?.trim() || action.chatId;
@@ -606,52 +1013,132 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     return card ? rawCard(card) : undefined;
   },
   snapshotJump: async (deps, action) => {
-    return handleSnapshotAction(deps, action.chatId, action.actorId, {
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const actionValue = {
       ...turnActionValue(undefined, action.turnId),
       threadId: action.threadId,
       ownerId: action.ownerId,
+    };
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => extractRawCardData(await handleSnapshotAction(deps, action.chatId, action.actorId, actionValue)),
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncJumpSnapshotFailedTitle,
+        error instanceof Error ? error.message : String(error),
+        { subtitle: action.turnId }
+      )
     });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncJumpSnapshotTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncJumpSnapshotBody(action.turnId),
+      { subtitle: action.threadId }
+    ));
   },
   mergeFileDecision: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
-    const result = await deps.orchestrator.mergeDecideFile(
-      action.chatId,
-      action.branchName,
-      action.filePath,
-      action.decision,
-      { userId: action.actorId }
-    );
-    if (result.kind === "file_merge_review") {
-      return rawCard(deps.platformOutput.buildFileReviewCard(result));
-    }
-    return rawCard(deps.platformOutput.buildMergeSummaryCard(result));
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    const result = await deps.api.mergeDecideFile({ actorId: action.actorId,
+      projectId,
+      branchName: action.branchName,
+      filePath: action.filePath,
+      decision: action.decision,
+      context: { userId: action.actorId }
+    });
+    return renderMergeResultCard(deps, action.chatId, action.branchName, "main", result);
   },
   mergeAcceptAll: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
-    const summary = await deps.orchestrator.mergeAcceptAll(action.chatId, action.branchName, { userId: action.actorId });
-    if (summary.kind === "file_merge_review") {
-      return rawCard(deps.platformOutput.buildFileReviewCard(summary));
-    }
-    return rawCard(deps.platformOutput.buildMergeSummaryCard(summary));
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        const summary = await deps.api.mergeAcceptAll({ projectId, branchName: action.branchName, actorId: action.actorId, context: { userId: action.actorId } });
+        return extractRawCardData(renderMergeResultCard(deps, action.chatId, action.branchName, "main", summary));
+      },
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncAcceptAllMergeFailedTitle,
+        error instanceof Error ? error.message : String(error),
+        { subtitle: action.branchName }
+      )
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncAcceptAllMergeTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncAcceptAllMergeBody(action.branchName),
+      { subtitle: action.branchName, tone: "orange" }
+    ));
   },
   mergeAgentAssist: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
-    const review = await deps.orchestrator.resolveConflictsViaAgent(action.chatId, action.branchName, action.prompt, { userId: action.actorId });
-    if (review.sessionState === "recovery_required") {
-      return rawCard(deps.platformOutput.buildMergeRecoveryRequiredCard(review));
-    }
-    return rawCard(deps.platformOutput.buildFileReviewCard(review));
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        if (action.backendId && action.model) {
+          await deps.api.configureMergeResolver({
+            projectId,
+            branchName: action.branchName,
+            backendId: action.backendId,
+            model: action.model,
+          });
+        }
+        const review = await deps.api.resolveConflictsViaAgent({ projectId, branchName: action.branchName, actorId: action.actorId, prompt: action.prompt, context: { userId: action.actorId } });
+        return extractRawCardData(renderMergeResultCard(deps, action.chatId, action.branchName, "main", review));
+      },
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncAgentTakeoverFailedTitle,
+        error instanceof Error ? error.message : String(error),
+        { subtitle: action.branchName }
+      )
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncAgentTakeoverTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncAgentTakeoverBody(action.branchName),
+      { subtitle: action.branchName, tone: "orange" }
+    ));
   },
   mergeCommit: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
-    const result = await deps.orchestrator.commitMergeReview(action.chatId, action.branchName, { userId: action.actorId });
-    const project = deps.findProjectByChatId(action.chatId);
-    const threadAction = result.success && project?.id ? { projectId: project.id, chatId: action.chatId } : undefined;
-    // Fire-and-forget: detect stale threads after successful merge
-    if (result.success && project?.id) {
-      deps.orchestrator.detectStaleThreads(project.id, action.branchName).catch(() => {});
-    }
-    return rawCard(deps.platformOutput.buildMergeResultCard(action.branchName, "main", result.success, result.message, undefined, threadAction));
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const projectId = requireProjectByChatId(deps, action.chatId).id;
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        const result = await deps.api.commitMergeReview({ projectId, branchName: action.branchName, actorId: action.actorId, context: { userId: action.actorId } });
+        const project = resolveProjectByChatId(deps.api, action.chatId);
+        if (result.kind === "success" && project?.id) {
+          deps.api.detectStaleThreads({ projectId: project.id, mergedThreadName: action.branchName }).catch(() => {});
+        }
+        return extractRawCardData(renderMergeResultCard(deps, action.chatId, action.branchName, "main", result));
+      },
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncCommitMergeFailedTitle,
+        error instanceof Error ? error.message : String(error),
+        { subtitle: action.branchName }
+      )
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncCommitMergeTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncCommitMergeBody(action.branchName),
+      { subtitle: action.branchName, tone: "orange" }
+    ));
   },
   keepMergedThread: async (deps, action) => {
     const s = getFeishuCardBuilderStrings(deps.config.locale);
@@ -690,7 +1177,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   },
   deleteMergedThread: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
-    await deps.orchestrator.deleteThread(action.projectId, action.chatId, action.branchName);
+    await deps.api.deleteThread({ projectId: action.projectId, threadName: action.branchName, actorId: action.actorId });
     const s = getFeishuCardBuilderStrings(deps.config.locale);
     return rawCard({
       schema: "2.0",
@@ -708,9 +1195,9 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_ADD");
     if (!action.targetUserId) return;
     if (action.promote) {
-      deps.userRepository.setAdmin(action.targetUserId, "im");
+      deps.api.addAdmin(action.targetUserId);
     } else {
-      deps.userRepository.removeAdmin(action.targetUserId);
+      deps.api.removeAdmin(action.targetUserId);
     }
     return rawCard(deps.platformOutput.buildAdminUserCard(await buildAdminUserData(deps)));
   },
@@ -753,8 +1240,31 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const actionValue = payload.action?.value ?? {};
     return handleInitProjectAction(deps, payload, action.chatId, action.actorId, actionValue);
   },
+  initProjectFileOpen: async (deps, action) => {
+    await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "PROJECT_CREATE");
+    const payload = action.raw as CardActionData;
+    const draft = updateInitDraftFromForm(action.chatId, action.actorId, payload.action?.form_value);
+    const content = action.fileKey === "agents_md" ? draft.agentsMdContent : draft.gitignoreContent;
+    return rawCard(deps.platformOutput.buildInitProjectFileEditorCard(action.fileKey, content));
+  },
+  initProjectFileSave: async (deps, action) => {
+    await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "PROJECT_CREATE");
+    const payload = action.raw as CardActionData;
+    const content = String(payload.action?.form_value?.file_content ?? "");
+    const draft = updateInitProjectDraft(action.chatId, action.actorId, action.fileKey === "agents_md"
+      ? { agentsMdContent: content }
+      : { gitignoreContent: content });
+    return rawCard(deps.platformOutput.buildInitCreateMenuCard(draft));
+  },
+  initProjectFileResetTemplate: async (deps, action) => {
+    await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "PROJECT_CREATE");
+    const draft = resetInitProjectDraftFile(action.chatId, action.actorId, action.fileKey);
+    const content = action.fileKey === "agents_md" ? draft.agentsMdContent : draft.gitignoreContent;
+    return rawCard(deps.platformOutput.buildInitProjectFileEditorCard(action.fileKey, content));
+  },
   initRootMenu: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "PROJECT_CREATE");
+    clearInitProjectDraft(action.chatId, action.actorId);
     return rawCard(deps.platformOutput.buildInitCard(getUnboundProjects(deps)));
   },
   initBindMenu: async (deps, action) => {
@@ -763,13 +1273,13 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   },
   initCreateMenu: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "PROJECT_CREATE");
-    return rawCard(deps.platformOutput.buildInitCreateMenuCard());
+    return rawCard(deps.platformOutput.buildInitCreateMenuCard(getOrCreateInitProjectDraft(action.chatId, action.actorId)));
   },
   initBindExisting: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "PROJECT_CREATE");
     if (!action.projectId || !action.chatId) return;
     try {
-      const result = await deps.projectSetupService.bindExistingProject(action.chatId, action.projectId, action.actorId);
+      const result = await deps.api.linkProjectToChat({ chatId: action.chatId, projectId: action.projectId, ownerId: action.actorId, actorId: action.actorId });
       void pushProjectHelpCard(deps, action.chatId, action.actorId).catch((error) => {
         log.warn({ chatId: action.chatId, operatorId: action.actorId, err: error instanceof Error ? error.message : String(error) }, "send bind project help card failed");
       });
@@ -798,8 +1308,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.projectId) return;
     const s = getFeishuCardHandlerStrings(deps.config.locale);
-    const state = deps.adminStateStore.read();
-    const project = state.projects.find(p => p.id === action.projectId);
+    const project = deps.api.getProjectRecord(action.projectId);
     if (!project) return;
     const card = deps.platformOutput.buildAdminProjectEditCard({
       id: project.id,
@@ -817,52 +1326,43 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const formValues = (payload.action as Record<string, unknown>)?.form_value as Record<string, string> | undefined;
     const newName = formValues?.project_name?.trim();
     const newGitUrl = formValues?.git_url?.trim();
-    const state = deps.adminStateStore.read();
-    const project = state.projects.find(p => p.id === action.projectId);
-    if (!project) return;
-    if (newName && newName !== project.name) {
-      if (state.projects.some(p => p.name === newName && p.id !== action.projectId)) {
-        const card = deps.platformOutput.buildAdminProjectEditCard({
-          id: project.id, name: project.name, gitUrl: project.gitUrl
-        });
-        return rawCard(alignButtonStyle(card, s.alignBackProjectManagement, s.alignSave));
-      }
-      project.name = newName;
+    const currentProject = deps.api.getProjectRecord(action.projectId);
+    if (!currentProject) return;
+    try {
+      deps.api.updateProjectConfig({
+        projectId: action.projectId,
+        actorId: action.actorId,
+        gitUrl: newGitUrl,
+      });
+    } catch {
+      // Name conflict — re-render edit card
+      const card = deps.platformOutput.buildAdminProjectEditCard({
+        id: currentProject.id, name: currentProject.name, gitUrl: currentProject.gitUrl
+      });
+      return rawCard(alignButtonStyle(card, s.alignBackProjectManagement, s.alignSave));
     }
-    if (newGitUrl !== undefined) {
-      project.gitUrl = newGitUrl || undefined;
-      if (newGitUrl && project.cwd) {
-        try {
-          await deps.projectSetupService.updateGitRemote(project.cwd, newGitUrl);
-        } catch (err) {
-          log.warn({ projectId: action.projectId, err }, "admin_project_save: updateGitRemote failed");
-        }
+    if (newGitUrl && currentProject.cwd) {
+      try {
+        await deps.api.updateGitRemote({ projectId: action.projectId!, gitUrl: newGitUrl, actorId: action.actorId });
+      } catch (err) {
+        log.warn({ projectId: action.projectId, err }, "admin_project_save: updateGitRemote failed");
       }
     }
-    project.updatedAt = new Date().toISOString();
-    deps.adminStateStore.write(state);
     log.info({ projectId: action.projectId, newName, newGitUrl }, "admin_project_save");
     return rawCard(deps.platformOutput.buildAdminProjectCard(buildAdminProjectData(deps)));
   },
   adminProjectToggle: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.projectId) return;
-    const state = deps.adminStateStore.read();
-    const project = state.projects.find(p => p.id === action.projectId);
-    if (!project) return;
-    const wasActive = project.status === "active";
-    project.status = wasActive ? "disabled" : "active";
-    project.updatedAt = new Date().toISOString();
-    deps.adminStateStore.write(state);
+    const result = deps.api.toggleProjectStatus({ projectId: action.projectId, actorId: action.actorId });
+    if (!result) return;
+    const { project, wasActive } = result;
     if (wasActive && project.chatId) {
-      await deps.orchestrator.onProjectDeactivated(project.chatId);
+      await deps.api.disableProject({ projectId: project.id, actorId: action.actorId });
     }
     if (!wasActive && project.chatId) {
-      const { recovered, failed, failures } = await deps.orchestrator.recoverSessions([project.id]);
-      if (failed > 0) {
-        throw new Error(`session recovery after re-enable failed for ${failed} thread(s): ${failures.map(item => `${item.projectId}/${item.threadName}[${item.category}]: ${item.reason}`).join("; ")}`);
-      }
-      log.info({ projectId: action.projectId, recovered, failed }, "session recovery after re-enable done");
+      await deps.api.reactivateProject({ projectId: project.id, actorId: action.actorId });
+      log.info({ projectId: action.projectId }, "session recovery after re-enable done");
     }
     log.info({ projectId: action.projectId, newStatus: project.status }, "admin_project_toggle");
     return rawCard(deps.platformOutput.buildAdminProjectCard(buildAdminProjectData(deps)));
@@ -870,30 +1370,24 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   adminProjectUnbind: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.projectId) return;
-    const result = await deps.projectSetupService.disableAndUnbindProjectById(action.projectId);
-    if (!result) return;
-    if (result.oldChatId) {
-      await deps.orchestrator.onProjectDeactivated(result.oldChatId);
-      try { await deps.feishuAdapter.leaveChat(result.oldChatId); } catch (error) {
-        log.warn({ oldChatId: result.oldChatId, err: error instanceof Error ? error.message : String(error) }, "leaveChat after unbind failed");
+    const currentProject = deps.api.getProjectRecord(action.projectId);
+    const oldChatId = currentProject?.chatId ?? "";
+    await deps.api.unlinkProject({ projectId: action.projectId, actorId: action.actorId });
+    if (oldChatId) {
+      try { await deps.feishuAdapter.leaveChat(oldChatId); } catch (error) {
+        log.warn({ oldChatId, err: error instanceof Error ? error.message : String(error) }, "leaveChat after unbind failed");
       }
     }
-    log.info({ projectId: action.projectId, oldChatId: result.oldChatId, newStatus: result.newStatus }, "admin_project_unbind");
+    log.info({ projectId: action.projectId, oldChatId, newStatus: "disabled" }, "admin_project_unbind");
     return rawCard(deps.platformOutput.buildAdminProjectCard(buildAdminProjectData(deps)));
   },
   adminProjectDelete: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.projectId) return;
-    const state = deps.adminStateStore.read();
-    const idx = state.projects.findIndex(p => p.id === action.projectId);
-    if (idx < 0) return;
-    const project = state.projects[idx]!;
-    const oldChatId = project.chatId;
-    state.projects.splice(idx, 1);
-    delete state.members[action.projectId];
-    deps.adminStateStore.write(state);
+    const currentProject = deps.api.getProjectRecord(action.projectId);
+    const oldChatId = currentProject?.chatId ?? "";
+    await deps.api.deleteProject({ projectId: action.projectId, actorId: action.actorId });
     if (oldChatId) {
-      await deps.orchestrator.onProjectDeactivated(oldChatId);
       try { await deps.feishuAdapter.leaveChat(oldChatId); } catch (error) {
         log.warn({ oldChatId, err: error instanceof Error ? error.message : String(error) }, "leaveChat after delete failed");
       }
@@ -931,7 +1425,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     if (!keyword) {
       return rawCard(deps.platformOutput.buildAdminUserCard(await buildAdminUserData(deps)));
     }
-    const allUsers = deps.userRepository.listAll({ limit: 10000 });
+    const allUsers = deps.api.listUsers({ limit: 10000 });
     const matchingIds: string[] = [];
     for (const u of allUsers.users) {
       const displayName = await deps.feishuAdapter.getUserDisplayName?.(u.userId) ?? u.userId;
@@ -939,12 +1433,12 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
         matchingIds.push(u.userId);
       }
     }
-    const { users, total } = deps.userRepository.listAll({ userIds: matchingIds, limit: USER_PAGE_SIZE });
+    const { users, total } = deps.api.listUsers({ userIds: matchingIds, limit: USER_PAGE_SIZE });
     const enriched = await Promise.all(users.map(async u => ({
       userId: u.userId,
       displayName: await deps.feishuAdapter.getUserDisplayName?.(u.userId),
-      sysRole: u.sysRole,
-      source: u.source
+      sysRole: u.sysRole === "admin" ? 1 as const : 0 as const,
+      source: u.source as "env" | "im"
     })));
     return rawCard(deps.platformOutput.buildAdminUserCard({
       kind: "admin_user", users: enriched, total, page: 0, pageSize: USER_PAGE_SIZE
@@ -959,15 +1453,8 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     if (!action.targetUserId || !action.projectId || !["maintainer", "developer", "auditor"].includes(newRole)) {
       return rawCard(deps.platformOutput.buildAdminMemberCard(await buildAdminMemberData(deps)));
     }
-    const state = deps.adminStateStore.read();
-    const members = state.members[action.projectId] ?? [];
-    const idx = members.findIndex(m => m.userId === action.targetUserId);
-    if (idx >= 0) {
-      members[idx] = { ...members[idx], role: newRole as "maintainer" | "developer" | "auditor" };
-      state.members[action.projectId] = members;
-      deps.adminStateStore.write(state);
-      log.info({ targetUserId: action.targetUserId, projectId: action.projectId, newRole }, "admin_member_role_change");
-    }
+    deps.api.updateProjectMemberRole({ projectId: action.projectId, userId: action.targetUserId, role: newRole as "maintainer" | "developer" | "auditor", actorId: action.actorId });
+    log.info({ targetUserId: action.targetUserId, projectId: action.projectId, newRole }, "admin_member_role_change");
     return rawCard(deps.platformOutput.buildAdminMemberCard(await buildAdminMemberData(deps)));
   },
   helpRoleChange: async (deps, action) => {
@@ -977,16 +1464,8 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     if (!action.targetUserId || !action.projectId || !["maintainer", "developer", "auditor"].includes(newRole)) {
       return;
     }
-    const state = deps.adminStateStore.read();
-    const members = state.members[action.projectId] ?? [];
-    const idx = members.findIndex(m => m.userId === action.targetUserId);
-    if (idx >= 0) {
-      members[idx] = { ...members[idx], role: newRole as "maintainer" | "developer" | "auditor" };
-      state.members[action.projectId] = members;
-      deps.adminStateStore.write(state);
-      log.info({ targetUserId: action.targetUserId, projectId: action.projectId, newRole }, "help_role_change");
-    }
-    const updatedMembers = (state.members[action.projectId] ?? []).map(m => ({
+    deps.api.updateProjectMemberRole({ projectId: action.projectId, userId: action.targetUserId, role: newRole as "maintainer" | "developer" | "auditor", actorId: action.actorId });
+    const updatedMembers = deps.api.listProjectMembers(action.projectId).map((m: { userId: string; role: string }) => ({
       userId: m.userId, role: m.role
     }));
     return rawCard(deps.platformOutput.buildHelpCard(action.actorId, {
@@ -1022,7 +1501,23 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   adminSkillFileInstallConfirm: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     const payload = action.raw as CardActionData;
-    return handleAdminSkillFileInstallConfirm(deps, payload, action.chatId, action.actorId);
+    const messageId = String(payload.context?.open_message_id ?? "");
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => extractRawCardData(await handleAdminSkillFileInstallConfirm(deps, payload, action.chatId, action.actorId)),
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncInstallSkillFailedTitle,
+        error instanceof Error ? error.message : String(error)
+      )
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncInstallSkillTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncInstallSkillBody,
+      { tone: "blue" }
+    ));
   },
   adminSkillFileInstallCancel: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
@@ -1030,21 +1525,21 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   },
   adminSkillBind: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
-    const project = deps.findProjectByChatId(action.chatId);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
     if (!action.pluginName || !project?.id) {
       const s = getFeishuCardHandlerStrings(deps.config.locale);
       await notify(deps, action.chatId, s.enablePluginNoProject);
       return rawCard(deps.platformOutput.buildAdminSkillCard(await buildAdminSkillData(deps, action.chatId)));
     }
-    await deps.pluginService.bindToProject?.(project.id, action.pluginName, action.actorId);
+    await deps.api.bindSkillToProject({ projectId: project.id, skillName: action.pluginName, actorId: action.actorId });
     log.info({ chatId: action.chatId, projectId: project.id, pluginName: action.pluginName, operatorId: action.actorId }, "admin_skill_bind");
     return rawCard(deps.platformOutput.buildAdminSkillCard(await buildAdminSkillData(deps, action.chatId)));
   },
   adminSkillUnbind: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
-    const project = deps.findProjectByChatId(action.chatId);
+    const project = resolveProjectByChatId(deps.api, action.chatId);
     if (!action.pluginName || !project?.id) return;
-    await deps.pluginService.unbindFromProject?.(project.id, action.pluginName);
+    await deps.api.unbindSkillFromProject({ projectId: project.id, skillName: action.pluginName, actorId: action.actorId });
     log.info({ chatId: action.chatId, projectId: project.id, pluginName: action.pluginName, operatorId: action.actorId }, "admin_skill_unbind");
     return rawCard(deps.platformOutput.buildAdminSkillCard(await buildAdminSkillData(deps, action.chatId)));
   },
@@ -1068,12 +1563,12 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const messageId = String(payload.context?.open_message_id ?? "");
     log.info({ backendId: action.backend, chatId: action.chatId, traceId: messageId || undefined }, "admin_backend_policy_save");
     if (action.backend === "codex") {
-      if (formValues.approval_policy) deps.orchestrator.updateBackendPolicy(action.backend, "approval_policy", String(formValues.approval_policy), { chatId: action.chatId, traceId: messageId || undefined, userId: action.actorId });
-      if (formValues.sandbox_mode) deps.orchestrator.updateBackendPolicy(action.backend, "sandbox_mode", String(formValues.sandbox_mode), { chatId: action.chatId, traceId: messageId || undefined, userId: action.actorId });
+      if (formValues.approval_policy) deps.api.updateBackendPolicy({ actorId: action.actorId, backendId: action.backend, key: "approval_policy", value: String(formValues.approval_policy) });
+      if (formValues.sandbox_mode) deps.api.updateBackendPolicy({ actorId: action.actorId, backendId: action.backend, key: "sandbox_mode", value: String(formValues.sandbox_mode) });
     } else if (action.backend === "opencode") {
-      if (formValues.permission_question) deps.orchestrator.updateBackendPolicy(action.backend, "permission_question", String(formValues.permission_question), { chatId: action.chatId, traceId: messageId || undefined, userId: action.actorId });
+      if (formValues.permission_question) deps.api.updateBackendPolicy({ actorId: action.actorId, backendId: action.backend, key: "permission_question", value: String(formValues.permission_question) });
     } else if (action.backend === "claude-code") {
-      if (formValues.defaultMode) deps.orchestrator.updateBackendPolicy(action.backend, "defaultMode", String(formValues.defaultMode), { chatId: action.chatId, traceId: messageId || undefined, userId: action.actorId });
+      if (formValues.defaultMode) deps.api.updateBackendPolicy({ actorId: action.actorId, backendId: action.backend, key: "defaultMode", value: String(formValues.defaultMode) });
     }
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendEditCard(data, action.backend));
@@ -1094,18 +1589,14 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const apiKeyEnv = String(Object.entries(formValues).find(([k]) => k.startsWith("pk"))?.[1] ?? "").trim() || undefined;
     if (!providerName) return;
     log.info({ backendId: action.backend, providerName, baseUrl, apiKeyEnv, chatId: action.chatId, traceId: messageId }, "admin_backend_add_source");
-    await deps.orchestrator.adminAddProvider(action.backend, providerName, baseUrl, apiKeyEnv, {
-      chatId: action.chatId,
-      traceId: messageId,
-      userId: action.actorId
-    });
+    await deps.api.adminAddProvider({ actorId: action.actorId, backendId: action.backend, providerName, baseUrl, apiKeyEnv });
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendEditCard(data, action.backend));
   },
   adminBackendRemoveProvider: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.backend || !action.provider) return;
-    await deps.orchestrator.adminRemoveProvider(action.backend, action.provider);
+    await deps.api.adminRemoveProvider({ actorId: action.actorId, backendId: action.backend, providerName: action.provider });
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendEditCard(data, action.backend));
   },
@@ -1146,18 +1637,14 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
 
     const messageId = String(payload.context?.open_message_id ?? "");
     log.info({ backendId: action.backend, providerName: action.provider, modelName, hasConfig: !!modelConfig, chatId: action.chatId, traceId: messageId }, "admin_backend_add_model");
-    await deps.orchestrator.adminAddModel(action.backend, action.provider, modelName, modelConfig, {
-      chatId: action.chatId,
-      traceId: messageId,
-      userId: action.actorId
-    });
+    await deps.api.adminAddModel({ actorId: action.actorId, backendId: action.backend, providerName: action.provider, modelName, modelConfig });
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendModelCard(data, action.backend));
   },
   adminBackendRemoveModel: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.backend || !action.provider || !action.model) return;
-    await deps.orchestrator.adminRemoveModel(action.backend, action.provider, action.model);
+    await deps.api.adminRemoveModel({ actorId: action.actorId, backendId: action.backend, providerName: action.provider, modelName: action.model });
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendModelCard(data, action.backend));
   },
@@ -1165,7 +1652,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.backend || !action.provider) return;
     log.info({ backendId: action.backend, providerName: action.provider, chatId: action.chatId }, "admin_backend_recheck");
-    await deps.orchestrator.adminTriggerRecheck(action.backend, action.provider, { chatId: action.chatId });
+    await deps.api.adminTriggerRecheck({ actorId: action.actorId, backendId: action.backend, providerName: action.provider });
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendModelCard(data, action.backend));
   },
@@ -1179,7 +1666,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     const profileModel = String(formValues.profile_model ?? "").trim();
     if (!profileName || !profileModel) return;
     const providerFromForm = String(formValues.profile_provider ?? "").trim();
-    const configs = await deps.orchestrator.readBackendConfigs();
+    const configs = await deps.api.readBackendConfigs();
     const b = configs.find(c => c.name === action.backend);
     const providerName = providerFromForm || (b?.activeProvider ?? b?.providers[0]?.name ?? action.backend);
 
@@ -1198,18 +1685,14 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       }
     }
 
-    deps.orchestrator.adminWriteProfile(action.backend, profileName, profileModel, providerName, extras, {
-      chatId: action.chatId,
-      traceId: messageId || undefined,
-      userId: action.actorId
-    });
+    deps.api.adminWriteProfile({ actorId: action.actorId, backendId: action.backend, profileName, model: profileModel, provider: providerName, extras });
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendModelCard(data, action.backend));
   },
   adminBackendRemoveProfile: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.backend || !action.profileName) return;
-    deps.orchestrator.adminDeleteProfile(action.backend, action.profileName);
+    deps.api.adminDeleteProfile({ actorId: action.actorId, backendId: action.backend, profileName: action.profileName });
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendModelCard(data, action.backend));
   },
@@ -1221,14 +1704,15 @@ async function authorizeFeishuCardIntent(
   operatorId: string,
   intent: IntentType
 ): Promise<void> {
-  const project = deps.findProjectByChatId(chatId);
-  const role = deps.roleResolver.resolve(operatorId, project?.id, { autoRegister: true });
+  const project = resolveProjectByChatId(deps.api, chatId);
+  const role = deps.api.resolveRole({ userId: operatorId, projectId: project?.id }) as EffectiveRole | null;
   authorizeIntent(role, intent);
 }
 
 async function resolveUnifiedTurnCard(deps: FeishuHandlerDeps, chatId: string, operatorId: string, turnId: string): Promise<Record<string, unknown> | undefined> {
   try {
-    const recovery = await deps.orchestrator.getTurnDetail(chatId, turnId);
+    const projectId = requireProjectByChatId(deps, chatId).id;
+    const recovery = await deps.api.getTurnDetail({ projectId, turnId });
     return deps.platformOutput.primeHistoricalTurnCard({
       chatId,
       turnId: recovery.record.turnId,
@@ -1258,7 +1742,7 @@ async function resolveUnifiedTurnCard(deps: FeishuHandlerDeps, chatId: string, o
   } catch (error) {
     if (error instanceof OrchestratorError && (error.code === ErrorCode.TURN_RECORD_MISSING || error.code === ErrorCode.TURN_DETAIL_MISSING)) {
       const s = getFeishuCardHandlerStrings(deps.config.locale);
-      const projectId = String(error.meta?.projectId ?? deps.findProjectByChatId(chatId)?.id ?? "unknown");
+      const projectId = String(error.meta?.projectId ?? resolveProjectByChatId(deps.api, chatId)?.id ?? "unknown");
       const label = error.code === ErrorCode.TURN_DETAIL_MISSING ? s.turnDetailMissing : s.turnRecordMissing;
       log.error({ chatId, turnId, projectId, operatorId, code: error.code }, "resolveUnifiedTurnCard failed");
       throw new TurnRecoveryError(
@@ -1323,15 +1807,7 @@ async function pushProjectHelpCard(
 }
 
 function getUnboundProjects(deps: FeishuHandlerDeps): Array<{ id: string; name: string; cwd: string; gitUrl?: string }> {
-  const state = deps.adminStateStore.read();
-  return state.projects
-    .filter(project => !project.chatId)
-    .map(project => ({
-      id: project.id,
-      name: project.name,
-      cwd: project.cwd,
-      gitUrl: project.gitUrl
-    }));
+  return deps.api.listUnboundProjects();
 }
 
 function mergeActionContext(ctx: { chatId: string; operatorId: string; messageId?: string; actionValue: Record<string, unknown> }) {
@@ -1350,11 +1826,9 @@ async function startMergeReviewFlow(
   branchName: string
 ): Promise<CardActionResponse> {
   const context = mergeActionContext(ctx);
-  const review = await deps.orchestrator.startMergeReview(ctx.chatId, branchName, context);
-  if (review.sessionState === "recovery_required") {
-    return rawCard(deps.platformOutput.buildMergeRecoveryRequiredCard(review));
-  }
-  return rawCard(deps.platformOutput.buildFileReviewCard(review));
+  const projectId = requireProjectByChatId(deps, ctx.chatId).id;
+  const review = await deps.api.startMergeReview({ projectId, branchName, actorId: ctx.operatorId, context });
+  return renderMergeResultCard(deps, ctx.chatId, branchName, "main", review);
 }
 
 function readButtonText(node: unknown): string {
@@ -1445,11 +1919,13 @@ async function handleInitProjectAction(
 ): Promise<CardActionResponse> {
   const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const formValues = payload.action?.form_value;
-  const projectName = String(formValues?.project_name ?? actionValue.project_name ?? "").trim() || `project-${Date.now()}`;
-  const rawCwd = String(formValues?.project_cwd ?? actionValue.project_cwd ?? "").trim();
-  const gitUrl = String(formValues?.git_url ?? actionValue.git_url ?? "").trim();
-  const gitToken = String(formValues?.git_token ?? actionValue.git_token ?? "").trim();
-  const workBranch = String(formValues?.work_branch ?? actionValue.work_branch ?? "").trim();
+  const draft = updateInitDraftFromForm(chatId, operatorId, formValues);
+  const projectName = String(formValues?.project_name ?? actionValue.project_name ?? draft.projectName ?? "").trim() || `project-${Date.now()}`;
+  const rawCwd = String(formValues?.project_cwd ?? actionValue.project_cwd ?? draft.projectCwd ?? "").trim();
+  const gitUrl = String(formValues?.git_url ?? actionValue.git_url ?? draft.gitUrl ?? "").trim();
+  const gitToken = String(formValues?.git_token ?? actionValue.git_token ?? draft.gitToken ?? "").trim();
+  const workBranch = String(formValues?.work_branch ?? actionValue.work_branch ?? draft.workBranch ?? "").trim();
+  const messageId = String(payload.context?.open_message_id ?? "");
 
   let sanitized: { absolute: string; relative: string };
   try {
@@ -1460,54 +1936,137 @@ async function handleInitProjectAction(
     return;
   }
 
-  try {
-    const result = await deps.projectSetupService.setupFromInitCard({
-      chatId,
-      projectName,
-      projectCwd: sanitized.absolute,
-      gitUrl: gitUrl || undefined,
-      gitToken: gitToken || undefined,
-      workBranch: workBranch || undefined,
-      ownerId: operatorId
-    });
-    const displayName = await deps.feishuAdapter.getUserDisplayName?.(operatorId);
-    const successCard = deps.platformOutput.buildInitSuccessCard({
-      projectName: result.projectName,
-      id: result.projectId,
-      cwd: sanitized.relative,
-      gitUrl: result.gitUrl ?? "",
-      workBranch: result.workBranch,
-      operatorId: result.ownerId,
-      displayName
-    });
-    const msgToken = String(payload.context?.open_message_id ?? "");
-    if (msgToken) {
-      deps.feishuAdapter.pinMessage?.(msgToken).catch((error) => {
-        log.warn({ chatId, messageId: msgToken, err: error instanceof Error ? error.message : String(error) }, "pin init project message failed");
-      });
+  let displayName: string | undefined;
+  if (deps.feishuAdapter.getUserDisplayName) {
+    try {
+      displayName = await deps.feishuAdapter.getUserDisplayName(operatorId);
+    } catch (error) {
+      log.warn({ chatId, operatorId, err: error instanceof Error ? error.message : String(error) }, "get init operator display name failed");
     }
-    log.info({ projectId: result.projectId, cwd: result.cwd }, "init_project created");
-    void pushProjectHelpCard(deps, chatId, operatorId).catch((error) => {
-      log.warn({ chatId, operatorId, err: error instanceof Error ? error.message : String(error) }, "send init project help card failed");
-    });
-
-    // 批量注册群内现有成员为 auditor（异步，不阻塞返回）
-    deps.feishuAdapter.listChatMembers?.(chatId).then(memberIds => {
-      if (!memberIds?.length) return;
-      for (const uid of memberIds) {
-        deps.roleResolver.autoRegister(uid, result.projectId);
-      }
-      log.info({ projectId: result.projectId, count: memberIds.length }, "bulk-registered existing chat members");
-    }).catch(err => {
-      log.warn({ projectId: result.projectId, err: err instanceof Error ? err.message : String(err) }, "bulk member registration failed");
-    });
-
-    return rawCard(successCard);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    await notify(deps, chatId, ERR.projectCreate(msg));
-    return;
   }
+
+  const existingTask = initProjectTaskStore.get(chatId);
+  if (existingTask?.status === "running") {
+    return rawCard(deps.platformOutput.buildInitPendingCard({
+      projectName: existingTask.projectName,
+      cwd: existingTask.cwd,
+      gitUrl: existingTask.gitUrl,
+      workBranch: existingTask.workBranch,
+      operatorId: existingTask.operatorId,
+      displayName,
+      duplicate: true,
+    }));
+  }
+
+  const task: InitProjectTask = {
+    taskId: `init-${Date.now().toString(36)}`,
+    chatId,
+    operatorId,
+    messageId: messageId || undefined,
+    projectName,
+    cwd: sanitized.relative,
+    gitUrl: gitUrl || undefined,
+    workBranch: workBranch || undefined,
+    status: "running",
+    startedAt: new Date().toISOString(),
+  };
+  initProjectTaskStore.set(chatId, task);
+
+  void (async () => {
+    try {
+      const result = await deps.api.createProject({
+        chatId,
+        userId: operatorId,
+        actorId: operatorId,
+        name: projectName,
+        cwd: sanitized.absolute,
+        gitUrl: gitUrl || undefined,
+        gitToken: gitToken || undefined,
+        workBranch: workBranch || undefined,
+        initialFiles: {
+          agentsMd: {
+            encoding: "base64",
+            contentBase64: encodeUtf8Base64(draft.agentsMdContent),
+          },
+          gitignore: {
+            encoding: "base64",
+            contentBase64: encodeUtf8Base64(draft.gitignoreContent),
+          },
+        },
+      });
+      log.info({ projectId: result.project?.id, cwd: result.project?.cwd, taskId: task.taskId }, "init_project created");
+      clearInitProjectDraft(chatId, operatorId);
+
+      const successCard = deps.platformOutput.buildInitSuccessCard({
+        projectName: result.project?.name ?? projectName,
+        id: result.project?.id ?? "",
+        cwd: sanitized.relative,
+        gitUrl: gitUrl ?? "",
+        workBranch: workBranch ?? "",
+        operatorId,
+        displayName
+      });
+      try {
+        if (messageId) {
+          await deps.feishuAdapter.updateInteractiveCard(messageId, successCard);
+          if (deps.feishuAdapter.pinMessage) {
+            deps.feishuAdapter.pinMessage(messageId).catch((error) => {
+              log.warn({ chatId, messageId, err: error instanceof Error ? error.message : String(error) }, "pin init project message failed");
+            });
+          }
+        } else {
+          await deps.platformOutput.sendRawCard(chatId, successCard);
+        }
+      } catch (uiError) {
+        log.warn({ chatId, messageId, taskId: task.taskId, err: uiError instanceof Error ? uiError.message : String(uiError) }, "init project success card update failed");
+        await notify(deps, chatId, `✅ 项目已创建成功：${result.project?.name ?? projectName}`);
+      }
+
+      void pushProjectHelpCard(deps, chatId, operatorId).catch((error) => {
+        log.warn({ chatId, operatorId, err: error instanceof Error ? error.message : String(error) }, "send init project help card failed");
+      });
+      if (result.project?.id) {
+        void registerExistingChatMembers(deps, chatId, result.project.id);
+      }
+      initProjectTaskStore.delete(chatId);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      initProjectTaskStore.set(chatId, { ...task, status: "failed", error: msg });
+      log.error({ chatId, operatorId, taskId: task.taskId, err: msg }, "init_project async failed");
+      const failedCard = deps.platformOutput.buildInitFailedCard({
+        projectName,
+        cwd: sanitized.relative,
+        gitUrl: gitUrl || undefined,
+        workBranch: workBranch || undefined,
+        operatorId,
+        displayName,
+        error: msg,
+      });
+      if (messageId) {
+        try {
+          await deps.feishuAdapter.updateInteractiveCard(messageId, failedCard);
+        } catch (updateError) {
+          log.warn({ chatId, messageId, err: updateError instanceof Error ? updateError.message : String(updateError) }, "update init failed card failed");
+          await notify(deps, chatId, ERR.projectCreate(msg));
+        }
+      } else {
+        await deps.platformOutput.sendRawCard(chatId, failedCard).catch(async (sendError) => {
+          log.warn({ chatId, err: sendError instanceof Error ? sendError.message : String(sendError) }, "send init failed card failed");
+          await notify(deps, chatId, ERR.projectCreate(msg));
+        });
+      }
+      initProjectTaskStore.delete(chatId);
+    }
+  })();
+
+  return rawCard(deps.platformOutput.buildInitPendingCard({
+    projectName,
+    cwd: sanitized.relative,
+    gitUrl: gitUrl || undefined,
+    workBranch: workBranch || undefined,
+    operatorId,
+    displayName,
+  }));
 }
 
 async function handleCreateThreadAction(
@@ -1522,35 +2081,40 @@ async function handleCreateThreadAction(
   const formValues = payload.action?.form_value;
   const messageId = String(payload.context?.open_message_id ?? "").trim();
   const threadName = String(formValues?.thread_name ?? actionValue.thread_name ?? "").trim() || `thread-${Date.now()}`;
-  // Parse combined "backend:model" value from single selector
   const backendModelRaw = String(formValues?.backend_model ?? actionValue.backend_model ?? "").trim();
-  const colonIdx = backendModelRaw.indexOf(":");
-  const selectedBackend = colonIdx >= 0 ? backendModelRaw.slice(0, colonIdx) : backendModelRaw;
-  const afterColon = colonIdx >= 0 ? backendModelRaw.slice(colonIdx + 1) : "";
-  // If format is "backend:profile:model", split further
-  const secondColon = afterColon.indexOf(":");
-  const selectedProfile = secondColon >= 0 ? afterColon.slice(0, secondColon) : "";
-  const selectedModel = secondColon >= 0 ? afterColon.slice(secondColon + 1) : afterColon;
 
   try {
-    const project = deps.findProjectByChatId(chatId);
-    const projectId = project?.id ?? "default-project";
-
-    // Resolve serverCmd from backend definition if needed
-    let serverCmd: string | undefined;
-    if (selectedBackend) {
-      const resolved = await deps.orchestrator.resolveBackend(selectedBackend);
-      if (resolved) {
-        serverCmd = resolved.serverCmd;
-      }
+    const projectId = requireProjectByChatId(deps, chatId).id;
+    const firstColon = backendModelRaw.indexOf(":");
+    if (firstColon < 0) {
+      throw new Error(`invalid backend selection: ${backendModelRaw || "<empty>"}`);
     }
+    const backendRaw = backendModelRaw.slice(0, firstColon);
+    const remainder = backendModelRaw.slice(firstColon + 1);
+    const secondColon = remainder.indexOf(":");
+    if (secondColon < 0) {
+      throw new Error(`invalid backend selection payload: ${backendModelRaw}`);
+    }
+    const profileNameRaw = remainder.slice(0, secondColon);
+    const model = remainder.slice(secondColon + 1).trim();
+    if (!isBackendId(backendRaw)) {
+      throw new Error(`invalid backend id: ${backendRaw}`);
+    }
+    if (!model) {
+      throw new Error(`invalid backend selection model: ${backendModelRaw}`);
+    }
+    const backendId = backendRaw;
+    const profileName = profileNameRaw.trim() || undefined;
 
-    // Validate backendId
-    const backendId = isBackendId(selectedBackend) ? selectedBackend : "codex";
-    const model = selectedModel || "gpt-5-codex";
-    const createOpts = { backendId, model, serverCmd, profileName: selectedProfile || undefined };
-
-    void deps.orchestrator.createThread(projectId, chatId, operatorId, threadName, createOpts)
+    void deps.api.createThread({
+      projectId,
+      userId: operatorId,
+      actorId: operatorId,
+      threadName,
+      backendId,
+      model,
+      profileName,
+    })
       .then((created) => {
         log.info({ threadId: created.threadId, threadName, backend: backendId, model }, "create_thread (async)");
         if (messageId) {
@@ -1619,7 +2183,7 @@ async function handleApprovalAction(
   if (!(action === "approve" || action === "deny" || action === "approve_always") || approvalId.length === 0) {
     return;
   }
-  const project = deps.findProjectByChatId(chatId);
+  const project = resolveProjectByChatId(deps.api, chatId);
   if (!project?.id) {
     throw new Error(`approval action requires project binding for chatId=${chatId}`);
   }
@@ -1635,29 +2199,33 @@ async function handleApprovalAction(
   if (approvalType !== "command_exec" && approvalType !== "file_change") {
     throw new Error(`approval action requires valid approvalType for approvalId=${approvalId}`);
   }
-  const result = await deps.approvalHandler.handle({
-    approvalId,
-    approverId: operatorId || "unknown-approver",
-    action,
-    projectId: project.id,
-    threadId,
-    turnId,
-    approvalType
-  }, true);
-
-  // Fallback governance: duplicate/rejected must NOT show "approved" card
-  if (result === "duplicate" || result === "bridge_duplicate") {
+  const turnDetail = await deps.api.getTurnDetail({ projectId: project.id, turnId });
+  if (turnDetail?.record.status === "interrupted") {
     return rawCard({
       schema: "2.0",
-      header: { title: { tag: "plain_text", content: "该审批已被处理" }, template: "orange" },
-      body: { elements: [{ tag: "markdown", content: "此审批请求已被其他用户处理，无需重复操作。" }] }
+      header: { title: { tag: "plain_text", content: s.approvalExpiredTitle }, template: "orange" },
+      body: {
+        elements: [
+          { tag: "markdown", content: s.approvalExpiredBody }
+        ]
+      }
     });
   }
-  if (result === "rejected") {
+  const mappedDecision = action === "approve" ? "accept" as const
+    : action === "deny" ? "decline" as const
+    : "approve_always" as const;
+  const result = await deps.api.handleApprovalCallback({
+    approvalId,
+    decision: mappedDecision,
+    actorId: operatorId || "unknown-approver",
+  });
+
+  // Fallback governance: duplicate must NOT show "approved" card
+  if (result === "duplicate") {
     return rawCard({
       schema: "2.0",
-      header: { title: { tag: "plain_text", content: "审批签名无效" }, template: "red" },
-      body: { elements: [{ tag: "markdown", content: "签名验证失败，审批未被执行。" }] }
+      header: { title: { tag: "plain_text", content: s.approvalDuplicateTitle }, template: "orange" },
+      body: { elements: [{ tag: "markdown", content: s.approvalDuplicateBody }] }
     });
   }
 
@@ -1665,17 +2233,56 @@ async function handleApprovalAction(
   const actionLabel = action === "approve" ? s.approvalApproved : action === "deny" ? s.approvalRejected : s.approvalApprovedOnce;
   const now = new Date();
   const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-  const commandSummary = typeof actionValue.commandSummary === "string" ? actionValue.commandSummary
-    : typeof actionValue.description === "string" ? actionValue.description  // backward compat
-    : "";
-  const threadLabel = typeof actionValue.threadLabel === "string" ? actionValue.threadLabel : (typeof actionValue.threadId === "string" ? actionValue.threadId : "");
-  const createdAtLabel = typeof actionValue.createdAtLabel === "string" ? actionValue.createdAtLabel : "";
+  const commandSummary = readApprovalActionValue(actionValue, "summary")
+    ?? buildApprovalResultSummaryFromActionValue(actionValue)
+    ?? "";
+  const displayName = readApprovalActionValue(actionValue, "displayName");
+  const reason = readApprovalActionValue(actionValue, "reason");
+  const cwd = readApprovalActionValue(actionValue, "cwd");
+  const description = readApprovalActionValue(actionValue, "description");
+  const threadLabel = readApprovalActionValue(actionValue, "threadLabel") ?? "";
+  const createdAtLabel = readApprovalActionValue(actionValue, "createdAtLabel") ?? "";
+  const files = readApprovalActionFiles(actionValue);
   const approvalTitle = typeof actionValue.approvalTitle === "string"
     ? actionValue.approvalTitle
     : (actionValue.approvalType === "file_change" ? s.approvalTitleFileChange : s.approvalTitleCommand);
   const approvalTypeLabel = typeof actionValue.approvalTypeLabel === "string"
     ? actionValue.approvalTypeLabel
     : (actionValue.approvalType === "file_change" ? s.approvalTypeFileChange : s.approvalTypeCommand);
+  const summaryBlock = actionValue.approvalType === "command_exec"
+    ? commandSummary
+    : (commandSummary || description);
+  const detailElements: Record<string, unknown>[] = [];
+
+  if (threadLabel) {
+    detailElements.push({ tag: "markdown", content: `${s.approvalThreadNameTitle}\n\`${threadLabel}\`` });
+  }
+  if (displayName) {
+    detailElements.push({ tag: "markdown", content: `${s.approvalOperationTitle}\n${displayName}` });
+  }
+  if (summaryBlock && summaryBlock !== displayName && summaryBlock !== reason) {
+    detailElements.push({ tag: "markdown", content: `${s.approvalSummaryTitle}\n> ${summaryBlock.replace(/\n/g, "\n> ")}` });
+  }
+  if (actionValue.approvalType === "command_exec" && description) {
+    detailElements.push({ tag: "markdown", content: `${s.approvalCommandTitleText}\n\`\`\`\n${description}\n\`\`\`` });
+  }
+  if (reason && reason !== displayName) {
+    detailElements.push({ tag: "markdown", content: `${s.approvalReasonTitle}\n${reason}` });
+  }
+  if (cwd) {
+    detailElements.push({ tag: "markdown", content: `${s.approvalWorkingDirectoryTitle}\n\`${cwd}\`` });
+  }
+  if (files.length > 0) {
+    const filePreview = files.slice(0, 5);
+    detailElements.push({
+      tag: "markdown",
+      content: [
+        s.approvalFilesTitle,
+        ...filePreview.map((file) => `- \`${file}\``),
+        files.length > filePreview.length ? `- ${s.approvalMoreFiles(files.length - filePreview.length)}` : null
+      ].filter(Boolean).join("\n")
+    });
+  }
 
   return rawCard({
     schema: "2.0",
@@ -1698,10 +2305,8 @@ async function handleApprovalAction(
       vertical_spacing: "8px",
       padding: "8px 12px 12px 12px",
       elements: [
-        ...(commandSummary ? [
-          { tag: "markdown", content: `${s.approvalSummaryTitle}\n> ${commandSummary.replace(/\n/g, "\n> ")}` },
-          { tag: "hr" }
-        ] : []),
+        ...detailElements.flatMap((element, index) => index === detailElements.length - 1 ? [element] : [element, { tag: "hr" }]),
+        ...(detailElements.length > 0 ? [{ tag: "hr" }] : []),
         { tag: "markdown", content: `${s.approvalResultTitle}\n${actionLabel}  ·  <at id=${operatorId}></at>` },
         greyTip(s.approvalHandledAt(timeStr)),
         greyTip(s.approvalHandledNote)
@@ -1733,15 +2338,16 @@ async function handleThreadSwitchAction(
 
   try {
     const fromHelp = actionValue.fromHelp === true;
+    const projectId = requireProjectByChatId(deps, chatId).id;
     if (action === "switch_thread") {
       const threadName = String(actionValue.threadName ?? "");
       if (!threadName) {
         return;
       }
       // Update binding — pool is keyed by threadName, no release needed
-      await deps.orchestrator.handleThreadJoin(chatId, userId, threadName);
-      const activeBinding = await deps.orchestrator.getUserActiveThread(chatId, userId);
-      const threads = await deps.orchestrator.handleThreadListEntries(chatId);
+      await deps.api.joinThread({ projectId, userId, actorId: userId, threadName });
+      const activeBinding = await deps.api.getUserActiveThread({ projectId, userId });
+      const threads = await deps.api.listThreads({ projectId, actorId: userId });
       const displayName = await deps.feishuAdapter.getUserDisplayName?.(userId);
       const items = threads.map((thread) => ({
         threadName: thread.threadName,
@@ -1759,9 +2365,9 @@ async function handleThreadSwitchAction(
     }
 
     // switch_to_main: leave thread, keep old thread's API alive
-    await deps.orchestrator.handleThreadLeave(chatId, userId);
+    await deps.api.leaveThread({ projectId, userId, actorId: userId });
     log.info("switch_to_main: binding cleared, threads stay alive");
-    const threads = await deps.orchestrator.handleThreadListEntries(chatId);
+    const threads = await deps.api.listThreads({ projectId, actorId: userId });
     const displayName = await deps.feishuAdapter.getUserDisplayName?.(userId);
     const items = threads.map((thread) => ({
       threadName: thread.threadName,
@@ -1795,10 +2401,21 @@ async function handleMergeAction(
   const baseBranch = String(actionValue.baseBranch ?? "main");
   if (action === "confirm_merge" && branchName) {
     try {
-      const mergeResult = await deps.orchestrator.handleMergeConfirm(chatId, branchName, undefined, context);
-      const project = deps.findProjectByChatId(chatId);
-      const threadAction = mergeResult.success && project?.id ? { projectId: project.id, chatId } : undefined;
-      return rawCard(deps.platformOutput.buildMergeResultCard(branchName, baseBranch, mergeResult.success, mergeResult.message, undefined, threadAction));
+      const mergeResult = await deps.api.handleMergeConfirm({ projectId: requireProjectByChatId(deps, chatId).id, branchName, actorId: context?.userId ?? "system", context });
+      const project = resolveProjectByChatId(deps.api, chatId);
+      if (mergeResult.kind === "success" && project?.id) {
+        return rawCard(
+          deps.platformOutput.buildMergeResultCard(
+            branchName,
+            baseBranch,
+            true,
+            mergeResult.message ?? "",
+            undefined,
+            { projectId: project.id, chatId }
+          )
+        );
+      }
+      return renderMergeResultCard(deps, chatId, branchName, baseBranch, mergeResult);
     } catch (error) {
       return rawCard(deps.platformOutput.buildMergeResultCard(
         branchName,
@@ -1847,17 +2464,18 @@ async function handleSnapshotAction(
     return;
   }
   try {
-    const { snapshot, contextReset } = await deps.orchestrator.jumpToSnapshot(chatId, turnId, userId);
+    const projectId = requireProjectByChatId(deps, chatId).id;
+    const { snapshot, contextReset } = await deps.api.jumpToSnapshot({ projectId, targetTurnId: turnId, userId });
     if (contextReset) {
       const s = getFeishuCardHandlerStrings(deps.config.locale);
       await notify(deps, chatId,
         s.snapshotContextReset(snapshot.turnIndex)
       );
     }
-    const allSnapshots = await deps.orchestrator.listSnapshots(chatId, threadId || snapshot.threadId);
+    const allSnapshots = await deps.api.listSnapshots({ projectId, threadId: threadId || snapshot.threadId });
     const displayName = await deps.feishuAdapter.getUserDisplayName?.(userId);
     const effectiveThreadId = threadId || snapshot.threadId;
-    const resolvedBinding = await deps.orchestrator.getUserActiveThread(chatId, userId);
+    const resolvedBinding = await deps.api.getUserActiveThread({ projectId: requireProjectByChatId(deps, chatId).id, userId });
     const threadName = effectiveThreadId === MAIN_THREAD_NAME ? "main" : (resolvedBinding?.threadName ?? effectiveThreadId);
     return rawCard(deps.platformOutput.buildSnapshotHistoryCard(
       allSnapshots.map((item) => ({
@@ -1876,7 +2494,12 @@ async function handleSnapshotAction(
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     await notify(deps, chatId, ERR.jumpFailed(msg));
-    return;
+    return rawCard(buildAsyncFailureCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncJumpSnapshotFailedTitle,
+      msg,
+      { subtitle: turnId }
+    ));
   }
 }
 
@@ -1893,12 +2516,12 @@ async function handleSkillAction(
   }
   log.info({ chatId, skillName }, "install_skill");
   try {
-    const project = deps.findProjectByChatId(chatId);
-    const def = await deps.pluginService.install(skillName, project?.id);
+    const project = resolveProjectByChatId(deps.api, chatId);
+    const def = await deps.api.installSkill({ source: skillName, projectId: project?.id, actorId: "system" });
     await deps.platformOutput.sendSkillOperation(chatId, {
       kind: "skill_operation",
       action: "installed",
-      skill: { name: def.name, description: def.description, installed: true }
+      skill: { name: def.name ?? skillName, description: def.description ?? "", installed: true }
     });
   } catch (error) {
     await deps.platformOutput.sendSkillOperation(chatId, {
@@ -1922,12 +2545,12 @@ async function checkCommandAvailable(cmd: string): Promise<boolean> {
   }
 }
 
-function buildAdminProjectData(deps: FeishuHandlerDeps): import("../../services/contracts/im/im-output").IMAdminProjectPanel {
-  const state = deps.adminStateStore.read();
+function buildAdminProjectData(deps: FeishuHandlerDeps): import("../../services/event/im-output").IMAdminProjectPanel {
+  const projects = deps.api.listProjects();
   const workspace = deps.config.cwd;
   return {
     kind: "admin_project",
-    projects: state.projects.map((p) => {
+    projects: projects.map((p) => {
       // 显示相对路径，不暴露 workspace 根
       const relativeCwd = p.cwd.startsWith(workspace)
         ? p.cwd.slice(workspace.length).replace(/^[\\/]/, "") || "."
@@ -1939,16 +2562,16 @@ function buildAdminProjectData(deps: FeishuHandlerDeps): import("../../services/
         cwd: relativeCwd,
         gitUrl: p.gitUrl,
         status: p.status,
-        memberCount: state.members[p.id]?.length ?? 0
+        memberCount: deps.api.listProjectMembers(p.id).length
       };
     })
   };
 }
 
-async function buildAdminMemberData(deps: FeishuHandlerDeps): Promise<import("../../services/contracts/im/im-output").IMAdminMemberPanel> {
-  const state = deps.adminStateStore.read();
-  const projects = await Promise.all(state.projects.map(async p => {
-    const rawMembers = state.members[p.id] ?? [];
+async function buildAdminMemberData(deps: FeishuHandlerDeps): Promise<import("../../services/event/im-output").IMAdminMemberPanel> {
+  const allProjects = deps.api.listProjects();
+  const projects = await Promise.all(allProjects.map(async p => {
+    const rawMembers = deps.api.listProjectMembers(p.id);
     const members = await Promise.all(rawMembers.map(async m => ({
       userId: m.userId,
       displayName: await deps.feishuAdapter.getUserDisplayName?.(m.userId),
@@ -1966,13 +2589,13 @@ async function buildAdminMemberData(deps: FeishuHandlerDeps): Promise<import("..
 
 const USER_PAGE_SIZE = 15;
 
-async function buildAdminUserData(deps: FeishuHandlerDeps, page = 0): Promise<import("../../services/contracts/im/im-output").IMAdminUserPanel> {
-  const { users, total } = deps.userRepository.listAll({ offset: page * USER_PAGE_SIZE, limit: USER_PAGE_SIZE });
+async function buildAdminUserData(deps: FeishuHandlerDeps, page = 0): Promise<import("../../services/event/im-output").IMAdminUserPanel> {
+  const { users, total } = deps.api.listUsers({ offset: page * USER_PAGE_SIZE, limit: USER_PAGE_SIZE });
   const enriched = await Promise.all(users.map(async u => ({
     userId: u.userId,
     displayName: await deps.feishuAdapter.getUserDisplayName?.(u.userId),
-    sysRole: u.sysRole,
-    source: u.source
+    sysRole: u.sysRole === "admin" ? 1 as const : 0 as const,
+    source: u.source as "env" | "im"
   })));
   return {
     kind: "admin_user",
@@ -1986,10 +2609,10 @@ async function buildAdminUserData(deps: FeishuHandlerDeps, page = 0): Promise<im
 async function buildAdminSkillData(
   deps: FeishuHandlerDeps,
   chatId?: string
-): Promise<import("../../services/contracts/im/im-output").IMAdminSkillPanel> {
-  const project = chatId ? deps.findProjectByChatId(chatId) : null;
+): Promise<import("../../services/event/im-output").IMAdminSkillPanel> {
+  const project = chatId ? resolveProjectByChatId(deps.api, chatId) : null;
   const projectId = project?.id;
-  const catalogByName = new Map((deps.pluginService.listCatalog?.() ?? []).map((entry) => [entry.pluginName, entry]));
+  const catalogByName = new Map((deps.api.listSkillCatalog?.() ?? []).map((entry) => [entry.pluginName, entry]));
   const plugins: Array<{
     pluginName: string;
     sourceType: string;
@@ -2001,17 +2624,34 @@ async function buildAdminSkillData(
     addedBy?: string;
     downloadedAt?: string;
   }> = projectId
-    ? await (deps.pluginService.listProjectPlugins?.(projectId) ?? [])
-    : (await deps.pluginService.list()).map((plugin) => {
-      const catalog = catalogByName.get(plugin.name);
+    ? (await (deps.api.listProjectSkills?.(projectId) ?? [])).map((plugin) => {
+      const pluginName = plugin.name ?? "unknown";
+      const catalog = catalogByName.get(pluginName);
       return {
-        ...plugin,
-        pluginName: plugin.name,
-        sourceType: catalog?.sourceType ?? "github-subpath",
+        pluginName,
+        sourceType: String(catalog?.sourceType ?? "project"),
+        name: plugin.name ?? pluginName,
+        description: plugin.description ?? "",
+        downloaded: true,
+        enabled: !!plugin.enabled,
+        mcpServers: [],
+        addedBy: typeof catalog?.downloadedBy === "string" ? catalog.downloadedBy : undefined,
+        downloadedAt: typeof catalog?.downloadedAt === "string" ? catalog.downloadedAt : undefined,
+      };
+    })
+    : (await deps.api.listSkills()).map((plugin) => {
+      const pluginName = plugin.name ?? "unknown";
+      const catalog = catalogByName.get(pluginName);
+      return {
+        pluginName,
+        sourceType: String(catalog?.sourceType ?? "github-subpath"),
+        name: pluginName,
+        description: plugin.description ?? "",
         downloaded: true,
         enabled: false,
-        addedBy: catalog?.downloadedBy,
-        downloadedAt: catalog?.downloadedAt,
+        mcpServers: [],
+        addedBy: typeof catalog?.downloadedBy === "string" ? catalog.downloadedBy : undefined,
+        downloadedAt: typeof catalog?.downloadedAt === "string" ? catalog.downloadedAt : undefined,
       };
     });
   return {
@@ -2033,34 +2673,34 @@ async function buildAdminSkillData(
   };
 }
 
-async function buildAdminBackendData(deps: FeishuHandlerDeps): Promise<import("../../services/contracts/im/im-output").IMAdminBackendPanel> {
-  const configs = await deps.orchestrator.readBackendConfigs();
+async function buildAdminBackendData(deps: FeishuHandlerDeps): Promise<import("../../services/event/im-output").IMAdminBackendPanel> {
+  const configs = await deps.api.readBackendConfigs();
   return {
     kind: "admin_backend",
     backends: configs.map((c) => ({
       name: c.name,
       serverCmd: c.serverCmd,
       cmdAvailable: c.cmdAvailable,
-      configPath: c.localConfigPath,
-      configExists: c.configExists,
+      configPath: "",
+      configExists: true,
       activeProvider: c.activeProvider,
       policy: c.policy,
       providers: c.providers.map((p) => ({
         name: p.name,
-        baseUrl: p.baseUrl,
-        apiKeyEnv: p.apiKeyEnv,
+        baseUrl: undefined,
+        apiKeyEnv: undefined,
         apiKeySet: p.apiKeySet,
-        isActive: p.isActive,
+        isActive: c.activeProvider === p.name,
         models: p.models.map((m) => ({
           name: m.name,
           available: m.available,
           checkedAt: m.checkedAt,
-          isCurrent: m.isCurrent
+          isCurrent: false
         }))
       })),
       // Derive profiles from unified providers[].models[]
       profiles: c.providers.flatMap((p) =>
-        p.models.map((m) => ({ name: m.name, model: m.modelId, provider: p.name, extras: m.extras }))
+        p.models.map((m) => ({ name: m.name, model: m.name, provider: p.name, extras: {} }))
       ),
     }))
   };
@@ -2092,7 +2732,7 @@ async function handleAdminSkillInstallSubmit(
       : deps.platformOutput.buildAdminSkillCard(await buildAdminSkillData(deps, chatId)));
   }
 
-  const project = deps.findProjectByChatId(chatId);
+  const project = resolveProjectByChatId(deps.api, chatId);
   addInstallTask(chatId, {
     taskId,
     label,
@@ -2107,8 +2747,8 @@ async function handleAdminSkillInstallSubmit(
         throw new Error(s.githubSubpathOnly);
       }
       if (!skillSubpath) throw new Error(s.githubSubpathRequired);
-      if (!deps.pluginService.importFromGithubSubpath) throw new Error(s.githubSubpathImportUnavailable);
-      await deps.pluginService.importFromGithubSubpath({
+      if (!deps.api.installFromGithub) throw new Error(s.githubSubpathImportUnavailable);
+      await deps.api.installFromGithub({
         repoUrl: source,
         skillSubpath,
         pluginName,
@@ -2149,7 +2789,7 @@ async function handleAdminSkillFileInstallSubmit(
   const s = getFeishuCardHandlerStrings(deps.config.locale);
   const formValues = payload.action?.form_value ?? {};
   const autoEnable = String(formValues.skill_auto_enable ?? "catalog").trim();
-  const project = deps.findProjectByChatId(chatId);
+  const project = resolveProjectByChatId(deps.api, chatId);
   armPendingFeishuSkillInstall({
     chatId,
     userId: operatorId,
@@ -2179,11 +2819,11 @@ async function handleAdminSkillFileInstallConfirm(
     return rawCard(deps.platformOutput.buildAdminSkillCard(await buildAdminSkillData(deps, chatId)));
   }
   try {
-    if (!deps.pluginService.installFromLocalSource) throw new Error(s.localSkillImportUnavailable);
-    if (!deps.pluginService.validateSkillNameCandidate) throw new Error(s.skillNameValidationUnavailable);
+    if (!deps.api.installFromLocalSource) throw new Error(s.localSkillImportUnavailable);
+    if (!deps.api.validateSkillNameCandidate) throw new Error(s.skillNameValidationUnavailable);
     const formValues = payload.action?.form_value ?? {};
     const finalPluginName = String(formValues.skill_name ?? "").trim() || staged.pluginName;
-    const validation = deps.pluginService.validateSkillNameCandidate(finalPluginName);
+    const validation = deps.api.validateSkillNameCandidate(finalPluginName);
     if (!validation.ok || !validation.normalizedName) {
       return rawCard(
         deps.platformOutput.buildAdminSkillFileConfirmCard
@@ -2194,7 +2834,7 @@ async function handleAdminSkillFileInstallConfirm(
             manifestDescription: staged.manifestDescription,
             sourceLabel: s.feishuFileSourceLabel,
             autoEnableProject: Boolean(staged.autoEnableProjectId),
-            projectName: staged.autoEnableProjectId ? deps.findProjectByChatId(chatId)?.name : undefined,
+            projectName: staged.autoEnableProjectId ? resolveProjectByChatId(deps.api, chatId)?.name : undefined,
             expiresHint: s.skillInstallExpiresHint,
             validationError: validation.reason ?? s.invalidSkillName,
           })
@@ -2202,12 +2842,10 @@ async function handleAdminSkillFileInstallConfirm(
       );
     }
     consumeStagedFeishuSkillInstall(chatId, operatorId);
-    await deps.pluginService.installFromLocalSource({
+    await deps.api.installFromLocalSource({
       localPath: staged.localPath,
-      sourceLabel: `feishu-upload:${staged.originalName ?? staged.localPath}`,
       pluginName: validation.normalizedName,
       actorId: operatorId,
-      autoEnableProjectId: staged.autoEnableProjectId,
     });
     await notify(deps, chatId, s.skillInstallCompleted(staged.originalName ?? staged.localPath));
   } catch (error) {
@@ -2247,11 +2885,11 @@ export async function handleFeishuCardAction(deps: FeishuHandlerDeps, data: Reco
   const chatId = String(payload.context?.open_chat_id ?? "");
   const messageId = String(payload.context?.open_message_id ?? "");
   const actionLog = log.child({ chatId, userId: operatorId, messageId, action: actionId, traceId: messageId || undefined });
-  const project = deps.findProjectByChatId(chatId);
+  const project = resolveProjectByChatId(deps.api, chatId);
 
   try {
     const result = await feishuActionRouter.route(deps, action);
-    await deps.auditService?.append({
+    await log.info({
       projectId: project?.id ?? "unknown",
       actorId: operatorId,
       action: `card_action:${actionId}`,
@@ -2273,7 +2911,7 @@ export async function handleFeishuCardAction(deps: FeishuHandlerDeps, data: Reco
       const s = getFeishuCardHandlerStrings(deps.config.locale);
       await notify(deps, chatId, s.genericError(error.message));
     }
-    await deps.auditService?.append({
+    await log.info({
       projectId: project?.id ?? "unknown",
       actorId: operatorId,
       action: `card_action:${actionId}`,

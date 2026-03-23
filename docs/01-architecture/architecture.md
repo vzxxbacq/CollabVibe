@@ -121,6 +121,13 @@ Backend (Codex stdio / ACP SSE)
 | L1 must not call backends directly | Backend differences handled inside L3 |
 | New platforms must not add a third path | Reuse Path A / B |
 
+### Turn lifecycle semantics
+
+- After `turn/start` succeeds and returns a `turnId`, L2 `TurnLifecycleService` must immediately establish the turn baseline: create the turn record, persist the initial snapshot, and mark the active turn.
+- `EventPipeline` is the Path B streaming/synchronization layer. It owns live event convergence, state sync, and completion handling; it is not the sole source of turn-start persistence.
+- To tolerate early backend notifications, `EventPipeline` may defensively call idempotent `ensureTurnStarted()` and buffer notifications before activation. This does not change the authoritative start point, which remains `TurnLifecycleService`.
+- `finishTurn()` may compute commit/diff only from an already-established active turn. Missing turn-start persistence is therefore a lifecycle error, not something UI fallback should mask.
+
 ---
 
 ## 3. Core Invariants

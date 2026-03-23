@@ -14,9 +14,9 @@ title: 首页
 | 第一次部署并跑通系统 | [QUICKSTART](/zh/00-overview/quickstart) |
 | 理解整体结构 | [系统总览](/zh/00-overview/system-overview) |
 | 完成平台接入准备 | [Feishu 平台接入](/zh/00-overview/platform-feishu), [Slack 平台接入](/zh/00-overview/platform-slack) |
-| 理解调用链 | [调用链与数据流](/zh/01-architecture/data-paths) |
+| 理解调用链 | [调用链与数据流](/zh/01-architecture/architecture) |
 | 理解核心对象 | [核心类：Project / Thread / Turn](/zh/01-architecture/core-entities) |
-| 理解分层边界 | [分层隔离与模块契约](/zh/01-architecture/invariants) |
+| 理解分层边界 | [分层隔离与模块契约](/zh/01-architecture/architecture) |
 | 查看运维与日志 | [数据与存储](/zh/02-operations/data-and-storage), [日志系统](/zh/02-operations/logging-system) |
 | 数据迁移与备份 | [数据与存储](/zh/02-operations/data-and-storage) |
 | 本地开发 | [本地开发](/zh/03-development/local-development) |

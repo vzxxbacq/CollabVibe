@@ -18,11 +18,11 @@ status: active
 
 | 路径 | 类型 | 作用 |
 | --- | --- | --- |
-| `data/codex-im.db` | SQLite 主库 | 主数据文件 |
-| `data/codex-im.db-wal` | SQLite WAL 文件 | 写前日志，WAL 模式下保存未 checkpoint 的数据 |
-| `data/codex-im.db-shm` | SQLite SHM 文件 | WAL 共享内存索引文件 |
-| `data/config/` | 配置目录 | backend 配置与默认模板 |
-| `data/logs/` | 日志目录 | 应用运行日志 |
+| `collabvibe.db` | SQLite 主库 | 主数据文件 |
+| `collabvibe.db-wal` | SQLite WAL 文件 | 写前日志，WAL 模式下保存未 checkpoint 的数据 |
+| `collabvibe.db-shm` | SQLite SHM 文件 | WAL 共享内存索引文件 |
+| `config/` | 配置目录 | backend 配置与默认模板 |
+| `logs/` | 日志目录 | 应用运行日志 |
 
 ## SQLite 文件组
 
@@ -36,9 +36,9 @@ status: active
 
 | 文件 | 是否必须一起迁移 | 说明 |
 | --- | --- | --- |
-| `data/codex-im.db` | 是 | 主数据库 |
-| `data/codex-im.db-wal` | 建议是 | 未 checkpoint 的事务日志 |
-| `data/codex-im.db-shm` | 建议是 | WAL 索引状态 |
+| `collabvibe.db` | 是 | 主数据库 |
+| `collabvibe.db-wal` | 建议是 | 未 checkpoint 的事务日志 |
+| `collabvibe.db-shm` | 建议是 | WAL 索引状态 |
 
 ### 迁移原则
 
@@ -78,15 +78,15 @@ status: active
 
 > 历史 migration 中保留过一些旧字段与旧表形态，启动时会自动迁移到当前版本。
 
-## `data/config/` 目录
+## `config/` 目录
 
 当前系统约定的配置文件类型：
 
 | 文件 | 作用 |
 | --- | --- |
-| `data/config/codex.toml` | Codex backend 配置 |
-| `data/config/opencode.json` | OpenCode backend 配置 |
-| `data/config/default.gitignore` | 默认忽略模板 |
+| `config/codex.toml` | Codex backend 配置 |
+| `config/opencode.json` | OpenCode backend 配置 |
+| `config/default.gitignore` | 默认忽略模板 |
 
 > 目录中如果出现额外的 `*_bak`、`copy` 等文件，通常属于人工备份或临时文件，不应作为系统标准配置的一部分写入文档或依赖于部署流程。
 
@@ -98,18 +98,18 @@ status: active
 | 文件格式依 backend 不同而不同 | 当前同时存在 TOML 与 JSON |
 | 可保留备份文件 | 但应避免误被当作生效配置 |
 
-## `data/logs/` 目录
+## `logs/` 目录
 
 当前默认日志文件：
 
 | 文件 | 作用 |
 | --- | --- |
-| `data/logs/app.log` | 主运行日志 |
+| `logs/app.log` | 主运行日志 |
 
 ### 日志初始化逻辑
 
 - `src/server.ts` 在非测试环境下初始化文件日志
-- 日志目录默认由 `createFileLogSink({ dir: "data/logs" })` 创建
+- 日志目录默认由 `createFileLogSink({ dir: "logs" })` 创建
 
 ## 迁移场景
 
@@ -120,9 +120,9 @@ status: active
 | 步骤 | 操作 |
 | --- | --- |
 | 1 | 停止服务 |
-| 2 | 复制 `data/codex-im.db`、`data/codex-im.db-wal`、`data/codex-im.db-shm` |
-| 3 | 复制整个 `data/config/` |
-| 4 | 如需保留历史日志，复制 `data/logs/` |
+| 2 | 复制 `collabvibe.db`、`collabvibe.db-wal`、`collabvibe.db-shm` |
+| 3 | 复制整个 `config/` |
+| 4 | 如需保留历史日志，复制 `logs/` |
 | 5 | 复制 `.env` 或重新配置环境变量 |
 | 6 | 确认新机器上的 `COLLABVIBE_WORKSPACE_CWD` 有效 |
 | 7 | 启动服务，自动执行 migration |
@@ -131,8 +131,8 @@ status: active
 
 可行，但需要同步：
 
-- `data/codex-im.db*`
-- `data/config/`
+- `collabvibe.db*`
+- `config/`
 - `.env`
 
 日志不是状态恢复必需项，但数据库与配置是。
@@ -153,8 +153,8 @@ status: active
 
 | 类别 | 建议 |
 | --- | --- |
-| 数据库 | 定期备份 `data/codex-im.db*` |
-| backend 配置 | 将 `data/config/` 纳入版本化或备份 |
+| 数据库 | 定期备份 `collabvibe.db*` |
+| backend 配置 | 将 `config/` 纳入版本化或备份 |
 | 日志 | 按需轮转与归档 |
 | workspace | 根据项目需要单独备份，不建议与 `data/` 混为一类 |
 
@@ -164,6 +164,6 @@ status: active
 | --- | --- |
 | 服务可启动 | migration 正常执行 |
 | 线程可恢复 | `project_threads`、`user_thread_bindings` 正常 |
-| backend 可用 | `data/config/` 被正确读取 |
+| backend 可用 | `config/` 被正确读取 |
 | 审批和审计可查询 | 主库数据完整 |
-| 日志可写 | `data/logs/` 权限正常 |
+| 日志可写 | `logs/` 权限正常 |

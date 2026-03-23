@@ -126,16 +126,22 @@ export class AcpClient {
   }
 
   async setMode(sessionId: string, mode: "plan" | "code"): Promise<void> {
+    const modeId = mode === "code" ? "build" : "plan";
     this.setLogCorrelation({ turnMode: mode });
-    log.debug({ sessionId, mode }, "sending session/set_mode");
+    log.debug({ sessionId, mode, modeId }, "sending session/set_mode");
     const response = await this.transport.request<Record<string, unknown>>({
       id: `acp-${Date.now()}-mode`,
       method: "session/set_mode",
-      params: { sessionId, modeId: mode }
+      params: { sessionId, modeId }
     });
-    const anyResp = response as unknown as { error?: { message?: string } };
+    const anyResp = response as unknown as {
+      error?: { message?: string; data?: { details?: string } };
+    };
     if (anyResp.error) {
-      throw new Error(`session/set_mode failed: ${anyResp.error.message ?? JSON.stringify(anyResp.error)}`);
+      const detail = anyResp.error.data?.details;
+      throw new Error(
+        `session/set_mode failed: ${anyResp.error.message ?? JSON.stringify(anyResp.error)}${detail ? ` (${detail})` : ""}`
+      );
     }
   }
 

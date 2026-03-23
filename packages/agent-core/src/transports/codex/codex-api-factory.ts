@@ -1,25 +1,26 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
-import type { AgentApi, RuntimeConfig, AgentApiFactory, TurnInputItem } from "../../types";
+import type { AgentApi, RuntimeConfig, AgentApiFactory, AgentTurnInputItem } from "../../types";
+import type { UnifiedAgentEvent } from "../../unified-agent-event";
 import type { ManagedProcess, ProcessSpawnConfig } from "../../agent-process-manager";
-import { MAIN_THREAD_NAME } from "../../constants";
+import { DEFAULT_THREAD_NAME } from "../../constants";
 import { StdioRpcTransport } from "../../stdio-transport";
 import { JsonRpcClient } from "../../rpc-client";
 import type { RpcNotification } from "../../rpc-types";
 import { CodexClient } from "./codex-client";
-import { codexServerRequestToUnifiedEvent } from "./codex-event-bridge";
+import { codexServerRequestToUnifiedEvent, codexEventToUnifiedAgentEvent } from "./codex-event-bridge";
 import type { ModeKind } from "./generated/ModeKind";
 import { createLogger } from "../../../../logger/src/index";
 
 const log = createLogger("codex-factory");
 
 interface ProcessManagerPort {
-  start(chatId: string, runtimeConfig: ProcessSpawnConfig): Promise<ManagedProcess>;
-  stop?(chatId: string): Promise<void>;
+  start(projectId: string, runtimeConfig: ProcessSpawnConfig): Promise<ManagedProcess>;
+  stop?(projectId: string): Promise<void>;
 }
 
 interface CodexApiWithNotifications extends AgentApi {
-  onNotification(handler: (notification: RpcNotification) => void): void;
+  onNotification(handler: (event: UnifiedAgentEvent) => void): void;
   close(): void;
   isAlive(): boolean;
 }
@@ -42,7 +43,7 @@ class CodexProtocolAdapter implements CodexApiWithNotifications {
     /** Model from RuntimeConfig.backend.model — set at factory create() time (I3 compliant) */
     private readonly model: string,
     private readonly rpc: JsonRpcClient,
-    private readonly correlation: { chatId: string; threadName: string }
+    private readonly correlation: { projectId: string; threadName: string }
   ) { }
 
   async threadStart(params: RuntimeConfig): Promise<{ thread: { id: string } }> {
@@ -57,7 +58,7 @@ class CodexProtocolAdapter implements CodexApiWithNotifications {
     });
   }
 
-  async turnStart(params: { threadId: string; traceId?: string; input: TurnInputItem[] }): Promise<{ turn: { id: string } }> {
+  async turnStart(params: { threadId: string; traceId?: string; input: AgentTurnInputItem[] }): Promise<{ turn: { id: string } }> {
     const turnMode = this.pendingMode === "plan" ? "plan" : "code";
     this.transport.setLogCorrelation({ ...this.correlation, turnMode, turnId: undefined });
     this.rpc.setLogCorrelation({ ...this.correlation, turnMode, turnId: undefined });
@@ -127,20 +128,26 @@ class CodexProtocolAdapter implements CodexApiWithNotifications {
     await this.transport.respondToServerRequest(params.callId, { answers: response });
   }
 
-  onNotification(handler: (notification: RpcNotification) => void): void {
-    // Legacy notifications (events without id)
-    this.transport.onNotification(handler);
-    // Server-initiated requests (approvals with id) — pass the UnifiedAgentEvent directly.
-    // DO NOT wrap as { method, params: event } — that causes the pipeline's toUnified()
-    // to re-parse it through the legacy codexEventToUnifiedAgentEvent, which remaps
-    // approvalId incorrectly (falls back to callId instead of the JSON-RPC request id).
+  async turnInterrupt(threadId: string, turnId: string): Promise<void> {
+    await this.client.turnInterrupt(threadId, turnId);
+  }
+
+  onNotification(handler: (event: UnifiedAgentEvent) => void): void {
+    // Convert RpcNotification → UnifiedAgentEvent at L3 boundary.
+    // L2 (pipeline) must not see Codex protocol internals.
+    this.transport.onNotification((notification: RpcNotification) => {
+      const unified = codexEventToUnifiedAgentEvent(notification);
+      if (unified) {
+        handler(unified);
+      }
+    });
+    // Server-initiated requests (approvals with id) — convert to UnifiedAgentEvent.
     this.transport.onServerRequest((request) => {
       const event = codexServerRequestToUnifiedEvent(request);
       if (event) {
-        handler(event as unknown as RpcNotification);
+        handler(event);
       } else {
         // Auto-reject unhandled server requests to prevent turn hang.
-        // e.g. item/tool/call, account/chatgptAuthTokens/refresh
         log.warn({ method: request.method, id: request.id }, "auto-rejecting unhandled server request");
         this.transport.rejectServerRequest(request.id,
           -32601,
@@ -160,7 +167,7 @@ class CodexProtocolAdapter implements CodexApiWithNotifications {
 }
 
 export class CodexProtocolApiFactory implements AgentApiFactory {
-  private readonly metadata = new WeakMap<AgentApi, { bindingChatId: string; threadName?: string }>();
+  private readonly metadata = new WeakMap<AgentApi, { bindingProjectId: string; threadName?: string }>();
 
   constructor(
     private readonly processManager: ProcessManagerPort,
@@ -171,15 +178,15 @@ export class CodexProtocolApiFactory implements AgentApiFactory {
     }
   ) { }
 
-  async create(config: RuntimeConfig & { chatId: string; userId?: string }): Promise<CodexApiWithNotifications> {
-    const projectThreadProcessKey = `${config.chatId}:${config.threadName ?? MAIN_THREAD_NAME}`;
+  async create(config: RuntimeConfig & { projectId: string; userId?: string }): Promise<CodexApiWithNotifications> {
+    const projectThreadProcessKey = `${config.projectId}:${config.threadName ?? DEFAULT_THREAD_NAME}`;
     const process = await this.processManager.start(projectThreadProcessKey, {
       serverCmd: config.serverCmd,
       cwd: config.cwd,
       env: config.env
     });
 
-    const correlation = { chatId: config.chatId, threadName: config.threadName ?? MAIN_THREAD_NAME };
+    const correlation = { projectId: config.projectId, threadName: config.threadName ?? DEFAULT_THREAD_NAME };
     const transport = new StdioRpcTransport(toChildProcess(process), correlation);
     const rpc = new JsonRpcClient(transport, correlation);
     const client = new CodexClient(rpc);
@@ -189,7 +196,7 @@ export class CodexProtocolApiFactory implements AgentApiFactory {
     });
 
     const api = new CodexProtocolAdapter(client, transport, process, config.backend.model, rpc, correlation);
-    this.metadata.set(api, { bindingChatId: config.chatId, threadName: config.threadName });
+    this.metadata.set(api, { bindingProjectId: config.projectId, threadName: config.threadName });
     return api;
   }
 
@@ -199,7 +206,7 @@ export class CodexProtocolApiFactory implements AgentApiFactory {
     }
     const meta = this.metadata.get(api);
     if (meta && this.processManager.stop) {
-      await this.processManager.stop(`${meta.bindingChatId}:${meta.threadName ?? MAIN_THREAD_NAME}`);
+      await this.processManager.stop(`${meta.bindingProjectId}:${meta.threadName ?? DEFAULT_THREAD_NAME}`);
     }
   }
 

@@ -36,18 +36,18 @@ log.info({ port: 3100 }, "server starting");
 
 | 路径 | 说明 |
 | --- | --- |
-| `data/logs/app.log` | 主运行日志 |
-| `data/logs/*.log` | 轮转后的历史日志 |
-| `data/logs/agent-stdio.log` | 协议/stdio 细节日志，见 logging policy |
+| `logs/app.log` | 主运行日志 |
+| `logs/*.log` | 轮转后的历史日志 |
+| `logs/agent-stdio.log` | 协议/stdio 细节日志，见 logging policy |
 
 ```bash
-ls -lah data/logs
-tail -f data/logs/app.log
+ls -lah logs
+tail -f logs/app.log
 ```
 
 ![日志目录占位图](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 `data/logs/` 目录结构截图，建议展示 `app.log` 和轮转文件。
+> Placeholder：在这里插入 `logs/` 目录结构截图，建议展示 `app.log` 和轮转文件。
 
 ## 3. 日志结构
 
@@ -115,7 +115,7 @@ log.info(
 
 | 配置 | 默认值 |
 | --- | --- |
-| 日志目录 | `data/logs` |
+| 日志目录 | `logs` |
 | 单文件大小 | `10MB` |
 | 历史文件数 | `5` |
 | 基础文件名 | `app` |
@@ -123,7 +123,7 @@ log.info(
 可通过环境变量覆盖：
 
 ```bash
-LOG_DIR=data/logs
+LOG_DIR=logs
 LOG_MAX_SIZE=10485760
 LOG_MAX_FILES=5
 ```
@@ -167,8 +167,8 @@ LOG_MAX_FILES=5
 | `backend-config` | backend provider / model / policy 配置变更 |
 
 ```bash
-rg '"name":"orchestrator"' data/logs/app.log
-rg '"turnId":"' data/logs/app.log
+rg '"name":"orchestrator"' logs/app.log
+rg '"turnId":"' logs/app.log
 ```
 
 ## 9. 排障建议
@@ -181,7 +181,7 @@ rg '"turnId":"' data/logs/app.log
 4. 如果是 merge / snapshot / worktree 问题，再看 `git`、`merge`、`commit` 相关日志
 
 ```bash
-tail -f data/logs/app.log | rg 'turnId|traceId|error|warn'
+tail -f logs/app.log | rg 'turnId|traceId|error|warn'
 ```
 
 ![日志排障视频占位图](/placeholders/guide-video-placeholder.svg)

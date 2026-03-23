@@ -4,7 +4,7 @@
  *
  * Minimal Slack Socket Mode bootstrap.
  */
-import { createLogger } from "../../packages/logger/src/index";
+import { createLogger } from "../logging";
 import { SlackSocketHandler, type SlackSocketEvent } from "./channel/index";
 import type { SlackInboundAction } from "./slack-action-handler";
 import type { SlackInboundMessage } from "./slack-message-handler";

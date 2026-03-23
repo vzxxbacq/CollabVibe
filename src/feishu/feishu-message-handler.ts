@@ -28,30 +28,33 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { routeIntent } from "../../services/contracts/im/intent-router";
-import type { PlatformMessageInput } from "../../services/contracts/im/platform-input";
-import { createLogger } from "../../packages/logger/src/index";
+import { routeIntent } from "../common/intent-router";
+import type { PlatformMessageInput } from "../common/platform-input";
+import { createLogger } from "../logging";
 import { FeishuInboundAdapter } from "./channel/index";
-import type { EffectiveRole } from "../../services/orchestrator/src/iam/index";
-import { AuthorizationError } from "../../services/orchestrator/src/iam/index";
-import { OrchestratorError } from "../../services/orchestrator/src/index";
-import { ResultMode } from "../../services/orchestrator/src/index";
-import { PLUGIN_STAGING_SCOPE } from "../../services/orchestrator/src/plugin/index";
-import { dispatchIntent } from "../../services/orchestrator/src/intent/dispatcher";
-import { PlatformInputRouter } from "../../services/orchestrator/src/commands/platform-input-router";
+import type { EffectiveRole } from "../../services/index";
+import { AuthorizationError } from "../../services/index";
+import { OrchestratorError } from "../../services/index";
+import { ResultMode } from "../common/result";
+import type { HandleIntentResult } from "../common/result";
+import { FEISHU_PLUGIN_STAGING_SCOPE } from "./plugin-staging-scope";
+import { dispatchIntent } from "../common/dispatcher";
+import { PlatformInputRouter } from "../common/platform-input-router";
 import {
   handleUserIntentOutput,
   handleAdminIntentOutput
-} from "../../services/orchestrator/src/commands/platform-commands";
-import { createProject } from "../../services/orchestrator/src/commands/platform-commands";
+} from "../common/platform-commands";
+import { createProject } from "../common/platform-commands";
 
 import type { FeishuHandlerDeps } from "./types";
 import { resolveHelpCard, resolveHelpSkillCard, sendThreadNewForm } from "./shared-handlers";
-import { listSkills, installSkill, removeSkill } from "../../services/orchestrator/src/commands/platform-commands";
+import { listSkills, installSkill, removeSkill } from "../common/platform-commands";
 import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 import { consumePendingFeishuSkillInstall, peekPendingFeishuSkillInstall, stageFeishuSkillInstall } from "./skill-file-install-state";
 import { getFeishuMessageHandlerStrings } from "./feishu-message-handler.strings";
 import { FeishuOutputGateway } from "./platform-output-dispatcher";
+import { resolveProjectByChatId } from "../common/project-resolution";
+import { textNotification } from "../common/output-helpers";
 
 const log = createLogger("handler");
 const feishuInboundAdapter = new FeishuInboundAdapter();
@@ -99,8 +102,8 @@ function parseFileContent(rawContent: string): { fileKey?: string; fileName?: st
 function requireBoundProject(
   deps: FeishuHandlerDeps,
   chatId: string
-): NonNullable<ReturnType<FeishuHandlerDeps["findProjectByChatId"]>> {
-  const project = deps.findProjectByChatId(chatId);
+){
+  const project = resolveProjectByChatId(deps.api, chatId);
   if (!project) {
     throw new Error(`project binding not found for chatId=${chatId}`);
   }
@@ -112,11 +115,11 @@ function resolveRequiredRole(
   userId: string,
   projectId?: string
 ): EffectiveRole {
-  const role = deps.roleResolver.resolve(userId, projectId, { autoRegister: true });
+  const role = deps.api.resolveRole({ userId, projectId });
   if (!role) {
     throw new Error(`role resolution failed for userId=${userId} projectId=${projectId ?? "global"}`);
   }
-  return role;
+  return role as EffectiveRole;
 }
 
 function isSupportedSkillArchiveName(fileName?: string): boolean {
@@ -157,10 +160,10 @@ async function handlePendingSkillFileUpload(
   const pending = peekPendingFeishuSkillInstall(input.chatId, input.userId);
   if (!pending) return false;
   consumePendingFeishuSkillInstall(input.chatId, input.userId);
-  if (!deps.pluginService.allocateStagingDir) {
+  if (!deps.api.allocateStagingDir) {
     throw new Error(s.skillStagingUnavailable);
   }
-  const tempDir = await deps.pluginService.allocateStagingDir(PLUGIN_STAGING_SCOPE.FEISHU_UPLOAD, input.userId);
+  const tempDir = await deps.api.allocateStagingDir(FEISHU_PLUGIN_STAGING_SCOPE, input.userId);
   await mkdir(tempDir, { recursive: true });
   const dispatcher = new FeishuOutputGateway(deps);
   try {
@@ -173,16 +176,16 @@ async function handlePendingSkillFileUpload(
       targetDir: tempDir,
       fileName: input.fileName,
     });
-    if (!deps.pluginService.inspectLocalSource) {
+    if (!deps.api.inspectLocalSource) {
       throw new Error(s.skillManifestUnavailable);
     }
-    const inspected = await deps.pluginService.inspectLocalSource({
+    const inspected = await deps.api.inspectLocalSource({
       localPath: downloaded.localPath,
       sourceType: "feishu-upload",
       preferredPluginName: pending.pluginName,
       extractionDir: join(tempDir, "resolved-skill"),
     });
-    const project = deps.findProjectByChatId(input.chatId);
+    const project = resolveProjectByChatId(deps.api, input.chatId);
     stageFeishuSkillInstall({
       chatId: input.chatId,
       userId: input.userId,
@@ -197,7 +200,7 @@ async function handlePendingSkillFileUpload(
         void rm(staged.tempDir, { recursive: true, force: true }).catch((error) => {
           log.warn({ chatId: input.chatId, userId: input.userId, err: error instanceof Error ? error.message : String(error) }, "skill install temp dir cleanup failed");
         });
-        void dispatcher.dispatch(input.chatId, { kind: "text", text: s.skillFileInstallTimeoutUploaded });
+        void dispatcher.dispatch(input.chatId, textNotification(s.skillFileInstallTimeoutUploaded));
       },
     });
     const confirmCard = deps.platformOutput.buildAdminSkillFileConfirmCard
@@ -217,14 +220,12 @@ async function handlePendingSkillFileUpload(
       await dispatcher.dispatch(input.chatId, { kind: "help_panel", panel: confirmCard });
     } else {
       await dispatcher.dispatch(input.chatId, {
-        kind: "text",
-        text: s.skillFileInstallReceived(downloaded.originalName ?? downloaded.localPath)
+        ...textNotification(s.skillFileInstallReceived(downloaded.originalName ?? downloaded.localPath))
       });
     }
   } catch (error) {
     await dispatcher.dispatch(input.chatId, {
-      kind: "text",
-      text: s.skillFileInstallFailed(error instanceof Error ? error.message : String(error))
+      ...textNotification(s.skillFileInstallFailed(error instanceof Error ? error.message : String(error)))
     });
     await rm(tempDir, { recursive: true, force: true }).catch((error) => {
       log.warn({ chatId: input.chatId, userId: input.userId, err: error instanceof Error ? error.message : String(error) }, "skill upload temp dir cleanup failed");
@@ -247,10 +248,10 @@ async function handleNonCodexIntent(
     const cwd = String(intent.args.cwd ?? "").replace(/[<>'";&|`$\\]/g, "");
     const result = await createProject(deps, chatId, userId, { name, cwd });
     if (result.success && result.project) {
-      await dispatcher.dispatch(chatId, { kind: "text", text: OP.PROJECT_CREATED(result.project) });
+      await dispatcher.dispatch(chatId, textNotification(OP.PROJECT_CREATED(result.project)));
       await sendProjectHelpCard(deps, chatId, userId);
     } else {
-      await dispatcher.dispatch(chatId, { kind: "text", text: `⚠️ ${result.message}` });
+      await dispatcher.dispatch(chatId, textNotification(`⚠️ ${result.message}`));
     }
     return;
   }
@@ -261,7 +262,7 @@ async function handleNonCodexIntent(
     return;
   }
 
-  await dispatcher.dispatch(chatId, { kind: "text", text: OP.FALLBACK_HELP });
+  await dispatcher.dispatch(chatId, textNotification(OP.FALLBACK_HELP));
 }
 
 async function handleSkillIntent(
@@ -282,16 +283,16 @@ async function handleSkillIntent(
     case "SKILL_INSTALL": {
       const source = String(intent.args.source ?? "");
       if (!source) {
-        await dispatcher.dispatch(chatId, { kind: "text", text: s.skillNameRequired });
+        await dispatcher.dispatch(chatId, textNotification(s.skillNameRequired));
         return;
       }
       try {
-        const project = deps.findProjectByChatId(chatId);
-        const def = await deps.pluginService.install(source, project?.id, userId);
+        const project = resolveProjectByChatId(deps.api, chatId);
+        const def = await deps.api.installSkill({ source, projectId: project?.id, userId, actorId: userId });
         await deps.platformOutput.sendSkillOperation(chatId, {
           kind: "skill_operation",
           action: "installed",
-          skill: { name: def.name, description: def.description, installed: true }
+          skill: { name: def.name ?? source, description: def.description ?? "", installed: true }
         });
       } catch (error) {
         await deps.platformOutput.sendSkillOperation(chatId, {
@@ -305,14 +306,14 @@ async function handleSkillIntent(
     case "SKILL_REMOVE": {
       const name = String(intent.args.name ?? "");
       if (!name) {
-        await dispatcher.dispatch(chatId, { kind: "text", text: s.pluginNameRequired });
+        await dispatcher.dispatch(chatId, textNotification(s.pluginNameRequired));
         return;
       }
       try {
-        const project = deps.findProjectByChatId(chatId);
+        const project = resolveProjectByChatId(deps.api, chatId);
         const removed = project?.id
-          ? await deps.pluginService.unbindFromProject?.(project.id, name)
-          : await deps.pluginService.remove(name);
+          ? await deps.api.unbindSkillFromProject({ projectId: project.id, skillName: name, actorId: userId })
+          : await deps.api.removeSkill({ name, actorId: userId });
         if (removed) {
           await deps.platformOutput.sendSkillOperation(chatId, {
             kind: "skill_operation",
@@ -320,12 +321,11 @@ async function handleSkillIntent(
             skill: { name, description: "", installed: false }
           });
         } else {
-          await dispatcher.dispatch(chatId, { kind: "text", text: s.pluginNotFound(name) });
+          await dispatcher.dispatch(chatId, textNotification(s.pluginNotFound(name)));
         }
       } catch (error) {
         await dispatcher.dispatch(chatId, {
-          kind: "text",
-          text: s.removeFailed(error instanceof Error ? error.message : String(error))
+          ...textNotification(s.removeFailed(error instanceof Error ? error.message : String(error)))
         });
       }
       return;
@@ -400,19 +400,19 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
 
     // @bot 空消息 → 显示 help card
     if (!text) {
-      const project = deps.findProjectByChatId(chatId);
-      deps.roleResolver.resolve(userId, project?.id, { autoRegister: true });
+      const project = resolveProjectByChatId(deps.api, chatId);
+      deps.api.resolveRole({ userId, projectId: project?.id });
       const card = await resolveHelpCard(deps, chatId, userId);
       const dispatcher = new FeishuOutputGateway(deps);
       await dispatcher.dispatch(chatId, { kind: "help_panel", panel: card });
       return;
     }
 
-    const project = deps.findProjectByChatId(chatId);
+    const project = resolveProjectByChatId(deps.api, chatId);
     if (project?.status === "disabled") {
       const s = getFeishuMessageHandlerStrings(deps.config.locale);
       const dispatcher = new FeishuOutputGateway(deps);
-      await dispatcher.dispatch(chatId, { kind: "text", text: s.projectDisabled });
+      await dispatcher.dispatch(chatId, textNotification(s.projectDisabled));
       return;
     }
     const message: Parameters<typeof routeIntent>[0] = {
@@ -460,7 +460,7 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
 
     // Audit: 记录用户命令/消息
     if (boundProject) {
-      deps.auditService?.append({
+      log.info({
         projectId: boundProject.id,
       actorId: userId,
       action: `user_message:${intent.intent}`,
@@ -468,8 +468,6 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
       traceId,
       correlationId: traceId,
       detailJson: { chatId, text: text.slice(0, 200), type: message.type }
-      }).catch((error) => {
-        requestLog.warn({ err: error instanceof Error ? error.message : String(error) }, "audit append failed");
       });
     }
 
@@ -481,21 +479,16 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     let displayBackend: string | undefined;
     let displayModel: string | undefined;
     if (userId && intent.intent === "TURN_START") {
-      const selected = await deps.orchestrator.getUserActiveThread(chatId, userId);
+      const selected = await deps.api.getUserActiveThread({ projectId: boundProject!.id, userId });
       if (selected) {
         preflightThreadId = selected.threadId;
         preflightThreadName = selected.threadName;
 
-        if (deps.orchestrator.isPendingApproval(chatId, selected.threadName)) {
-          await dispatcher.dispatch(chatId, { kind: "text", text: GUARD.PENDING_APPROVAL(selected.threadName) });
+        if (deps.api.isPendingApproval({ projectId: boundProject!.id, threadName: selected.threadName })) {
+          await dispatcher.dispatch(chatId, textNotification(GUARD.PENDING_APPROVAL(selected.threadName)));
           return;
         }
 
-        const threadState = deps.orchestrator.getConversationState(chatId, selected.threadName);
-        if (threadState === "RUNNING") {
-          await dispatcher.dispatch(chatId, { kind: "text", text: GUARD.THREAD_RUNNING(selected.threadName) });
-          return;
-        }
 
         // Capture backend/model for per-turn card display (applied after turn ID is known)
         displayBackend = selected.backend.backendId;
@@ -509,6 +502,8 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     const dispatch = await dispatchIntent(deps, {
       projectId: boundProject?.id ?? "", chatId, userId, text,
       traceId: message.traceId ?? message.eventId,
+      platform: "feishu",
+      messageId,
       messageType: message.type,
       role
     }, intent);
@@ -553,8 +548,8 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     }
 
     if (result.mode === ResultMode.THREAD_LIST) {
-      const threads = await deps.orchestrator.handleThreadListEntries(chatId);
-      const activeBinding = userId ? await deps.orchestrator.getUserActiveThread(chatId, userId) : null;
+      const threads = await deps.api.listThreads({ projectId: boundProject!.id, actorId: userId });
+      const activeBinding = userId ? await deps.api.getUserActiveThread({ projectId: boundProject!.id, userId }) : null;
       await deps.platformOutput.sendThreadOperation(chatId, {
         kind: "thread_operation",
         action: "listed",
@@ -571,13 +566,19 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     }
 
     if (result.mode === ResultMode.MERGE_PREVIEW) {
-      await deps.platformOutput.sendMergeOperation(chatId, {
-        kind: "thread_merge",
-        action: "preview",
-        branchName: result.id,
-        baseBranch: typeof (result as { baseBranch?: unknown }).baseBranch === "string" ? (result as { baseBranch: string }).baseBranch : "main",
-        message: s.mergePreviewPending,
-        diffStats: result.diffStats
+      await dispatcher.dispatch(chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "preview",
+            branchName: result.id,
+            baseBranch: typeof (result as { baseBranch?: unknown }).baseBranch === "string" ? (result as { baseBranch: string }).baseBranch : "main",
+            message: s.mergePreviewPending,
+            diffStats: result.diffStats
+          }
+        }
       });
       return;
     }
@@ -591,21 +592,26 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
       const conflictList = result.conflicts.map(f => `• \`${f}\``).join("\n");
       const dispatcher = new FeishuOutputGateway(deps);
       await dispatcher.dispatch(chatId, {
-        kind: "text",
-        text: s.mergeResolving(result.conflicts.length, conflictList)
+        ...textNotification(s.mergeResolving(result.conflicts.length, conflictList))
       });
       return;
     }
 
     if (result.mode === ResultMode.MERGE_CONFLICT) {
-      await deps.platformOutput.sendMergeOperation(chatId, {
-        kind: "thread_merge",
-        action: "conflict",
-        branchName: result.id,
-        baseBranch: typeof (result as { baseBranch?: unknown }).baseBranch === "string" ? (result as { baseBranch: string }).baseBranch : "main",
-        message: result.message ?? (result.resolverThread ? s.mergeConflictDetected : s.mergeFailed),
-        conflicts: result.conflicts,
-        resolverThread: result.resolverThread
+      await dispatcher.dispatch(chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "conflict",
+            branchName: result.id,
+            baseBranch: typeof (result as { baseBranch?: unknown }).baseBranch === "string" ? (result as { baseBranch: string }).baseBranch : "main",
+            message: result.message ?? (result.resolverThread ? s.mergeConflictDetected : s.mergeFailed),
+            conflicts: result.conflicts,
+            resolverThread: result.resolverThread
+          }
+        }
       });
 
       // Bind event pipeline for the resolver thread so its agent events are routed to card updates
@@ -620,31 +626,41 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
         const baseCwd = projectForMerge.cwd;
         const resolverCwd = `${baseCwd}--${resolverThreadName}`;
 
-        // Record the turn start for snapshot/revert support
-        const { turnNumber: resolverTurnNumber } = await deps.orchestrator.recordTurnStart(projectForMerge.id, chatId, resolverThreadName, resolverThreadId, result.resolverThread.turnId, resolverCwd, userId, traceId);
-        deps.platformOutput.setCardThreadName(chatId, resolverTurnId, resolverThreadName, resolverTurnNumber);
+        // NOTE: turn start persistence/snapshot are established by L2 TurnLifecycleService
+        deps.platformOutput.setCardThreadName(chatId, resolverTurnId, resolverThreadName, 0);
         requestLog.info({ resolverThreadId, resolverThreadName, resolverTurnId }, "merge-resolver turn started");
       }
       return;
     }
 
     if (result.mode === ResultMode.MERGE_SUCCESS) {
-      await deps.platformOutput.sendMergeOperation(chatId, {
-        kind: "thread_merge",
-        action: "success",
-        branchName: result.id,
-        baseBranch: typeof (result as { baseBranch?: unknown }).baseBranch === "string" ? (result as { baseBranch: string }).baseBranch : "main",
-        message: result.message ?? s.mergeDone
+      await dispatcher.dispatch(chatId, {
+        kind: "merge_event",
+        data: {
+          action: "resolver_complete",
+          operation: {
+            kind: "merge_operation",
+            action: "success",
+            branchName: result.id,
+            baseBranch: typeof (result as { baseBranch?: unknown }).baseBranch === "string" ? (result as { baseBranch: string }).baseBranch : "main",
+            message: result.message ?? s.mergeDone
+          }
+        }
       });
       return;
     }
 
     if (result.mode === ResultMode.THREAD_SYNC_TEXT) {
-      await dispatcher.dispatch(chatId, { kind: "text", text: result.text });
+      await dispatcher.dispatch(chatId, textNotification(result.text));
       return;
     }
 
     if (result.mode !== ResultMode.TURN) {
+      return;
+    }
+
+    if (result.duplicate) {
+      requestLog.info({ turnId: result.id, dedupHit: true }, "turn start skipped: duplicate callId");
       return;
     }
 
@@ -658,12 +674,11 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     const turnLog = requestLog.child({ threadId, threadName, turnId: result.id });
     turnLog.info("turn started");
 
-    const baseCwd = projectForTurn.cwd;
-    const turnCwd = threadName !== threadId ? `${baseCwd}--${threadName}` : baseCwd;
-    const { turnNumber } = await deps.orchestrator.recordTurnStart(projectForTurn.id, chatId, threadName, threadId, result.id, turnCwd, userId, traceId);
-
+    // NOTE: turn start persistence is handled by L2 TurnLifecycleService after turn/start succeeds;
+    // Path B EventPipeline only handles streaming sync/finalization.
+    // L1 only sets card UI state below.
     if (threadName !== threadId) {
-      deps.platformOutput.setCardThreadName(chatId, result.id, threadName, turnNumber);
+      deps.platformOutput.setCardThreadName(chatId, result.id, threadName, 0);
     }
     // Set per-turn backend/model info on the card (not shared across turns)
     if (displayBackend || displayModel) {
@@ -676,12 +691,6 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     }
     // Set prompt summary from user's text (header shows what user asked)
     deps.platformOutput.setCardPromptSummary(chatId, result.id, normalizedText);
-    await deps.orchestrator.updateTurnMetadata(chatId, result.id, {
-      promptSummary: normalizedText,
-      backendName: displayBackend ?? undefined,
-      modelName: displayModel ?? undefined,
-      turnMode: isPlanTurn ? "plan" : undefined
-    });
     turnLog.info("eventPipeline bound");
   } catch (error) {
     const { GUARD, ERR, ORCHESTRATOR_ERROR_MAP } = getFeishuNotifyCatalog(deps.config.locale);
@@ -693,7 +702,7 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
       requestLog.info({ err: error.message }, "authorization denied");
       if (chatId) {
         const dispatcher = new FeishuOutputGateway(deps);
-        try { await dispatcher.dispatch(chatId, { kind: "text", text: GUARD.NO_PERMISSION }); } catch (notifyError) {
+        try { await dispatcher.dispatch(chatId, textNotification(GUARD.NO_PERMISSION)); } catch (notifyError) {
           requestLog.warn({ err: notifyError instanceof Error ? notifyError.message : String(notifyError) }, "authorization denied notify failed");
         }
       }
@@ -705,7 +714,7 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
       if (chatId) {
         const friendly = ORCHESTRATOR_ERROR_MAP[error.code];
         const dispatcher = new FeishuOutputGateway(deps);
-        try { await dispatcher.dispatch(chatId, { kind: "text", text: friendly ?? ERR.generic(error.message) }); } catch (notifyError) {
+        try { await dispatcher.dispatch(chatId, textNotification(friendly ?? ERR.generic(error.message))); } catch (notifyError) {
           requestLog.warn({ err: notifyError instanceof Error ? notifyError.message : String(notifyError), code: error.code }, "orchestrator error notify failed");
         }
       }
@@ -715,7 +724,7 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     requestLog.error({ err: errorMsg }, "handler error");
     if (chatId) {
       const dispatcher = new FeishuOutputGateway(deps);
-      try { await dispatcher.dispatch(chatId, { kind: "text", text: ERR.generic(errorMsg) }); } catch (notifyError) {
+      try { await dispatcher.dispatch(chatId, textNotification(ERR.generic(errorMsg))); } catch (notifyError) {
         requestLog.warn({ err: notifyError instanceof Error ? notifyError.message : String(notifyError) }, "generic error notify failed");
       }
     }

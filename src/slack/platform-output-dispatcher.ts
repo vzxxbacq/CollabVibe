@@ -1,4 +1,4 @@
-import type { PlatformOutput, OutputGateway } from "../../services/contracts/im/platform-output";
+import type { PlatformOutput, OutputGateway } from "../common/platform-output";
 import { SlackRenderer } from "./channel/index";
 import type { SlackHelpPanelPayload } from "./shared-handlers";
 import type { SlackHandlerDeps } from "./types";
@@ -8,13 +8,13 @@ export class SlackOutputGateway implements OutputGateway {
 
   constructor(private readonly deps: SlackHandlerDeps) {}
 
-  async dispatch(chatId: string, output: PlatformOutput): Promise<void> {
+  private resolveChatId(targetId: string): string {
+    return this.deps.api.getProjectRecord(targetId)?.chatId || targetId;
+  }
+
+  async dispatch(targetId: string, output: PlatformOutput): Promise<void> {
+    const chatId = this.resolveChatId(targetId);
     switch (output.kind) {
-      case "text": {
-        const rendered = this.renderer.renderText(output.text);
-        await this.deps.slackMessageClient.postMessage({ channel: chatId, blocks: rendered.blocks, text: rendered.text });
-        return;
-      }
       case "content":
         await this.deps.platformOutput.appendContent(chatId, output.data.turnId, output.data.delta);
         return;
@@ -72,22 +72,33 @@ export class SlackOutputGateway implements OutputGateway {
       case "turn_summary":
         await this.deps.platformOutput.completeTurn(chatId, output.data);
         return;
-      case "thread_merge":
-        await this.deps.platformOutput.sendMergeOperation(chatId, output.data);
+      case "error": {
+        const rendered = this.renderer.renderNotification({
+          kind: "notification",
+          threadId: "",
+          turnId: output.data.turnId,
+          category: "error",
+          title: output.data.code,
+          detail: output.data.message,
+        });
+        await this.deps.slackMessageClient.postMessage({ channel: chatId, blocks: rendered.blocks, text: rendered.text });
         return;
-      case "merge_review":
-        await this.deps.platformOutput.sendFileReview(chatId, output.data);
-        return;
-      case "merge_summary":
-        await this.deps.platformOutput.sendMergeSummary(chatId, output.data);
-        return;
-      case "merge_timeout":
+      }
+      case "merge_event":
+        if (output.data.action === "resolver_done") {
+          await this.deps.platformOutput.sendFileReview(chatId, output.data.review);
+          return;
+        }
+        if (output.data.action === "resolver_complete") {
+          await this.deps.platformOutput.sendMergeOperation(chatId, output.data.operation);
+          return;
+        }
         await this.deps.platformOutput.notify(chatId, {
           kind: "notification",
           threadId: "",
           category: "warning",
           title: "⏰ 合并审阅已超时",
-          detail: `分支 ${output.branchName} 的合并审阅已超时，已自动取消`,
+          detail: `分支 ${output.data.branchName} 的合并审阅已超时，已自动取消`,
         });
         return;
       case "help_panel":

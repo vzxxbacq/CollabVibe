@@ -2,7 +2,7 @@
 
 > [!CAUTION]
 > 本文档描述 L2 orchestrator 的**目标架构**，是 `core-api.md` 的内部实现参考。
-> L3 各包的内部结构见 [`l3-internals.md`](file:///home/yindu/CollabVibe/docs/01-architecture/l3-internals.md)。
+> L3 各包的内部结构见 [`l3-internals.md`](./l3-internals.md)。
 > 当前实现与目标存在差距（见末尾「现状 → 目标 差异表」）。
 
 ---
@@ -165,7 +165,7 @@ EventPipeline (路径 B — 独立于 API Facade)
 
 > 每个 Service 允许 import 的 L3 API 的完整清单。
 > Service 只通过 L3 公开 API（`index.ts`）import，不直接引用内部文件。
-> 详见 [`l3-internals.md`](file:///home/yindu/CollabVibe/docs/01-architecture/l3-internals.md)
+> 详见 [`l3-internals.md`](./l3-internals.md)
 
 ### 5.1 agent-core imports
 
@@ -494,7 +494,7 @@ export type { MergeResult, IMError, IMMergeEvent } from "../contracts";
 ## 10. 目标文件结构
 
 ```
-services/orchestrator/src/
+services/
 ├── api/
 │   ├── orchestrator-api.ts          [NEW] OrchestratorApi 接口实现（Facade）
 │   └── api-guard.ts                 [NEW] withApiGuards() + Permission + API_GUARDS

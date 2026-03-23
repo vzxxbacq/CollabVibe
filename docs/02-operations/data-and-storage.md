@@ -18,11 +18,11 @@ The current `data/` structure in the repository is:
 
 | Path | Type | Purpose |
 | --- | --- | --- |
-| `data/codex-im.db` | Main SQLite database | Primary data file |
-| `data/codex-im.db-wal` | SQLite WAL file | Write-ahead log with uncheckpointed data in WAL mode |
-| `data/codex-im.db-shm` | SQLite SHM file | Shared-memory index file for WAL |
-| `data/config/` | Config directory | Backend configuration and default templates |
-| `data/logs/` | Log directory | Application runtime logs |
+| `collabvibe.db` | Main SQLite database | Primary data file |
+| `collabvibe.db-wal` | SQLite WAL file | Write-ahead log with uncheckpointed data in WAL mode |
+| `collabvibe.db-shm` | SQLite SHM file | Shared-memory index file for WAL |
+| `config/` | Config directory | Backend configuration and default templates |
+| `logs/` | Log directory | Application runtime logs |
 
 ## SQLite file set
 
@@ -36,9 +36,9 @@ Because of that, the database is usually a file set rather than a single file:
 
 | File | Must migrate together? | Description |
 | --- | --- | --- |
-| `data/codex-im.db` | Yes | Main database |
-| `data/codex-im.db-wal` | Recommended | Transaction log that may still contain uncheckpointed data |
-| `data/codex-im.db-shm` | Recommended | WAL index state |
+| `collabvibe.db` | Yes | Main database |
+| `collabvibe.db-wal` | Recommended | Transaction log that may still contain uncheckpointed data |
+| `collabvibe.db-shm` | Recommended | WAL index state |
 
 ### Migration principles
 
@@ -78,15 +78,15 @@ Current migrations create or maintain the following tables:
 
 > Historical migrations kept some older fields and table shapes. Startup automatically migrates them to the current version.
 
-## `data/config/` directory
+## `config/` directory
 
 The current system expects the following configuration file types:
 
 | File | Purpose |
 | --- | --- |
-| `data/config/codex.toml` | Codex backend configuration |
-| `data/config/opencode.json` | OpenCode backend configuration |
-| `data/config/default.gitignore` | Default ignore template |
+| `config/codex.toml` | Codex backend configuration |
+| `config/opencode.json` | OpenCode backend configuration |
+| `config/default.gitignore` | Default ignore template |
 
 > If the directory contains extra files such as `*_bak` or `copy`, they are usually manual backups or temporary files and should not be documented as standard configuration or relied on by deployment flows.
 
@@ -98,18 +98,18 @@ The current system expects the following configuration file types:
 | File format depends on the backend | TOML and JSON are both present today |
 | Backup files may exist | But they should not be mistaken for active configuration |
 
-## `data/logs/` directory
+## `logs/` directory
 
 Current default log files:
 
 | File | Purpose |
 | --- | --- |
-| `data/logs/app.log` | Main runtime log |
+| `logs/app.log` | Main runtime log |
 
 ### Log initialization logic
 
 - `src/server.ts` initializes file logging outside test environments
-- The log directory is created by default via `createFileLogSink({ dir: "data/logs" })`
+- The log directory is created by default via `createFileLogSink({ dir: "logs" })`
 
 ## Migration scenarios
 
@@ -120,9 +120,9 @@ Recommended steps:
 | Step | Action |
 | --- | --- |
 | 1 | Stop the service |
-| 2 | Copy `data/codex-im.db`, `data/codex-im.db-wal`, and `data/codex-im.db-shm` |
-| 3 | Copy the entire `data/config/` directory |
-| 4 | If you need historical logs, copy `data/logs/` |
+| 2 | Copy `collabvibe.db`, `collabvibe.db-wal`, and `collabvibe.db-shm` |
+| 3 | Copy the entire `config/` directory |
+| 4 | If you need historical logs, copy `logs/` |
 | 5 | Copy `.env` or reconfigure environment variables |
 | 6 | Confirm `COLLABVIBE_WORKSPACE_CWD` is valid on the new machine |
 | 7 | Start the service; migrations run automatically |
@@ -131,8 +131,8 @@ Recommended steps:
 
 This is possible, but you still need to migrate:
 
-- `data/codex-im.db*`
-- `data/config/`
+- `collabvibe.db*`
+- `config/`
 - `.env`
 
 Logs are not required for state recovery, but the database and configuration are.
@@ -153,8 +153,8 @@ Recommended steps:
 
 | Category | Recommendation |
 | --- | --- |
-| Database | Regularly back up `data/codex-im.db*` |
-| Backend config | Version or back up `data/config/` |
+| Database | Regularly back up `collabvibe.db*` |
+| Backend config | Version or back up `config/` |
 | Logs | Rotate and archive as needed |
 | Workspace | Back up separately as needed by the project; do not treat it as the same class as `data/` |
 
@@ -164,6 +164,6 @@ Recommended steps:
 | --- | --- |
 | Service can start | Migration executes normally |
 | Threads can recover | `project_threads` and `user_thread_bindings` are valid |
-| Backend is usable | `data/config/` is read correctly |
+| Backend is usable | `config/` is read correctly |
 | Approvals and audit are queryable | Main database data is complete |
-| Logs are writable | `data/logs/` permissions are correct |
+| Logs are writable | `logs/` permissions are correct |

@@ -17,7 +17,9 @@ import {
   listSnapshots as coreListSnapshots,
   resolveModelList,
   resolveThreadNewFormData
-} from "../../services/orchestrator/src/commands/platform-commands";
+} from "../common/platform-commands";
+import { resolveProjectByChatId } from "../common/project-resolution";
+import { textNotification } from "../common/output-helpers";
 import type { SlackHandlerDeps } from "./types";
 
 export interface SlackHelpPanelPayload {
@@ -86,12 +88,12 @@ export async function buildSlackHelpPanelPayload(
   panel: SlackHelpPanel,
   messageTs?: string
 ): Promise<SlackHelpPanelPayload | null> {
-  const project = deps.findProjectByChatId(chatId);
+  const project = resolveProjectByChatId(deps.api, chatId);
   if (!project) {
     return null;
   }
 
-  const activeThread = await deps.orchestrator.getUserActiveThread(chatId, userId);
+  const activeThread = project ? await deps.api.getUserActiveThread({ projectId: project.id, userId }) : null;
   const currentThread = activeThread?.threadName ?? "main";
   const blocks = panel === "help_threads"
     ? await buildThreadPanel(deps, chatId, userId, currentThread)
@@ -135,8 +137,9 @@ async function buildThreadPanel(
   userId: string,
   currentThread: string
 ) {
-  const threads = await deps.orchestrator.handleThreadListEntries(chatId);
-  const activeBinding = await deps.orchestrator.getUserActiveThread(chatId, userId);
+  const project = resolveProjectByChatId(deps.api, chatId);
+  const threads = await deps.api.listThreads({ projectId: project!.id, actorId: userId });
+  const activeBinding = await deps.api.getUserActiveThread({ projectId: project!.id, userId });
   const lines = threads.length > 0
     ? threads.map((thread) => {
       const active = activeBinding?.threadId === thread.threadId ? " <- active" : "";
@@ -163,7 +166,16 @@ async function buildHistoryPanel(
   userId: string,
   currentThread: string
 ) {
-  const { snapshots, hasBinding, threadName } = await coreListSnapshots(deps, chatId, userId);
+  const project = resolveProjectByChatId(deps.api, chatId);
+  if (!project) {
+    return [
+      header("Snapshot History"),
+      section("_This Slack channel is not bound to a project yet._"),
+      divider(),
+      actions("help_history_actions", [navButton("Back", "help_home")])
+    ];
+  }
+  const { snapshots, hasBinding, threadName } = await coreListSnapshots(deps, project.id, userId);
   const targetThread = hasBinding ? threadName : currentThread;
   const lines = snapshots.length > 0
     ? snapshots.slice(-8).reverse().map((snapshot) => {
@@ -183,10 +195,10 @@ async function buildHistoryPanel(
 }
 
 async function buildSkillsPanel(deps: SlackHandlerDeps) {
-  const skills = await deps.pluginService.getInstallablePlugins();
+  const skills = await deps.api.listSkills();
   const lines = skills.length > 0
     ? skills.slice(0, 12).map((skill) =>
-      `• *${skill.name ?? skill.pluginName ?? "unknown"}*${skill.enabled ? " (installed)" : ""}\n  ${skill.description ?? "No description"}`
+      `• *${skill.name ?? "unknown"}*${skill.enabled ? " (installed)" : ""}\n  ${skill.description ?? "No description"}`
     ).join("\n")
     : "_No installable skills available._";
 
@@ -200,7 +212,7 @@ async function buildSkillsPanel(deps: SlackHandlerDeps) {
 }
 
 async function buildBackendsPanel(deps: SlackHandlerDeps) {
-  const backends = await deps.orchestrator.listAvailableBackends();
+  const backends = await deps.api.listAvailableBackends();
   const lines = backends.length > 0
     ? backends.map((backend) => {
       const models = backend.models?.length ? backend.models.join(", ") : "no models";
@@ -218,7 +230,8 @@ async function buildBackendsPanel(deps: SlackHandlerDeps) {
 }
 
 async function buildTurnsPanel(deps: SlackHandlerDeps, chatId: string) {
-  const turns = await deps.orchestrator.listTurns(chatId, 10);
+  const project = resolveProjectByChatId(deps.api, chatId);
+  const turns = project ? await deps.api.listTurns({ projectId: project.id, limit: 10 }) : [];
   const lines = turns.length > 0
     ? turns.map((turn) =>
       `• \`${turn.turnId.slice(0, 8)}\` · *${turn.threadName}* · ${turn.status}${turn.promptSummary ? `\n  ${turn.promptSummary}` : ""}`
@@ -238,20 +251,26 @@ export async function sendProjectList(deps: SlackHandlerDeps, chatId: string): P
   const dispatcher = new SlackOutputGateway(deps);
   const projects = listProjects(deps);
   if (projects.length === 0) {
-    await dispatcher.dispatch(chatId, { kind: "text", text: "No projects are bound yet." });
+    await dispatcher.dispatch(chatId, textNotification("No projects are bound yet."));
     return;
   }
   const lines = projects.map((project) => `• *${project.name}* \`${project.id}\`  ${project.cwd}`);
-  await dispatcher.dispatch(chatId, { kind: "text", text: lines.join("\n") });
+  await dispatcher.dispatch(chatId, textNotification(lines.join("\n")));
 }
 
 export async function sendSnapshotList(deps: SlackHandlerDeps, chatId: string, userId: string): Promise<void> {
   const dispatcher = new SlackOutputGateway(deps);
-  const { snapshots, threadId, threadName, hasBinding } = await coreListSnapshots(deps, chatId, userId);
+  const project = resolveProjectByChatId(deps.api, chatId);
+  if (!project) {
+    await dispatcher.dispatch(chatId, {
+      ...textNotification("This Slack channel is not bound to a project yet.")
+    });
+    return;
+  }
+  const { snapshots, threadId, threadName, hasBinding } = await coreListSnapshots(deps, project.id, userId);
   if (snapshots.length === 0) {
     await dispatcher.dispatch(chatId, {
-      kind: "text",
-      text: hasBinding ? `No snapshots yet for *${threadName}*.` : "No snapshots yet on the main thread."
+      ...textNotification(hasBinding ? `No snapshots yet for *${threadName}*.` : "No snapshots yet on the main thread.")
     });
     return;
   }
@@ -278,7 +297,11 @@ export async function sendSnapshotList(deps: SlackHandlerDeps, chatId: string, u
 
 export async function sendModelList(deps: SlackHandlerDeps, chatId: string, userId: string): Promise<void> {
   const dispatcher = new SlackOutputGateway(deps);
-  const { currentModel, availableModels, threadName } = await resolveModelList(deps, chatId, userId);
+  const project = resolveProjectByChatId(deps.api, chatId);
+  if (!project) {
+    throw new Error("This Slack channel is not bound to a project yet.");
+  }
+  const { currentModel, availableModels, threadName } = await resolveModelList(deps, project.id, userId);
   await dispatcher.dispatch(chatId, {
     kind: "config_operation",
     data: {
@@ -294,14 +317,16 @@ export async function sendModelList(deps: SlackHandlerDeps, chatId: string, user
 
 export async function sendThreadNewForm(deps: SlackHandlerDeps, chatId: string, userId?: string): Promise<void> {
   const dispatcher = new SlackOutputGateway(deps);
-  const { backends, defaultBackend, defaultModel } = await resolveThreadNewFormData(deps, chatId, userId);
+  const project = resolveProjectByChatId(deps.api, chatId);
+  if (!project) {
+    throw new Error("This Slack channel is not bound to a project yet.");
+  }
+  const { catalog } = await resolveThreadNewFormData(deps, project.id, userId);
   await dispatcher.dispatch(chatId, {
     kind: "thread_new_form",
     data: {
       kind: "thread_new_form",
-      backends,
-      defaultBackend,
-      defaultModel
+      catalog
     }
   });
 }

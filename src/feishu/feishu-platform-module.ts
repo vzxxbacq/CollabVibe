@@ -5,8 +5,9 @@ import { handleFeishuMessage } from "./feishu-message-handler";
 import { FeishuOutputGateway } from "./platform-output-dispatcher";
 import type { FeishuHandlerDeps } from "./types";
 import { ConfigError } from "../config";
-import type { BootstrappedPlatformRuntime, PlatformModule, PlatformModuleContext } from "../platform/types";
-import { createLogger } from "../../packages/logger/src/index";
+import type { BootstrappedPlatformRuntime, PlatformModule, PlatformModuleContext } from "../common/types";
+import { resolveProjectByChatId } from "../common/project-resolution";
+import { createLogger } from "../logging";
 import { FeishuAdapter, FeishuOutputAdapter, FetchHttpClient } from "./channel/index";
 
 const log = createLogger("feishu-platform-module");
@@ -46,7 +47,7 @@ export class FeishuPlatformModule implements PlatformModule {
       httpClient,
     });
     const feishuPlatformOutput = new FeishuOutputAdapter(feishuAdapter, {
-      turnCardDataProvider: ctx.layer.orchestrator,
+      turnCardReader: ctx.turnCardReader,
       locale: ctx.config.locale,
     });
 
@@ -54,17 +55,9 @@ export class FeishuPlatformModule implements PlatformModule {
       config: ctx.config,
       feishuAdapter,
       platformOutput: feishuPlatformOutput,
-      orchestrator: ctx.layer.orchestrator,
-      pluginService: ctx.layer.pluginService,
-      approvalHandler: ctx.layer.approvalHandler,
-      projectSetupService: ctx.layer.projectSetupService,
-      adminStateStore: ctx.persistence.adminStateStore,
-      findProjectByChatId: ctx.layer.findProjectByChatId,
-      userRepository: ctx.persistence.userRepo,
+      api: ctx.api,
       recentMessageIds: new Set<string>(),
       messageDedupTtlMs: 60_000,
-      roleResolver: ctx.layer.roleResolver,
-      auditService: ctx.layer.auditService,
     };
 
     const runtime: BootstrappedPlatformRuntime = {
@@ -86,24 +79,15 @@ export class FeishuPlatformModule implements PlatformModule {
                 log.warn({ payloadKeys: Object.keys(payload) }, "bot.added missing chatId");
                 return;
               }
-              const existing = ctx.layer.findProjectByChatId(resolvedChatId);
+              const existing = resolveProjectByChatId(ctx.api, resolvedChatId);
               if (existing) {
                 if (existing.status === "disabled") {
-                  const state = ctx.persistence.adminStateStore.read();
-                  const proj = state.projects.find((p) => p.id === existing.id);
-                  if (proj) {
-                    proj.status = "active";
-                    proj.updatedAt = new Date().toISOString();
-                    ctx.persistence.adminStateStore.write(state);
-                  }
+                  await ctx.api.reactivateProject({ projectId: existing.id, actorId: "system" });
                 }
                 await feishuAdapter.sendInteractiveCard(resolvedChatId, feishuPlatformOutput.buildProjectResumedCard(existing));
                 return;
               }
-              const state = ctx.persistence.adminStateStore.read();
-              const unbound = state.projects.filter((p) => !p.chatId).map((p) => ({
-                id: p.id, name: p.name, cwd: p.cwd, gitUrl: p.gitUrl
-              }));
+              const unbound = ctx.api.listUnboundProjects();
               await feishuAdapter.sendInteractiveCard(resolvedChatId, feishuPlatformOutput.buildInitCard(unbound.length > 0 ? unbound : undefined));
             } catch (error) {
               log.error({ err: error instanceof Error ? error.message : error }, "bot.added error");
@@ -114,9 +98,9 @@ export class FeishuPlatformModule implements PlatformModule {
               const payload = data as Record<string, unknown>;
               const resolvedChatId = extractChatId(payload);
               if (!resolvedChatId) return;
-              const unbound = await ctx.layer.projectSetupService.disableAndUnbindProjectByChatId(resolvedChatId);
-              if (unbound) {
-                await ctx.layer.orchestrator.onProjectDeactivated(resolvedChatId);
+              const project = resolveProjectByChatId(ctx.api, resolvedChatId);
+              if (project) {
+                await ctx.api.disableProject({ projectId: project.id, actorId: "system" });
               }
             } catch (error) {
               log.error({ err: error instanceof Error ? error.message : error }, "bot.removed error");
@@ -128,13 +112,12 @@ export class FeishuPlatformModule implements PlatformModule {
               const chatId = extractChatId(event);
               const users = Array.isArray(event.users) ? event.users as Array<Record<string, unknown>> : [];
               if (!chatId || users.length === 0) return;
-              const state = ctx.persistence.adminStateStore.read();
-              const project = state.projects.find((p) => p.chatId === chatId);
+              const project = resolveProjectByChatId(ctx.api, chatId);
               if (!project) return;
               for (const u of users) {
                 const userId = extractOpenId(u, "user_id") || (typeof u.open_id === "string" ? u.open_id : "");
                 if (userId) {
-                  ctx.layer.roleResolver.autoRegister(userId, project.id);
+                  ctx.api.resolveRole({ userId, projectId: project.id });
                 }
               }
             } catch (error) {
@@ -146,7 +129,7 @@ export class FeishuPlatformModule implements PlatformModule {
               const event = data as Record<string, unknown>;
               const eventKey = String(event.event_key ?? "");
               const openId = extractOpenId(event, "operator");
-              if (!openId || !ctx.persistence.userRepo.isAdmin(openId)) return;
+              if (!openId || !ctx.api.isAdmin(openId)) return;
               if (eventKey === "admin_menu_event") {
                 const card = feishuPlatformOutput.buildAdminHelpCard();
                 await feishuAdapter.sendInteractiveCard(openId, card, "open_id");

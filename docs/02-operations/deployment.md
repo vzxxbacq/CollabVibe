@@ -178,6 +178,38 @@ Recommended boundaries:
 - if a backend depends on host CLIs, the docs should clearly explain the pass-through strategy
 - if a backend later supports standalone containers, it should still be integrated through explicit orchestration instead of being baked into the app image
 
+## Stream throttling tuning
+
+Path B streaming throttling is owned by the L2 `EventPipeline` / `StreamOutputCoordinator`, not by Feishu or Slack adapters.
+
+Use these environment variables only when you need to tune bursty streaming behavior in production:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `COLLABVIBE_STREAM_PERSIST_WINDOW_MS` | `500` | Minimum interval between normal persisted turn-state flushes |
+| `COLLABVIBE_STREAM_PERSIST_MAX_WAIT_MS` | `2000` | Maximum time dirty streaming state may wait before persistence |
+| `COLLABVIBE_STREAM_PERSIST_MAX_CHARS` | `2048` | Character threshold that triggers an early persistence flush |
+| `COLLABVIBE_STREAM_UI_WINDOW_MS` | `400` | Minimum interval between normal UI streaming flushes |
+| `COLLABVIBE_STREAM_UI_MAX_WAIT_MS` | `1200` | Maximum time buffered streaming UI output may wait before flush |
+| `COLLABVIBE_STREAM_UI_MAX_CHARS` | `1024` | Character threshold that triggers an early UI flush |
+
+Operational guidance:
+
+- prefer defaults first; they are chosen to keep critical events immediate while reducing high-frequency delta fan-out
+- tune `*_WINDOW_MS` carefully; larger values reduce write/send frequency but increase perceived latency
+- tune `*_MAX_WAIT_MS` as a guardrail, not as the primary control
+- tune `*_MAX_CHARS` when the backend emits very large deltas or very dense tool output bursts
+- terminal events (`turn_complete`, `turn_aborted`) still force a flush regardless of these settings
+- invalid or non-positive values are ignored and the default remains in effect
+
+Example:
+
+```bash
+export COLLABVIBE_STREAM_PERSIST_WINDOW_MS=700
+export COLLABVIBE_STREAM_UI_WINDOW_MS=500
+export COLLABVIBE_STREAM_UI_MAX_WAIT_MS=1500
+```
+
 ## Documentation consistency requirements
 
 After release, all user-facing docs should consistently communicate:

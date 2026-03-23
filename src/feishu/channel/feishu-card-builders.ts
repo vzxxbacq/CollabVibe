@@ -8,9 +8,10 @@
  *
  * Extracted from FeishuOutputAdapter for better cohesion.
  */
-import { MAIN_THREAD_NAME } from "../../../services/contracts/im/index";
-import { DEFAULT_APP_LOCALE, type AppLocale } from "../../../services/contracts/im/app-locale";
-import type { MergeDiffStats } from "../../../services/orchestrator/src/index";
+import { MAIN_THREAD_NAME } from "../../common/thread-constants";
+import { DEFAULT_APP_LOCALE, type AppLocale } from "../../common/app-locale";
+import { DEFAULT_INIT_AGENTS_MD, DEFAULT_INIT_GITIGNORE } from "../init-project-draft-state";
+import type { MergeDiffStats } from "../../../services/index";
 import { getFeishuCardBuilderStrings } from "./feishu-card-builders.strings";
 import type {
   IMAdminBackendPanel,
@@ -20,7 +21,7 @@ import type {
   IMAdminUserPanel,
   IMFileMergeReview,
   IMMergeSummary,
-} from "../../../services/contracts/im/index";
+} from "../../../services/index";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -958,14 +959,84 @@ export function buildInitBindMenuCard(
   };
 }
 
-export function buildInitCreateMenuCard(locale: AppLocale = DEFAULT_APP_LOCALE): Record<string, unknown> {
+export interface InitProjectDraftCardData {
+  projectName: string;
+  projectCwd: string;
+  gitUrl: string;
+  gitToken: string;
+  workBranch: string;
+  agentsMdContent: string;
+  gitignoreContent: string;
+}
+
+function initDraftStatus(content: string, template: string, strings: ReturnType<typeof getFeishuCardBuilderStrings>): string {
+  if (!content.trim()) return strings.initFileStatusEmpty;
+  return content === template ? strings.initFileStatusTemplate : strings.initFileStatusCustom;
+}
+
+function buildInitFileEntry(
+  title: string,
+  desc: string,
+  status: string,
+  fileKey: "agents_md" | "gitignore",
+  locale: AppLocale,
+): Record<string, unknown> {
   const s = getFeishuCardBuilderStrings(locale);
+  return {
+    tag: "interactive_container",
+    width: "fill", height: "auto",
+    has_border: true, border_color: "grey", corner_radius: "8px",
+    padding: "10px 12px 10px 12px",
+    elements: [{
+      tag: "column_set", flex_mode: "none", horizontal_spacing: "default",
+      columns: [
+        {
+          tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+          elements: [
+            { tag: "markdown", content: `**${title}**` },
+            greyText(desc),
+          ]
+        },
+        {
+          tag: "column", width: "auto", vertical_align: "center",
+          elements: [
+            greyText(status),
+            {
+              tag: "button",
+              name: fileKey === "agents_md" ? "open_agents_editor_btn" : "open_gitignore_editor_btn",
+              text: { tag: "plain_text", content: s.initFileEdit },
+              type: "default",
+              size: "small",
+              form_action_type: "submit",
+              behaviors: [{ type: "callback", value: { action: "init_project_file_open", fileKey } }]
+            }
+          ]
+        }
+      ]
+    }]
+  };
+}
+
+export function buildInitCreateMenuCard(
+  draft?: Partial<InitProjectDraftCardData>,
+  locale: AppLocale = DEFAULT_APP_LOCALE
+): Record<string, unknown> {
+  const s = getFeishuCardBuilderStrings(locale);
+  const data: InitProjectDraftCardData = {
+    projectName: draft?.projectName ?? "",
+    projectCwd: draft?.projectCwd ?? "",
+    gitUrl: draft?.gitUrl ?? "",
+    gitToken: draft?.gitToken ?? "",
+    workBranch: draft?.workBranch ?? "",
+    agentsMdContent: draft?.agentsMdContent ?? DEFAULT_INIT_AGENTS_MD,
+    gitignoreContent: draft?.gitignoreContent ?? DEFAULT_INIT_GITIGNORE,
+  };
   const fields = [
-    { icon: "edit_outlined", label: s.initCreateFields[0]!.label, name: "project_name", placeholder: s.initCreateFields[0]!.placeholder, defaultValue: "" },
-    { icon: "folder_outlined", label: s.initCreateFields[1]!.label, name: "project_cwd", placeholder: s.initCreateFields[1]!.placeholder, defaultValue: "", hint: s.initCreateFields[1]!.hint },
-    { icon: "sharelink_outlined", label: s.initCreateFields[2]!.label, name: "git_url", placeholder: s.initCreateFields[2]!.placeholder, defaultValue: "", hint: s.initCreateFields[2]!.hint },
-    { icon: "lock_outlined", label: s.initCreateFields[3]!.label, name: "git_token", placeholder: s.initCreateFields[3]!.placeholder, defaultValue: "", hint: s.initCreateFields[3]!.hint },
-    { icon: "switch_outlined", label: s.initCreateFields[4]!.label, name: "work_branch", placeholder: s.initCreateFields[4]!.placeholder, defaultValue: "", hint: s.initCreateFields[4]!.hint }
+    { icon: "edit_outlined", label: s.initCreateFields[0]!.label, name: "project_name", placeholder: s.initCreateFields[0]!.placeholder, defaultValue: data.projectName },
+    { icon: "folder_outlined", label: s.initCreateFields[1]!.label, name: "project_cwd", placeholder: s.initCreateFields[1]!.placeholder, defaultValue: data.projectCwd, hint: s.initCreateFields[1]!.hint },
+    { icon: "sharelink_outlined", label: s.initCreateFields[2]!.label, name: "git_url", placeholder: s.initCreateFields[2]!.placeholder, defaultValue: data.gitUrl, hint: s.initCreateFields[2]!.hint },
+    { icon: "lock_outlined", label: s.initCreateFields[3]!.label, name: "git_token", placeholder: s.initCreateFields[3]!.placeholder, defaultValue: data.gitToken, hint: s.initCreateFields[3]!.hint },
+    { icon: "switch_outlined", label: s.initCreateFields[4]!.label, name: "work_branch", placeholder: s.initCreateFields[4]!.placeholder, defaultValue: data.workBranch, hint: s.initCreateFields[4]!.hint }
   ];
 
   const formElements: unknown[] = [];
@@ -994,6 +1065,28 @@ export function buildInitCreateMenuCard(locale: AppLocale = DEFAULT_APP_LOCALE):
       formElements.push(greyText(f.hint));
     }
   }
+
+  formElements.push({ tag: "hr" });
+  formElements.push({
+    tag: "markdown",
+    content: `**${s.initRulesTitle}**`
+  });
+  formElements.push(greyText(s.initRulesSubtitle));
+  formElements.push(buildInitFileEntry(
+    s.initFileAgentsLabel,
+    s.initFileAgentsDesc,
+    initDraftStatus(data.agentsMdContent, DEFAULT_INIT_AGENTS_MD, s),
+    "agents_md",
+    locale
+  ));
+  formElements.push(buildInitFileEntry(
+    s.initFileGitignoreLabel,
+    s.initFileGitignoreDesc,
+    initDraftStatus(data.gitignoreContent, DEFAULT_INIT_GITIGNORE, s),
+    "gitignore",
+    locale
+  ));
+  formElements.push(greyText("AGENTS.md → only generated artifacts (e.g. generated images) go in output/ · .gitignore includes L3 recommended safe ignore rules by default"));
 
   formElements.push({
     tag: "button",
@@ -1033,6 +1126,85 @@ export function buildInitCreateMenuCard(locale: AppLocale = DEFAULT_APP_LOCALE):
       vertical_spacing: "8px",
       padding: "8px 12px 12px 12px",
       elements: [createForm]
+    }
+  };
+}
+
+export function buildInitProjectFileEditorCard(
+  fileKey: "agents_md" | "gitignore",
+  content: string,
+  locale: AppLocale = DEFAULT_APP_LOCALE
+): Record<string, unknown> {
+  const s = getFeishuCardBuilderStrings(locale);
+  const title = fileKey === "agents_md" ? s.initAgentsEditorTitle : s.initGitignoreEditorTitle;
+  const subtitle = fileKey === "agents_md" ? s.initAgentsEditorSubtitle : s.initGitignoreEditorSubtitle;
+  const hint = fileKey === "agents_md" ? s.initAgentsEditorHint : s.initGitignoreEditorHint;
+  const risk = fileKey === "gitignore" ? s.initGitignoreEditorRisk : "";
+  const formId = fileKey === "agents_md" ? "init_agents_editor_form" : "init_gitignore_editor_form";
+  const rows = fileKey === "agents_md" ? 12 : 8;
+  const maxRows = fileKey === "agents_md" ? 20 : 12;
+  return {
+    schema: "2.0",
+    config: { width_mode: "fill", update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: title },
+      subtitle: { tag: "plain_text", content: subtitle },
+      template: "blue",
+      icon: { tag: "standard_icon", token: "edit_outlined", color: "blue" },
+      text_tag_list: [
+        { tag: "text_tag", text: { tag: "plain_text", content: s.initCreateTag }, color: "blue" },
+      ]
+    },
+    body: {
+      direction: "vertical",
+      vertical_spacing: "8px",
+      padding: "8px 12px 12px 12px",
+      elements: [
+        greyText(hint),
+        ...(risk ? [greyText(risk)] : []),
+        {
+          tag: "form",
+          name: formId,
+          element_id: formId,
+          elements: [
+            {
+              tag: "input",
+              name: "file_content",
+              width: "fill",
+              placeholder: { tag: "plain_text", content: title },
+              default_value: content,
+              input_type: "multiline_text",
+              rows,
+            },
+            {
+              tag: "button",
+              name: fileKey === "agents_md" ? "agents_template_btn" : "gitignore_template_btn",
+              text: { tag: "plain_text", content: s.initFileEditorUseTemplate },
+              type: "default",
+              width: "fill",
+              form_action_type: "submit",
+              behaviors: [{ type: "callback", value: { action: "init_project_file_reset_template", fileKey } }]
+            },
+            {
+              tag: "button",
+              name: fileKey === "agents_md" ? "agents_save_btn" : "gitignore_save_btn",
+              text: { tag: "plain_text", content: s.initFileEditorSaveBack },
+              type: "primary",
+              width: "fill",
+              form_action_type: "submit",
+              behaviors: [{ type: "callback", value: { action: "init_project_file_save", fileKey } }]
+            }
+          ]
+        },
+        {
+          tag: "button",
+          name: fileKey === "agents_md" ? "agents_back_btn" : "gitignore_back_btn",
+          text: { tag: "plain_text", content: s.initFileEditorBack },
+          type: "default",
+          width: "fill",
+          behaviors: [{ type: "callback", value: { action: "init_create_menu" } }]
+        }
+      ]
     }
   };
 }
@@ -1113,6 +1285,138 @@ export function buildInitSuccessCard(info: {
       subtitle: { tag: "plain_text", content: info.projectName },
       template: "green",
       icon: { tag: "standard_icon", token: "check_outlined", color: "green" }
+    },
+    body: {
+      direction: "vertical",
+      vertical_spacing: "4px",
+      padding: "8px 12px 12px 12px",
+      elements
+    }
+  };
+}
+
+export function buildInitPendingCard(info: {
+  projectName: string;
+  cwd: string;
+  gitUrl?: string;
+  workBranch?: string;
+  operatorId: string;
+  displayName?: string;
+  duplicate?: boolean;
+}, locale: AppLocale = DEFAULT_APP_LOCALE): Record<string, unknown> {
+  const s = getFeishuCardBuilderStrings(locale);
+  const infoRows = [
+    { icon: "edit_outlined", label: s.initSuccessName, value: info.projectName },
+    { icon: "folder_outlined", label: s.initSuccessDir, value: `\`${info.cwd}\`` },
+    { icon: "sharelink_outlined", label: s.initSuccessRepo, value: info.gitUrl || s.initSuccessLocalGit },
+    { icon: "switch_outlined", label: s.initSuccessBranch, value: `\`${info.workBranch || "collabvibe/" + info.projectName}\`` },
+    { icon: "member_outlined", label: s.initSuccessOwner, value: formatUserLabel(info.operatorId, info.displayName) }
+  ];
+
+  const elements: unknown[] = [
+    {
+      tag: "markdown",
+      content: `**${s.initPendingStatus}**`,
+      icon: { tag: "standard_icon", token: "loading_outlined", color: "blue" }
+    }
+  ];
+  for (const r of infoRows) {
+    elements.push({
+      tag: "markdown",
+      content: `**${r.label}**: ${r.value}`,
+      icon: { tag: "standard_icon", token: r.icon, color: "blue" }
+    });
+  }
+  elements.push({ tag: "hr" });
+  elements.push(greyText(info.duplicate ? s.initPendingDuplicateHint : s.initPendingHint));
+
+  return {
+    schema: "2.0",
+    config: { width_mode: "fill", update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: s.initPendingTitle },
+      subtitle: { tag: "plain_text", content: s.initPendingSubtitle(info.projectName) },
+      template: "blue",
+      icon: { tag: "standard_icon", token: "loading_outlined", color: "blue" }
+    },
+    body: {
+      direction: "vertical",
+      vertical_spacing: "4px",
+      padding: "8px 12px 12px 12px",
+      elements
+    }
+  };
+}
+
+export function buildInitFailedCard(info: {
+  projectName: string;
+  cwd: string;
+  gitUrl?: string;
+  workBranch?: string;
+  operatorId: string;
+  displayName?: string;
+  error: string;
+}, locale: AppLocale = DEFAULT_APP_LOCALE): Record<string, unknown> {
+  const s = getFeishuCardBuilderStrings(locale);
+  const infoRows = [
+    { icon: "edit_outlined", label: s.initSuccessName, value: info.projectName },
+    { icon: "folder_outlined", label: s.initSuccessDir, value: `\`${info.cwd}\`` },
+    { icon: "sharelink_outlined", label: s.initSuccessRepo, value: info.gitUrl || s.initSuccessLocalGit },
+    { icon: "switch_outlined", label: s.initSuccessBranch, value: `\`${info.workBranch || "collabvibe/" + info.projectName}\`` },
+    { icon: "member_outlined", label: s.initSuccessOwner, value: formatUserLabel(info.operatorId, info.displayName) }
+  ];
+
+  const elements: unknown[] = [];
+  for (const r of infoRows) {
+    elements.push({
+      tag: "markdown",
+      content: `**${r.label}**: ${r.value}`,
+      icon: { tag: "standard_icon", token: r.icon, color: "red" }
+    });
+  }
+  elements.push({ tag: "hr" });
+  elements.push({
+    tag: "markdown",
+    content: `**${s.initFailedReason}**: ${info.error}`,
+    icon: { tag: "standard_icon", token: "warning_outlined", color: "red" }
+  });
+  elements.push(greyText(s.initFailedHint));
+  elements.push({
+    tag: "column_set",
+    flex_mode: "bisect",
+    horizontal_spacing: "default",
+    columns: [
+      {
+        tag: "column",
+        elements: [{
+          tag: "button",
+          text: { tag: "plain_text", content: s.initFailedBack },
+          type: "default",
+          width: "fill",
+          behaviors: [{ type: "callback", value: { action: "init_create_menu" } }]
+        }]
+      },
+      {
+        tag: "column",
+        elements: [{
+          tag: "button",
+          text: { tag: "plain_text", content: s.initFailedRetry },
+          type: "primary",
+          width: "fill",
+          behaviors: [{ type: "callback", value: { action: "init_project" } }]
+        }]
+      }
+    ]
+  });
+
+  return {
+    schema: "2.0",
+    config: { width_mode: "fill", update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: s.initFailedTitle },
+      subtitle: { tag: "plain_text", content: s.initFailedSubtitle(info.projectName) },
+      template: "red",
+      icon: { tag: "standard_icon", token: "close_outlined", color: "red" }
     },
     body: {
       direction: "vertical",
@@ -1279,7 +1583,6 @@ export function buildHelpProjectCard(
 ): Record<string, unknown> {
   const s = getFeishuCardBuilderStrings(locale);
 
-  // Read-only info rows
   const infoElements: unknown[] = [
     {
       tag: "markdown",
@@ -1292,93 +1595,25 @@ export function buildHelpProjectCard(
       icon: { tag: "standard_icon", token: "hash_outlined", color: "blue" }
     }
   ];
+  if (data.gitUrl) {
+    infoElements.push({
+      tag: "markdown",
+      content: `**${s.helpProjectGitUrlLabel}**  \`${data.gitUrl}\``,
+      icon: { tag: "standard_icon", token: "sharelink_outlined", color: "blue" }
+    });
+  }
+  if (data.workBranch) {
+    infoElements.push({
+      tag: "markdown",
+      content: `**${s.helpProjectWorkBranchLabel}**  \`${data.workBranch}\``,
+      icon: { tag: "standard_icon", token: "switch_outlined", color: "blue" }
+    });
+  }
 
-  // Form fields
-  const formElements: unknown[] = [
-    // Git Remote URL
-    {
-      tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
-      columns: [{
-        tag: "column", width: "fill", vertical_align: "center",
-        elements: [{
-          tag: "markdown", content: `**${s.helpProjectGitUrlLabel}**`,
-          icon: { tag: "standard_icon", token: "sharelink_outlined", color: "green" }
-        }]
-      }]
-    },
-    {
-      tag: "input", name: "git_url",
-      placeholder: { tag: "plain_text", content: s.helpProjectGitUrlPlaceholder },
-      default_value: data.gitUrl
-    },
-    // Work Branch
-    {
-      tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
-      columns: [{
-        tag: "column", width: "fill", vertical_align: "center",
-        elements: [{
-          tag: "markdown", content: `**${s.helpProjectWorkBranchLabel}**`,
-          icon: { tag: "standard_icon", token: "switch_outlined", color: "green" }
-        }]
-      }]
-    },
-    {
-      tag: "input", name: "work_branch",
-      placeholder: { tag: "plain_text", content: s.helpProjectWorkBranchPlaceholder },
-      default_value: data.workBranch
-    },
-    // .gitignore
-    {
-      tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
-      columns: [{
-        tag: "column", width: "fill", vertical_align: "center",
-        elements: [{
-          tag: "markdown", content: `**${s.helpProjectGitignoreLabel}**`,
-          icon: { tag: "standard_icon", token: "file-link-docx_outlined", color: "green" }
-        }]
-      }]
-    },
-    {
-      tag: "multi_line_text", name: "gitignore_content",
-      placeholder: { tag: "plain_text", content: s.helpProjectGitignorePlaceholder },
-      default_value: data.gitignoreContent,
-      rows: 4
-    },
-    // AGENTS.md
-    {
-      tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
-      columns: [{
-        tag: "column", width: "fill", vertical_align: "center",
-        elements: [{
-          tag: "markdown", content: `**${s.helpProjectAgentsMdLabel}**`,
-          icon: { tag: "standard_icon", token: "file-link-word_outlined", color: "green" }
-        }]
-      }]
-    },
-    {
-      tag: "multi_line_text", name: "agents_md_content",
-      placeholder: { tag: "plain_text", content: s.helpProjectAgentsMdPlaceholder },
-      default_value: data.agentsMdContent,
-      rows: 6
-    },
-    // Save button
-    {
-      tag: "button",
-      text: { tag: "plain_text", content: s.helpProjectSave },
-      type: "primary", width: "fill",
-      icon: { tag: "standard_icon", token: "done_outlined" },
-      form_action_type: "submit",
-      name: "help_project_save_submit",
-      behaviors: [{ type: "callback", value: { action: "help_project_save", projectId: data.projectId, ownerId } }]
-    }
+  const filePanels: unknown[] = [
+    buildCodePanel(`**${s.helpProjectGitignoreLabel}**`, data.gitignoreContent || s.helpProjectGitignorePlaceholder),
+    buildCodePanel(`**${s.helpProjectAgentsMdLabel}**`, data.agentsMdContent || s.helpProjectAgentsMdPlaceholder, "markdown"),
   ];
-
-  const form = {
-    tag: "form",
-    name: "help_project_form",
-    element_id: "help_project_form",
-    elements: formElements
-  };
 
   // Bottom buttons (outside form)
   const bottomButtons: unknown[] = [
@@ -1429,7 +1664,7 @@ export function buildHelpProjectCard(
       elements: [
         ...infoElements,
         { tag: "hr" },
-        form,
+        ...filePanels,
         ...bottomButtons
       ]
     }
@@ -1437,31 +1672,27 @@ export function buildHelpProjectCard(
 }
 
 export function buildThreadNewCard(
-  backends: Array<{ name: string; description?: string; models?: string[] }>,
-  defaultBackend?: string,
-  defaultModel?: string,
+  catalog: {
+    defaultSelection?: { value: string };
+    backends: Array<{
+      backendId: string;
+      options: Array<{ label: string; value: string }>;
+    }>;
+  },
   locale: AppLocale = DEFAULT_APP_LOCALE,
 ): Record<string, unknown> {
   const s = getFeishuCardBuilderStrings(locale);
   const combinedOptions: Array<{ text: { tag: string; content: string }; value: string }> = [];
-  for (const b of backends) {
-    if (b.models?.length) {
-      for (const m of b.models) {
+  for (const backend of catalog.backends) {
+    for (const option of backend.options) {
         combinedOptions.push({
-          text: { tag: "plain_text", content: `${b.name} - ${m}` },
-          value: `${b.name}:${m}`
+          text: { tag: "plain_text", content: option.label },
+          value: option.value
         });
-      }
     }
   }
 
-  let initialOption = combinedOptions[0]?.value ?? "";
-  if (defaultBackend && defaultModel) {
-    const candidate = `${defaultBackend}:${defaultModel}`;
-    if (combinedOptions.some(o => o.value === candidate)) {
-      initialOption = candidate;
-    }
-  }
+  const initialOption = catalog.defaultSelection?.value ?? combinedOptions[0]?.value ?? "";
 
   const formElements: unknown[] = [
     {
@@ -1731,37 +1962,27 @@ export function buildHelpThreadCard(
  */
 export function buildHelpThreadNewCard(
   userId: string,
-  backends: Array<{ name: string; description?: string; models?: string[]; profiles?: Array<{ name: string; model: string; provider: string }> }>,
-  defaultBackend?: string,
-  defaultModel?: string,
+  catalog: {
+    defaultSelection?: { value: string };
+    backends: Array<{
+      backendId: string;
+      options: Array<{ label: string; value: string }>;
+    }>;
+  },
   locale: AppLocale = DEFAULT_APP_LOCALE,
 ): Record<string, unknown> {
   const s = getFeishuCardBuilderStrings(locale);
   const combinedOptions: Array<{ text: { tag: string; content: string }; value: string }> = [];
-  for (const b of backends) {
-    // Prefer profiles over raw models
-    if (b.profiles?.length) {
-      for (const p of b.profiles) {
+  for (const backend of catalog.backends) {
+      for (const option of backend.options) {
         combinedOptions.push({
-          text: { tag: "plain_text", content: `${b.name} - ${p.name} (${p.model})` },
-          value: `${b.name}:${p.name}:${p.model}`
+          text: { tag: "plain_text", content: option.label },
+          value: option.value
         });
       }
-    } else if (b.models?.length) {
-      for (const m of b.models) {
-        combinedOptions.push({
-          text: { tag: "plain_text", content: `${b.name} - ${m}` },
-      value: `${b.name}::${m}`
-        });
-      }
-    }
   }
 
-  let initialOption = combinedOptions[0]?.value ?? "";
-  if (defaultBackend && defaultModel) {
-    const candidate = combinedOptions.find(o => o.value.startsWith(`${defaultBackend}:`) && o.value.endsWith(defaultModel));
-    if (candidate) initialOption = candidate.value;
-  }
+  const initialOption = catalog.defaultSelection?.value ?? combinedOptions[0]?.value ?? "";
 
   const formId = sanitizeElementId("help_new_thread_form");
   const formElements: unknown[] = [

@@ -33,7 +33,18 @@ export async function pinSnapshot(cwd: string, sha: string, label: string): Prom
  * Restore working tree to a snapshot state.
  */
 export async function restoreSnapshot(cwd: string, sha: string): Promise<void> {
-    await git(["checkout", sha, "--", "."], cwd);
+    try {
+        await git(["checkout", sha, "--", "."], cwd);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("pathspec '.' did not match any file(s) known to git")) {
+            throw error;
+        }
+        const { stdout: treeEntries } = await git(["ls-tree", "-r", "--name-only", sha], cwd);
+        if (treeEntries.trim()) {
+            throw error;
+        }
+    }
     await git(["clean", "-fd"], cwd);
     await git(["reset", "HEAD"], cwd);
 }

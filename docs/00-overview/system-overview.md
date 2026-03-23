@@ -1,7 +1,7 @@
 ---
 title: "System Overview"
 layer: overview
-source_of_truth: src/server.ts, services/orchestrator, packages/channel-*
+source_of_truth: src/server.ts, src/platform/*, services/*, src/feishu/channel/*
 status: active
 ---
 
@@ -18,16 +18,16 @@ The system is composed of four kinds of capabilities: platform integration, shar
 | Layer | Purpose | Typical directories |
 | --- | --- | --- |
 | Platform | Receives platform events and handles platform-specific interactions | `src/feishu/*` |
-| Core / Services | Intent dispatch, thread management, backend scheduling, approvals, authorization, persistence | `src/core/*`, `services/*` |
+| Core / Services | Intent dispatch, thread management, backend scheduling, approvals, authorization, persistence | `src/platform/*`, `services/*` |
 | Packages | Channel abstractions, protocol clients, output adapters, fundamental types | `packages/*` |
 | Local State | Database storage, logs, config, workspace state | `data/*`, local workspace |
 
 ```mermaid
 flowchart LR
   A[src/server.ts] --> B[src/feishu/*]
-  B --> C[src/core/*]
-  C --> D[services/orchestrator/*]
-  D --> E[packages/channel-feishu/*]
+  B --> C[src/platform/*]
+  C --> D[services/*]
+  D --> E[src/feishu/channel/*]
 ```
 
 ## Key system objects

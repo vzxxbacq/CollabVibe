@@ -1,5 +1,5 @@
 import type { AgentApi, RuntimeConfig, AgentApiFactory } from "../../types";
-import { MAIN_THREAD_NAME } from "../../constants";
+import { DEFAULT_THREAD_NAME } from "../../constants";
 import { createLogger } from "../../../../logger/src/index";
 
 import { AcpApiAdapter } from "./acp-api-adapter";
@@ -13,17 +13,17 @@ export class AcpApiFactory implements AgentApiFactory {
 
   constructor(private readonly processManager: AcpProcessManager = new AcpProcessManager()) { }
 
-  async create(config: RuntimeConfig & { chatId: string; userId?: string }): Promise<AgentApi> {
+  async create(config: RuntimeConfig & { projectId: string; userId?: string }): Promise<AgentApi> {
     if (!config.serverCmd) {
       throw new Error("ACP server command missing");
     }
     // Project-thread key must be thread-scoped (matching pool key), NOT user-scoped.
-    const threadName = config.threadName ?? MAIN_THREAD_NAME;
-    const projectThreadKey = `${config.chatId}:${threadName}`;
+    const threadName = config.threadName ?? DEFAULT_THREAD_NAME;
+    const projectThreadKey = `${config.projectId}:${threadName}`;
     log.info({ projectThreadKey, serverCmd: config.serverCmd, cwd: config.cwd, transport: config.backend.transport, model: config.backend.model, envKeys: config.env ? Object.keys(config.env) : [] }, "creating ACP session");
     const process = await this.processManager.start(projectThreadKey, config.serverCmd, config.cwd, config.env);
     const client = new AcpClient(process as never, {
-      chatId: config.chatId,
+      projectId: config.projectId,
       threadName
     });
     log.info({ projectThreadKey }, "ACP client initializing");

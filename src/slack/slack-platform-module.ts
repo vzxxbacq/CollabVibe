@@ -5,7 +5,7 @@ import { handleSlackMessage } from "./slack-message-handler";
 import { SlackOutputGateway } from "./platform-output-dispatcher";
 import { SlackSocketModeApp } from "./slack-socket-mode-app";
 import type { SlackHandlerDeps } from "./types";
-import type { BootstrappedPlatformRuntime, PlatformModule, PlatformModuleContext } from "../platform/types";
+import type { BootstrappedPlatformRuntime, PlatformModule, PlatformModuleContext } from "../common/types";
 
 export class SlackPlatformModule implements PlatformModule {
   readonly platformId = "slack" as const;
@@ -23,16 +23,9 @@ export class SlackPlatformModule implements PlatformModule {
       config: ctx.config,
       slackMessageClient,
       platformOutput: slackPlatformOutput,
-      orchestrator: ctx.layer.orchestrator,
-      pluginService: ctx.layer.pluginService,
-      approvalHandler: ctx.layer.approvalHandler,
-      adminStateStore: ctx.persistence.adminStateStore,
-      findProjectByChatId: ctx.layer.findProjectByChatId,
-      userRepository: ctx.persistence.userRepo,
+      api: ctx.api,
       recentEventIds: new Set<string>(),
       eventDedupTtlMs: 60_000,
-      roleResolver: ctx.layer.roleResolver,
-      auditService: ctx.layer.auditService,
     };
 
     const slackApp = new SlackSocketModeApp({

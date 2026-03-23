@@ -2,17 +2,8 @@
  * @module src/server
  * @layer Wiring (composition root)
  *
- * Application entry point — constructs persistence + orchestrator layers via
- * factory functions, then delegates platform lifecycle to PlatformModules.
- *
- * ## Architecture
- * ```
- * server.ts
- *   ├── createPersistenceLayer(db) → PersistenceLayer
- *   ├── createOrchestratorLayer({ persistence, config }) → OrchestratorLayer
- *   ├── PlatformModule.bootstrap(ctx) → BootstrappedPlatformRuntime
- *   └── layer.runStartup(runtime.output) → wired + backfilled + recovered
- * ```
+ * Application entry point — constructs the L2 orchestrator layer, then delegates
+ * platform lifecycle to PlatformModules.
  */
 import * as Lark from "@larksuiteoapi/node-sdk";
 import path from "node:path";
@@ -26,17 +17,15 @@ import {
   createFilteredSink,
   LOG_LEVEL_VALUES,
   setModuleLogLevels,
-} from "../packages/logger/src/index";
+} from "./logging";
 
-import {
-  createOrchestratorLayer,
-} from "../services/orchestrator/src/index";
+import { createOrchestratorLayer } from "../services/index";
 import { ConfigError, loadConfig } from "./config";
-import { PlatformModuleRegistry } from "./platform/registry";
+import { PlatformModuleRegistry } from "./common/registry";
 import { FeishuPlatformModule } from "./feishu/feishu-platform-module";
 import { SlackPlatformModule } from "./slack/slack-platform-module";
 import type { SlackSocketModeApp } from "./slack/slack-socket-mode-app";
-import type { BootstrappedPlatformRuntime } from "./platform/types";
+import type { BootstrappedPlatformRuntime } from "./common/types";
 
 export interface RuntimeServices {
   platform: "feishu" | "slack";
@@ -45,9 +34,7 @@ export interface RuntimeServices {
   shutdown: () => Promise<void>;
 }
 
-
 export async function createServer(config = loadConfig()): Promise<RuntimeServices> {
-  // 初始化日志持久化
   if (!process.env.VITEST) {
     const moduleLevels = String(process.env.LOG_MODULE_LEVELS ?? "")
       .split(",")
@@ -96,21 +83,24 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
   const log = createLogger("server");
 
   const layer = await createOrchestratorLayer({ config });
+  const { api } = layer;
 
   const platformRegistry = new PlatformModuleRegistry([
     new FeishuPlatformModule(),
     new SlackPlatformModule(),
   ]);
+
   const platformRuntime: BootstrappedPlatformRuntime = await platformRegistry.get(config.platform).bootstrap({
     config,
-    db: layer.db,
     layer,
-    persistence: layer.persistence,
+    api,
+    turnCardReader: {
+      resolveProjectId: (chatId) => api.resolveProjectId(chatId),
+      getTurnCardData: (input) => api.getTurnCardData(input),
+    },
   });
 
-  // Wire OutputGateway + backfill + session recovery
   await layer.runStartup(platformRuntime.output);
-
   await platformRuntime.start();
 
   const shutdown = async (): Promise<void> => {
@@ -118,6 +108,7 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
     await platformRuntime.stop();
   };
 
+  log.info({ platform: config.platform }, "server bootstrapped via converged L2 API");
   return { platform: config.platform, wsClient: platformRuntime.wsClient, slackApp: platformRuntime.slackApp, shutdown };
 }
 
@@ -136,7 +127,6 @@ async function main(): Promise<void> {
   process.on("SIGINT", graceful);
 }
 
-/* istanbul ignore next -- entry point guard */
 if (!process.env.VITEST) {
   const bootLog = createLogger("boot");
   main().catch((error) => {

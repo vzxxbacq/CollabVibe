@@ -55,6 +55,12 @@ npm install
 | `CODEX_SANDBOX` | 否 | 默认 sandbox 策略 |
 | `CODEX_APPROVAL_POLICY` | 否 | 默认审批策略 |
 | `APPROVAL_TIMEOUT_MS` | 否 | 审批超时 |
+| `COLLABVIBE_STREAM_PERSIST_WINDOW_MS` | 否 | Path B 流式持久化窗口 |
+| `COLLABVIBE_STREAM_PERSIST_MAX_WAIT_MS` | 否 | Path B 流式持久化最长等待时间 |
+| `COLLABVIBE_STREAM_PERSIST_MAX_CHARS` | 否 | 提前触发持久化 flush 的字符阈值 |
+| `COLLABVIBE_STREAM_UI_WINDOW_MS` | 否 | Path B 流式 UI flush 窗口 |
+| `COLLABVIBE_STREAM_UI_MAX_WAIT_MS` | 否 | Path B 流式 UI 最长等待时间 |
+| `COLLABVIBE_STREAM_UI_MAX_CHARS` | 否 | 提前触发 UI flush 的字符阈值 |
 | `PORT` | 否 | 服务监听端口 |
 | `SYS_ADMIN_USER_IDS` | 建议 | 初始系统管理员 ID 列表 |
 
@@ -71,6 +77,8 @@ SYS_ADMIN_USER_IDS=ou_xxx
 PORT=3100
 ```
 
+这些 stream 调参变量都是可选项。大多数部署场景保持默认值即可，只有在高频流式 turn 下需要平衡“推送频率 / 感知延迟”时再调整。
+
 ![环境变量配置占位图](/placeholders/guide-image-placeholder.svg)
 
 > Placeholder：在这里插入 `.env` 示例或部署平台环境变量配置截图。
@@ -81,13 +89,13 @@ PORT=3100
 
 | 路径 | 说明 |
 | --- | --- |
-| `data/codex-im.db` | SQLite 主库 |
-| `data/config/` | backend 配置目录 |
-| `data/logs/` | 运行日志 |
+| `collabvibe.db` | SQLite 主库 |
+| `config/` | backend 配置目录 |
+| `logs/` | 运行日志 |
 | `COLLABVIBE_WORKSPACE_CWD` | 代码工作区根目录 |
 
 ```bash
-mkdir -p data/config data/logs
+mkdir -p config logs
 mkdir -p /abs/path/to/workspace
 ```
 
@@ -134,10 +142,10 @@ npm run docs:dev
 2. Bot 已加入目标群聊或单聊可见
 3. 用户发送消息后可触发事件
 4. 机器人可返回消息或卡片
-5. `data/logs/app.log` 中可以看到对应日志
+5. `logs/app.log` 中可以看到对应日志
 
 ```bash
-tail -f data/logs/app.log
+tail -f logs/app.log
 ```
 
 ```bash
@@ -154,6 +162,18 @@ npm run docs:build
 npm run test:workspace
 npm test
 ```
+
+## 9. 可选的 stream 调参
+
+如果 backend 会产生非常密集的流式 delta，可以通过环境变量调节 Path B 节流参数：
+
+```dotenv
+COLLABVIBE_STREAM_PERSIST_WINDOW_MS=700
+COLLABVIBE_STREAM_UI_WINDOW_MS=500
+COLLABVIBE_STREAM_UI_MAX_WAIT_MS=1500
+```
+
+建议先验证默认行为，再决定是否调参。终态事件仍会强制执行最终 flush。
 
 ![Quickstart 演示视频占位图](/placeholders/guide-video-placeholder.svg)
 

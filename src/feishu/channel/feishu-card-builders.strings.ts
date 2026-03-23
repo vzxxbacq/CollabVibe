@@ -1,4 +1,4 @@
-import { DEFAULT_APP_LOCALE, type AppLocale } from "../../../services/contracts/im/app-locale";
+import { DEFAULT_APP_LOCALE, type AppLocale } from "../../common/app-locale";
 
 export interface FeishuCardBuilderStrings {
   threadCurrentReadonly: string;
@@ -68,6 +68,26 @@ export interface FeishuCardBuilderStrings {
   initCreateTitle: string;
   initCreateSubtitle: string;
   initCreateTag: string;
+  initRulesTitle: string;
+  initRulesSubtitle: string;
+  initFileAgentsLabel: string;
+  initFileAgentsDesc: string;
+  initFileGitignoreLabel: string;
+  initFileGitignoreDesc: string;
+  initFileEdit: string;
+  initFileStatusTemplate: string;
+  initFileStatusCustom: string;
+  initFileStatusEmpty: string;
+  initFileEditorBack: string;
+  initFileEditorSaveBack: string;
+  initFileEditorUseTemplate: string;
+  initAgentsEditorTitle: string;
+  initAgentsEditorSubtitle: string;
+  initAgentsEditorHint: string;
+  initGitignoreEditorTitle: string;
+  initGitignoreEditorSubtitle: string;
+  initGitignoreEditorHint: string;
+  initGitignoreEditorRisk: string;
   projectResumedProject: string;
   projectResumedId: string;
   projectResumedDir: string;
@@ -85,6 +105,17 @@ export interface FeishuCardBuilderStrings {
   initSuccessLocalGit: string;
   initSuccessHint: string;
   initSuccessTitle: string;
+  initPendingTitle: string;
+  initPendingSubtitle(name: string): string;
+  initPendingStatus: string;
+  initPendingHint: string;
+  initPendingDuplicateHint: string;
+  initFailedTitle: string;
+  initFailedSubtitle(name: string): string;
+  initFailedReason: string;
+  initFailedHint: string;
+  initFailedBack: string;
+  initFailedRetry: string;
   helpMergeOnMain: string;
   helpMergeGoThreads: string;
   helpMergeCurrentBranch(name: string): string;
@@ -441,13 +472,10 @@ export interface FeishuCardBuilderStrings {
   helpProjectGitignorePlaceholder: string;
   helpProjectAgentsMdLabel: string;
   helpProjectAgentsMdPlaceholder: string;
-  helpProjectSave: string;
   helpProjectPush: string;
   helpProjectBack: string;
   helpProjectPushSuccess: string;
   helpProjectPushFailed(err: string): string;
-  helpProjectSaveSuccess: string;
-  helpProjectSaveFailed(err: string): string;
   helpThreadManageBack: string;
   adminSkillFileDefaultHint: string;
   adminSkillFileDefaultSource: string;
@@ -535,6 +563,26 @@ const zhCN: FeishuCardBuilderStrings = {
   initCreateTitle: "CollabVibe 新建项目",
   initCreateSubtitle: "填写项目信息，并绑定到当前群聊",
   initCreateTag: "新建项目",
+  initRulesTitle: "初始化规则",
+  initRulesSubtitle: "定义项目级文件模板",
+  initFileAgentsLabel: "Project instructions",
+  initFileAgentsDesc: "定义 agent 在该项目中的行为约束",
+  initFileGitignoreLabel: "Ignored paths",
+  initFileGitignoreDesc: "忽略生成文件或本地产物",
+  initFileEdit: "编辑",
+  initFileStatusTemplate: "使用推荐模板",
+  initFileStatusCustom: "已自定义",
+  initFileStatusEmpty: "空白",
+  initFileEditorBack: "返回创建项目",
+  initFileEditorSaveBack: "保存并返回",
+  initFileEditorUseTemplate: "使用推荐模板",
+  initAgentsEditorTitle: "编辑初始 AGENTS.md",
+  initAgentsEditorSubtitle: "项目级 agent 行为约束",
+  initAgentsEditorHint: "例如：要求所有生成产物写入 output/",
+  initGitignoreEditorTitle: "编辑初始 .gitignore",
+  initGitignoreEditorSubtitle: "项目初始化时的忽略规则",
+  initGitignoreEditorHint: "例如：忽略 output/ 等生成目录",
+  initGitignoreEditorRisk: "如果去掉推荐内容，某些运行时目录、依赖目录或本地环境文件可能被提交并推送到 Git。",
   projectResumedProject: "项目",
   projectResumedId: "ID",
   projectResumedDir: "目录",
@@ -552,6 +600,17 @@ const zhCN: FeishuCardBuilderStrings = {
   initSuccessLocalGit: "(本地 git init)",
   initSuccessHint: "现在可以 @bot 直接对话",
   initSuccessTitle: "项目创建成功",
+  initPendingTitle: "项目初始化中",
+  initPendingSubtitle: (name) => `${name} · 正在创建`,
+  initPendingStatus: "初始化中，请稍候…",
+  initPendingHint: "仓库较大时可能需要几十秒。请勿重复提交，完成后会自动回写结果。",
+  initPendingDuplicateHint: "当前群已有初始化任务进行中，本次操作不会重复创建。",
+  initFailedTitle: "项目创建失败",
+  initFailedSubtitle: (name) => `${name} · 创建失败`,
+  initFailedReason: "失败原因",
+  initFailedHint: "请检查路径、仓库地址或凭证后重试。",
+  initFailedBack: "返回创建页",
+  initFailedRetry: "重试创建",
   helpMergeOnMain: "当前在 main 分支，请先切换到 thread 再执行合并。",
   helpMergeGoThreads: "**前往线程管理**",
   helpMergeCurrentBranch: (name) => `当前分支: **${name}**\n点击下方按钮预览合并结果`,
@@ -879,13 +938,10 @@ const zhCN: FeishuCardBuilderStrings = {
   helpProjectGitignorePlaceholder: "每行一个 pattern",
   helpProjectAgentsMdLabel: "AGENTS.md (项目级)",
   helpProjectAgentsMdPlaceholder: "Agent 行为约束",
-  helpProjectSave: "保存配置",
   helpProjectPush: "Push 到 Remote",
   helpProjectBack: "返回命令帮助",
   helpProjectPushSuccess: "推送成功",
   helpProjectPushFailed: (err) => `推送失败: ${err}`,
-  helpProjectSaveSuccess: "配置已保存",
-  helpProjectSaveFailed: (err) => `保存失败: ${err}`,
   helpThreadManageBack: "返回线程管理",
   adminSkillFileDefaultHint: "10 分钟内",
   adminSkillFileDefaultSource: "Feishu 文件",
@@ -1012,6 +1068,26 @@ const enUS: FeishuCardBuilderStrings = {
   initCreateTitle: "CollabVibe create project",
   initCreateSubtitle: "Fill in the project info and bind it to this chat",
   initCreateTag: "Create project",
+  initRulesTitle: "Initial project rules",
+  initRulesSubtitle: "Define project bootstrap files",
+  initFileAgentsLabel: "Project instructions",
+  initFileAgentsDesc: "Define how the agent should behave in this project",
+  initFileGitignoreLabel: "Ignored paths",
+  initFileGitignoreDesc: "Ignore generated files or local-only artifacts",
+  initFileEdit: "Edit",
+  initFileStatusTemplate: "Using recommended template",
+  initFileStatusCustom: "Customized",
+  initFileStatusEmpty: "Empty",
+  initFileEditorBack: "Back to create project",
+  initFileEditorSaveBack: "Save and back",
+  initFileEditorUseTemplate: "Use recommended template",
+  initAgentsEditorTitle: "Edit initial AGENTS.md",
+  initAgentsEditorSubtitle: "Project-level agent instructions",
+  initAgentsEditorHint: "Example: require all generated outputs to be written into output/",
+  initGitignoreEditorTitle: "Edit initial .gitignore",
+  initGitignoreEditorSubtitle: "Ignore rules for project bootstrap",
+  initGitignoreEditorHint: "Example: ignore output/ and other generated directories",
+  initGitignoreEditorRisk: "If you remove recommended entries, runtime folders, dependency folders, or local environment artifacts may be committed and pushed to Git.",
   projectResumedProject: "Project",
   projectResumedId: "ID",
   projectResumedDir: "Directory",
@@ -1029,6 +1105,17 @@ const enUS: FeishuCardBuilderStrings = {
   initSuccessLocalGit: "(local git init)",
   initSuccessHint: "You can now talk directly to @bot",
   initSuccessTitle: "Project created",
+  initPendingTitle: "Project initialization in progress",
+  initPendingSubtitle: (name) => `${name} · creating`,
+  initPendingStatus: "Initializing, please wait…",
+  initPendingHint: "Large repositories may take tens of seconds. Do not submit again; the card will update automatically.",
+  initPendingDuplicateHint: "A project initialization task is already running for this chat. This action will not start another one.",
+  initFailedTitle: "Project creation failed",
+  initFailedSubtitle: (name) => `${name} · failed`,
+  initFailedReason: "Reason",
+  initFailedHint: "Check the path, repository URL, or credentials and try again.",
+  initFailedBack: "Back to create",
+  initFailedRetry: "Retry",
   helpMergeOnMain: "You are on main. Switch to a thread first before merging.",
   helpMergeGoThreads: "**Go to thread management**",
   helpMergeCurrentBranch: (name) => `Current branch: **${name}**\nClick below to preview the merge result`,
@@ -1356,13 +1443,10 @@ const enUS: FeishuCardBuilderStrings = {
   helpProjectGitignorePlaceholder: "One pattern per line",
   helpProjectAgentsMdLabel: "AGENTS.md (project-level)",
   helpProjectAgentsMdPlaceholder: "Agent behavior constraints",
-  helpProjectSave: "Save",
   helpProjectPush: "Push to Remote",
   helpProjectBack: "Back to help",
   helpProjectPushSuccess: "Push succeeded",
   helpProjectPushFailed: (err) => `Push failed: ${err}`,
-  helpProjectSaveSuccess: "Settings saved",
-  helpProjectSaveFailed: (err) => `Save failed: ${err}`,
   helpThreadManageBack: "Back to thread management",
   adminSkillFileDefaultHint: "10 minutes",
   adminSkillFileDefaultSource: "Feishu file",

@@ -1,4 +1,4 @@
-import type { IMNotification } from "../../../services/contracts/im/im-output";
+import type { IMNotification } from "../../../services/index";
 
 export class FeishuRenderer {
   renderText(text: string): string {

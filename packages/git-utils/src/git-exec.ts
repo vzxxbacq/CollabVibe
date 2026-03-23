@@ -19,13 +19,20 @@ export interface GitExecOptions {
     maxBuffer?: number;
     /** Structured log context propagated from the caller */
     logContext?: Record<string, unknown>;
+    /**
+     * Whether to inject `core.excludesFile` resolved from the current repo.
+     * Disable this for bootstrap commands (e.g. clone/init) that run before
+     * the target repository exists, otherwise ancestor workspace repos may be
+     * matched accidentally.
+     */
+    injectDefaultExcludes?: boolean;
 }
 
 /**
  * Execute a git command.
  * 
- * Automatically injects the system-level default excludes for all git
- * operations.
+ * Automatically injects the resolved repo-root `.gitignore` unless explicitly
+ * disabled for bootstrap commands.
  * 
  * @param args Git CLI arguments (e.g., ["status", "--porcelain"])
  * @param cwd The working directory to run the command in
@@ -39,7 +46,10 @@ export async function git(
     // Find the first argument that isn't a flag to identify the subcommand
     const subcommand = args.find(a => !a.startsWith("-") && !a.includes("="));
 
-    const fullArgs = [...getDefaultExcludesArgs(cwd), ...args];
+    const fullArgs = [
+        ...(opts?.injectDefaultExcludes === false ? [] : getDefaultExcludesArgs(cwd)),
+        ...args,
+    ];
 
     try {
         return await exec("git", fullArgs, {
@@ -47,12 +57,21 @@ export async function git(
             maxBuffer: opts?.maxBuffer ?? 10 * 1024 * 1024,
         });
     } catch (error) {
+        const execError = error as NodeJS.ErrnoException & {
+            errno?: number | string;
+            path?: string;
+            spawnargs?: string[];
+        };
         // Log the failure at debug level so domain APIs can decide whether it's an error
         log.debug({ 
             cwd, 
             subcommand,
             ...opts?.logContext,
-            err: error instanceof Error ? error.message : String(error) 
+            err: error instanceof Error ? error.message : String(error),
+            code: execError?.code,
+            errno: execError?.errno,
+            path: execError?.path,
+            spawnargs: execError?.spawnargs,
         }, "git command failed");
         throw error;
     }

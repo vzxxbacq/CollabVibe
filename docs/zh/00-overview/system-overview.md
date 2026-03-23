@@ -1,7 +1,7 @@
 ---
 title: 系统总览
 layer: overview
-source_of_truth: src/server.ts, services/orchestrator, packages/channel-*
+source_of_truth: src/server.ts, src/platform/*, services/*, src/feishu/channel/*
 status: active
 ---
 
@@ -18,16 +18,16 @@ status: active
 | 层级 | 作用 | 典型目录 |
 | --- | --- | --- |
 | Platform | 接收平台事件，处理平台特有交互 | `src/feishu/*` |
-| Core / Services | intent 分发、线程管理、backend 调度、审批、权限、持久化 | `src/core/*`, `services/*` |
+| Core / Services | intent 分发、线程管理、backend 调度、审批、权限、持久化 | `src/platform/*`, `services/*` |
 | Packages | 通道抽象、协议客户端、输出适配、基础类型 | `packages/*` |
 | Local State | 数据库存储、日志、配置、工作区状态 | `data/*`, 本地 workspace |
 
 ```mermaid
 flowchart LR
   A[src/server.ts] --> B[src/feishu/*]
-  B --> C[src/core/*]
-  C --> D[services/orchestrator/*]
-  D --> E[packages/channel-feishu/*]
+  B --> C[src/platform/*]
+  C --> D[services/*]
+  D --> E[src/feishu/channel/*]
 ```
 
 ## 系统关键对象

@@ -2,7 +2,7 @@
 title: Feishu 平台接入
 layer: overview
 status: active
-source_of_truth: src/feishu/*, packages/channel-feishu/*, scripts/export-feishu-scopes.ts
+source_of_truth: src/feishu/*, src/feishu/channel/*, scripts/export-feishu-scopes.ts
 ---
 
 # Feishu 平台接入
@@ -16,12 +16,12 @@ source_of_truth: src/feishu/*, packages/channel-feishu/*, scripts/export-feishu-
 | 事件接收 | WebSocket Stream |
 | 主要入口 | `src/feishu/feishu-ws-app.ts` |
 | Bot 交互 | 消息、卡片、Bot 菜单 |
-| 平台输出 | `packages/channel-feishu/*` |
+| 平台输出 | `src/feishu/channel/*` |
 
 ```mermaid
 flowchart LR
   A[Feishu Event] --> B[src/feishu/*]
-  B --> C[src/core/intent-dispatcher.ts]
+  B --> C[src/platform/dispatcher.ts]
   C --> D[orchestrator]
   D --> E[FeishuOutputAdapter]
 ```

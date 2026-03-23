@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // 将 Codex 事件映射为 Slack Block Kit 消息和流式输出。
+// Slack 侧未维护 L1 时间窗口 buffer；流式节流由 L2 EventPipeline/Coordinator 统一负责。
 //
 // 关键设计决策:
 //   1. 流式内容使用 Slack 原生 Stream API (chat.startStream/appendStream/stopStream)
@@ -28,7 +29,8 @@ import type {
     IMTurnSummary,
     IMUserInputRequest,
     IMSnapshotOperation
-} from "../../../services/contracts/im/index";
+} from "../../../services/index";
+import { getApprovalSummary } from "../../common/approval-display";
 
 import type { SlackBlock, SlackMessageClient } from "./slack-message-client";
 import {
@@ -271,11 +273,12 @@ export class SlackOutputAdapter {
     async requestApproval(chatId: string, req: IMApprovalRequest): Promise<void> {
         const state = this.getOrCreateState(chatId, req.turnId);
         const blocks = buildApprovalBlocks(req);
+        const summary = getApprovalSummary(req) || req.description;
 
         await this.client.postMessage({
             channel: chatId,
             blocks,
-            text: `Approval required: ${req.description}`,
+            text: `Approval required: ${summary}`,
             threadTs: state.messageTs ?? undefined
         });
     }
@@ -583,14 +586,14 @@ export class SlackOutputAdapter {
     }
 
     async sendThreadNewForm(chatId: string, data: IMThreadNewFormData): Promise<void> {
-        const backendLines = data.backends.map((backend) => {
-            const modelNames = backend.models?.length ? backend.models.join(", ") : "no models";
-            return `• *${backend.name}*${backend.name === data.defaultBackend ? " (default)" : ""}: ${modelNames}`;
+        const backendLines = data.catalog.backends.map((backend) => {
+            const optionLabels = backend.options.length ? backend.options.map((option) => option.label).join(", ") : "no options";
+            return `• *${backend.backendId}*${backend.backendId === data.catalog.defaultSelection?.backendId ? " (default)" : ""}: ${optionLabels}`;
         });
         await this.postBlocks(
             chatId,
             [
-                section(`🧵 *Create Thread*\nDefault backend: *${data.defaultBackend ?? "unknown"}*\nDefault model: *${data.defaultModel ?? "unknown"}*`),
+                section(`🧵 *Create Thread*\nDefault backend: *${data.catalog.defaultSelection?.backendId ?? "unknown"}*\nDefault model: *${data.catalog.defaultSelection?.model ?? "unknown"}*`),
                 divider(),
                 section(backendLines.join("\n") || "_No backend available._"),
                 context("Use the platform command path to create a thread until Slack interactive form submission is wired.")

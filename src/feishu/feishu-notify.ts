@@ -19,7 +19,7 @@
  * ❌ Must NOT import: packages/channel-feishu, src/slack/
  */
 import type { FeishuHandlerDeps } from "./types";
-import type { AppLocale } from "../../services/contracts/im/app-locale";
+import type { AppLocale } from "../common/app-locale";
 import { getFeishuNotifyStrings } from "./feishu-notify.strings";
 
 export async function notify(
