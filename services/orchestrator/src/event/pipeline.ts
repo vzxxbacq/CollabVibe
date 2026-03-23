@@ -91,6 +91,7 @@ export class EventPipeline {
   private readonly latestTurnByThread = new Map<string, string>();
   private readonly attachedSources = new WeakSet<NotificationSource>();
   private readonly finishedTurns = new Set<string>();
+  private readonly turnCompleteHooks = new Map<string, (turnId: string) => Promise<void>>();
   private readonly contextTtlMs: number;
   private readonly planFinalizer = new PlanTurnFinalizer();
 
@@ -100,6 +101,16 @@ export class EventPipeline {
     options?: { contextTtlMs?: number }
   ) {
     this.contextTtlMs = options?.contextTtlMs ?? 10 * 60 * 1000;
+  }
+
+  /** Register a one-shot hook to execute after a turn completes for a specific thread. */
+  registerTurnCompleteHook(chatId: string, threadName: string, hook: (turnId: string) => Promise<void>): void {
+    this.turnCompleteHooks.set(`${chatId}:${threadName}`, hook);
+  }
+
+  /** Remove a registered turn-complete hook. */
+  unregisterTurnCompleteHook(chatId: string, threadName: string): void {
+    this.turnCompleteHooks.delete(`${chatId}:${threadName}`);
   }
 
   /** Public: route an output message through the event router (Path B convergence). */
@@ -272,17 +283,22 @@ export class EventPipeline {
         threadName: route.threadName
       });
 
+      // Build turn context early so we can apply finalizedPlan before snapshot
+      const key = contextKey(route.chatId, turnId);
+      const turnContext = this.contexts.get(key);
+
       const finalizedPlan = this.planFinalizer.finalize(route.chatId, turnId);
       if (finalizedPlan.error) {
         routeLog.warn({ turnId, threadName: route.threadName }, finalizedPlan.error);
       }
       if (finalizedPlan.message) {
+        // Write finalized plan back to turnContext BEFORE finalizeTurnState() takes its snapshot,
+        // so TurnDetailRecord.planState contains the structured plan for historical card recovery.
+        turnContext?.context.applyOutputMessage(finalizedPlan.message);
         await this.eventRouter.routeMessage(route.chatId, finalizedPlan.message);
       }
 
       // Build turn summary with diff data from git
-      const key = contextKey(route.chatId, turnId);
-      const turnContext = this.contexts.get(key);
       if (turnContext) {
         const summary = turnContext.context.toSummary();
         // Merge diff result into summary
@@ -306,6 +322,18 @@ export class EventPipeline {
         const tKey = threadKey(turnRoute);
         if (this.latestTurnByThread.get(tKey) === turnId) {
           this.latestTurnByThread.delete(tKey);
+        }
+      }
+
+      // Execute registered turn-complete hooks (e.g., merge resolver post-turn logic)
+      const hookKey = `${route.chatId}:${route.threadName}`;
+      const hook = this.turnCompleteHooks.get(hookKey);
+      if (hook) {
+        this.turnCompleteHooks.delete(hookKey);
+        try {
+          await hook(turnId);
+        } catch (hookErr) {
+          routeLog.warn({ turnId, threadName: route.threadName, err: hookErr instanceof Error ? hookErr.message : String(hookErr) }, "turn-complete hook failed");
         }
       }
     }

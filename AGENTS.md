@@ -110,16 +110,25 @@ config.model = "MiniMax-M2.5";
 | 类型 | 作用域 | 持久源 |
 |------|--------|--------|
 | `ProjectRecord` | project 聚合根，可变 | `AdminStateStore` / ProjectResolver |
-| `ThreadRecord` | project 级，不可变 | `ThreadRegistry`（内存/持久化） |
+| `ThreadRecord` | project 级，核心不可变，运行时可变 | `ThreadRegistry`（内存/持久化） |
 | `UserThreadBinding` | user 级，纯指针（归属 project） | `UserThreadBindingService` |
 | `RuntimeConfig` | per-turn，临时 | `RuntimeConfigProvider` 组装 |
 | `UserRecord` | 全局，可变 | `UserRepository`（SQLite `users` 表） |
+
+**ThreadRecord 运行时字段**（通过 `ThreadRegistry.update()` 修改）：
+
+| 字段 | 类型 | 语义 |
+|------|------|------|
+| `baseSha` | `string?` | worktree 创建时 workBranch 的 HEAD commit |
+| `hasDiverged` | `boolean` | 是否有 turn 产生了 commit（`finishTurn` 后设为 true） |
+| `worktreePath` | `string?` | worktree 绝对路径 |
 
 **数据流向：**
 ```
 IM chatId  →  ProjectResolver.findProjectByChatId(chatId)  →  projectId
 projectId  →  ThreadRegistry.get(projectId, threadName)    →  threadRecord.backend  →  RuntimeConfig.backend
                                                             →  threadRecord.threadId  →  config.backendSessionId
+                                                            →  threadRecord.baseSha   →  stale detection
 ```
 
 ### Project / Chat 关系不变式

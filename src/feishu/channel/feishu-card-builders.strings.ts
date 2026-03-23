@@ -80,6 +80,7 @@ export interface FeishuCardBuilderStrings {
   initSuccessId: string;
   initSuccessDir: string;
   initSuccessRepo: string;
+  initSuccessBranch: string;
   initSuccessOwner: string;
   initSuccessLocalGit: string;
   initSuccessHint: string;
@@ -299,6 +300,16 @@ export interface FeishuCardBuilderStrings {
   mergeForceHint: string;
   mergeConflictCount(count: number): string;
   mergeNoChangesCleanupHint: string;
+  mergeNoChangesTitle: string;
+  mergeCleanupWorktree: string;
+  mergeDeleteBranch: string;
+  mergeReviewCancelConfirmTitle: string;
+  mergeReviewCancelConfirmText: string;
+  mergeBatchRetrySelectLabel: string;
+  mergeBatchRetryFeedbackLabel: string;
+  mergeBatchRetryFeedbackPlaceholder: string;
+  mergeBatchRetrySubmit: string;
+  mergeDiffBaseline(baseBranch: string): string;
   mergeConfirm: string;
   mergeBack: string;
   mergeConflictDetail(hasResolverThread: boolean): string;
@@ -311,6 +322,11 @@ export interface FeishuCardBuilderStrings {
   mergeResultFailed: string;
   mergeResultSuccessSubtitle: string;
   mergeResultFailedSubtitle: string;
+  mergeKeepThread: string;
+  mergeDeleteThread: string;
+  mergeKeepThreadSuccessSubtitle: string;
+  mergeDeleteThreadSuccessSubtitle: string;
+  mergeBackToThreads: string;
   helpNoMembers: string;
   helpMemberUser: string;
   helpMemberRole: string;
@@ -411,6 +427,27 @@ export interface FeishuCardBuilderStrings {
   helpPanelSkillsDesc: string;
   helpPanelBackends: string;
   helpPanelBackendsDesc: string;
+  helpPanelProject: string;
+  helpPanelProjectDesc: string;
+  helpProjectTitle: string;
+  helpProjectSubtitle(name: string): string;
+  helpProjectPathLabel: string;
+  helpProjectIdLabel: string;
+  helpProjectGitUrlLabel: string;
+  helpProjectGitUrlPlaceholder: string;
+  helpProjectWorkBranchLabel: string;
+  helpProjectWorkBranchPlaceholder: string;
+  helpProjectGitignoreLabel: string;
+  helpProjectGitignorePlaceholder: string;
+  helpProjectAgentsMdLabel: string;
+  helpProjectAgentsMdPlaceholder: string;
+  helpProjectSave: string;
+  helpProjectPush: string;
+  helpProjectBack: string;
+  helpProjectPushSuccess: string;
+  helpProjectPushFailed(err: string): string;
+  helpProjectSaveSuccess: string;
+  helpProjectSaveFailed(err: string): string;
   helpThreadManageBack: string;
   adminSkillFileDefaultHint: string;
   adminSkillFileDefaultSource: string;
@@ -492,6 +529,7 @@ const zhCN: FeishuCardBuilderStrings = {
     { label: "工作目录", placeholder: "my-project", hint: "子目录名称，留空则使用项目名" },
     { label: "Git 仓库 URL", placeholder: "https://github.com/org/repo.git", hint: "可选，留空则 git init" },
     { label: "Clone Token", placeholder: "ghp_xxxx 或 PAT", hint: "可选，私有仓库使用" },
+    { label: "工作分支", placeholder: "dev", hint: "可选，留空则使用 collabvibe/{项目名}" },
   ],
   initCreateSubmit: "创建项目",
   initCreateTitle: "CollabVibe 新建项目",
@@ -509,6 +547,7 @@ const zhCN: FeishuCardBuilderStrings = {
   initSuccessId: "ID",
   initSuccessDir: "目录",
   initSuccessRepo: "仓库",
+  initSuccessBranch: "工作分支",
   initSuccessOwner: "Owner",
   initSuccessLocalGit: "(本地 git init)",
   initSuccessHint: "现在可以 @bot 直接对话",
@@ -826,6 +865,27 @@ const zhCN: FeishuCardBuilderStrings = {
   helpPanelSkillsDesc: "查看 · 安装 · 卸载技能",
   helpPanelBackends: "后端概览",
   helpPanelBackendsDesc: "查看可用 Backend · Model",
+  helpPanelProject: "项目管理",
+  helpPanelProjectDesc: "项目配置 · Git · 推送",
+  helpProjectTitle: "项目管理",
+  helpProjectSubtitle: (name) => `${name} · 配置编辑`,
+  helpProjectPathLabel: "工作目录",
+  helpProjectIdLabel: "Project ID",
+  helpProjectGitUrlLabel: "Git Remote URL",
+  helpProjectGitUrlPlaceholder: "https://github.com/org/repo.git",
+  helpProjectWorkBranchLabel: "工作分支",
+  helpProjectWorkBranchPlaceholder: "collabvibe/my-project",
+  helpProjectGitignoreLabel: ".gitignore (项目级)",
+  helpProjectGitignorePlaceholder: "每行一个 pattern",
+  helpProjectAgentsMdLabel: "AGENTS.md (项目级)",
+  helpProjectAgentsMdPlaceholder: "Agent 行为约束",
+  helpProjectSave: "保存配置",
+  helpProjectPush: "Push 到 Remote",
+  helpProjectBack: "返回命令帮助",
+  helpProjectPushSuccess: "推送成功",
+  helpProjectPushFailed: (err) => `推送失败: ${err}`,
+  helpProjectSaveSuccess: "配置已保存",
+  helpProjectSaveFailed: (err) => `保存失败: ${err}`,
   helpThreadManageBack: "返回线程管理",
   adminSkillFileDefaultHint: "10 分钟内",
   adminSkillFileDefaultSource: "Feishu 文件",
@@ -842,7 +902,17 @@ const zhCN: FeishuCardBuilderStrings = {
     : "逐文件冲突解决模式：可保留 `基线`、使用分支版本，或在后续审阅阶段交给 Agent 处理",
   mergeForceHint: "使用 `/merge --force` 强制合并",
   mergeConflictCount: (count) => `**${count} 个冲突**`,
-  mergeNoChangesCleanupHint: "分支无新变更，合并将清理 worktree 和分支",
+  mergeNoChangesCleanupHint: "该分支已与基线同步，无需合并",
+  mergeNoChangesTitle: "分支管理",
+  mergeCleanupWorktree: "**清理 Worktree**",
+  mergeDeleteBranch: "**删除分支**",
+  mergeReviewCancelConfirmTitle: "确认取消合并审阅",
+  mergeReviewCancelConfirmText: "取消将丢弃当前所有审阅进度，分支将恢复到合并前的状态",
+  mergeBatchRetrySelectLabel: "选择需要重修的文件",
+  mergeBatchRetryFeedbackLabel: "修改要求",
+  mergeBatchRetryFeedbackPlaceholder: "例: 保留 API 兼容性，不要删除现有校验",
+  mergeBatchRetrySubmit: "添加重修",
+  mergeDiffBaseline: (baseBranch) => `vs ${baseBranch} (merge base)`,
   mergeConfirm: "**确认合并**",
   mergeBack: "**返回上一级**",
   mergeConflictDetail: (hasResolverThread) => hasResolverThread
@@ -857,6 +927,11 @@ const zhCN: FeishuCardBuilderStrings = {
   mergeResultFailed: "失败",
   mergeResultSuccessSubtitle: "分支已合并并清理",
   mergeResultFailedSubtitle: "请检查冲突",
+  mergeKeepThread: "**✓ 保留线程**",
+  mergeDeleteThread: "**🗑 删除线程**",
+  mergeKeepThreadSuccessSubtitle: "线程已保留，可继续使用",
+  mergeDeleteThreadSuccessSubtitle: "线程已删除",
+  mergeBackToThreads: "**返回 Threads**",
 };
 
 const enUS: FeishuCardBuilderStrings = {
@@ -931,6 +1006,7 @@ const enUS: FeishuCardBuilderStrings = {
     { label: "Workspace directory", placeholder: "my-project", hint: "Subdirectory name. Leave empty to use the project name." },
     { label: "Git repository URL", placeholder: "https://github.com/org/repo.git", hint: "Optional. Leave empty to run git init." },
     { label: "Clone token", placeholder: "ghp_xxxx or PAT", hint: "Optional. Use for private repositories." },
+    { label: "Work branch", placeholder: "dev", hint: "Optional. Leave empty to use collabvibe/{project name}." },
   ],
   initCreateSubmit: "Create project",
   initCreateTitle: "CollabVibe create project",
@@ -948,6 +1024,7 @@ const enUS: FeishuCardBuilderStrings = {
   initSuccessId: "ID",
   initSuccessDir: "Directory",
   initSuccessRepo: "Repository",
+  initSuccessBranch: "Work branch",
   initSuccessOwner: "Owner",
   initSuccessLocalGit: "(local git init)",
   initSuccessHint: "You can now talk directly to @bot",
@@ -1265,6 +1342,27 @@ const enUS: FeishuCardBuilderStrings = {
   helpPanelSkillsDesc: "View · install · remove skills",
   helpPanelBackends: "Backend overview",
   helpPanelBackendsDesc: "View available backends · models",
+  helpPanelProject: "Project settings",
+  helpPanelProjectDesc: "Project config · Git · Push",
+  helpProjectTitle: "Project Settings",
+  helpProjectSubtitle: (name) => `${name} · Configuration`,
+  helpProjectPathLabel: "Working directory",
+  helpProjectIdLabel: "Project ID",
+  helpProjectGitUrlLabel: "Git Remote URL",
+  helpProjectGitUrlPlaceholder: "https://github.com/org/repo.git",
+  helpProjectWorkBranchLabel: "Work branch",
+  helpProjectWorkBranchPlaceholder: "collabvibe/my-project",
+  helpProjectGitignoreLabel: ".gitignore (project-level)",
+  helpProjectGitignorePlaceholder: "One pattern per line",
+  helpProjectAgentsMdLabel: "AGENTS.md (project-level)",
+  helpProjectAgentsMdPlaceholder: "Agent behavior constraints",
+  helpProjectSave: "Save",
+  helpProjectPush: "Push to Remote",
+  helpProjectBack: "Back to help",
+  helpProjectPushSuccess: "Push succeeded",
+  helpProjectPushFailed: (err) => `Push failed: ${err}`,
+  helpProjectSaveSuccess: "Settings saved",
+  helpProjectSaveFailed: (err) => `Save failed: ${err}`,
   helpThreadManageBack: "Back to thread management",
   adminSkillFileDefaultHint: "10 minutes",
   adminSkillFileDefaultSource: "Feishu file",
@@ -1281,7 +1379,17 @@ const enUS: FeishuCardBuilderStrings = {
     : "Per-file conflict resolution: keep `base`, use the branch version, or hand it to the agent during the review stage",
   mergeForceHint: "Use `/merge --force` to force the merge",
   mergeConflictCount: (count) => `**${count} conflicts**`,
-  mergeNoChangesCleanupHint: "The branch has no new changes. Merging will clean up the worktree and branch",
+  mergeNoChangesCleanupHint: "This branch is up to date with the base. No merge needed.",
+  mergeNoChangesTitle: "Branch management",
+  mergeCleanupWorktree: "**Clean up worktree**",
+  mergeDeleteBranch: "**Delete branch**",
+  mergeReviewCancelConfirmTitle: "Confirm cancel merge review",
+  mergeReviewCancelConfirmText: "Canceling will discard all review progress. The branch will be restored to its pre-merge state.",
+  mergeBatchRetrySelectLabel: "Select files to re-process",
+  mergeBatchRetryFeedbackLabel: "Instructions",
+  mergeBatchRetryFeedbackPlaceholder: "e.g. Prioritize API compatibility and keep the current validation logic",
+  mergeBatchRetrySubmit: "Add retry",
+  mergeDiffBaseline: (baseBranch) => `vs ${baseBranch} (merge base)`,
   mergeConfirm: "**Confirm merge**",
   mergeBack: "**Back**",
   mergeConflictDetail: (hasResolverThread) => hasResolverThread
@@ -1296,6 +1404,11 @@ const enUS: FeishuCardBuilderStrings = {
   mergeResultFailed: "Failed",
   mergeResultSuccessSubtitle: "Branch merged and cleaned up",
   mergeResultFailedSubtitle: "Check conflicts",
+  mergeKeepThread: "**✓ Keep thread**",
+  mergeDeleteThread: "**🗑 Delete thread**",
+  mergeKeepThreadSuccessSubtitle: "Thread kept and ready to use",
+  mergeDeleteThreadSuccessSubtitle: "Thread deleted",
+  mergeBackToThreads: "**Back to Threads**",
 };
 
 export function getFeishuCardBuilderStrings(locale: AppLocale = DEFAULT_APP_LOCALE): FeishuCardBuilderStrings {

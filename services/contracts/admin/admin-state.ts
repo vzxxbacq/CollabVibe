@@ -1,11 +1,12 @@
 export type ProjectRole = "maintainer" | "developer" | "auditor";
 
-export interface ProjectConfig {
+export interface ProjectRecord {
   id: string;
   name: string;
   chatId: string;
   cwd: string;
-  defaultBranch?: string;
+  defaultBranch: string;
+  workBranch: string;
   enabledSkills?: string[];
   gitUrl?: string;
   sandbox: string;
@@ -22,7 +23,7 @@ export interface MemberRecord {
 
 export interface AdminPersistedState {
   wizardStep: Record<string, number>;
-  projects: ProjectConfig[];
+  projects: ProjectRecord[];
   members: Record<string, MemberRecord[]>;
 }
 
@@ -38,6 +39,8 @@ export interface AdminStateStore {
  */
 export interface OrchestratorConfig {
   cwd: string;
+  /** Absolute path to the runtime data directory (logs, db, config). Derived from COLLABVIBE_WORKSPACE_CWD. */
+  dataDir: string;
   sandbox: string;
   approvalPolicy: string;
   server: {

@@ -1,15 +1,9 @@
 import type { RuntimeConfigProvider, RuntimeConfig } from "../../../../packages/agent-core/src/types";
 import type { RuntimeDefaults } from "./runtime-defaults";
 import { createBackendIdentity } from "../../../../packages/agent-core/src/backend-identity";
-import type { ProjectResolver } from "../project-resolver";
+import type { ProjectResolver } from "../project/project-resolver";
+import type { ProjectRecord } from "../../../contracts/admin/admin-state";
 import { ErrorCode, OrchestratorError } from "../errors";
-
-type ProjectLike = {
-  cwd?: string;
-  defaultBranch?: string;
-  sandbox?: string;
-  approvalPolicy?: string;
-};
 
 type RuntimeDefaultsInput = RuntimeDefaults | {
   codex?: {
@@ -17,10 +11,6 @@ type RuntimeDefaultsInput = RuntimeDefaults | {
     cwd?: string;
     sandbox?: string;
     approvalPolicy?: string;
-    serverCmd?: string;
-  };
-  server?: {
-    port?: number;
   };
 };
 
@@ -33,20 +23,16 @@ function normalizeDefaults(defaults: RuntimeDefaultsInput): RuntimeDefaults {
     cwd: defaults.codex?.cwd ?? "",
     sandbox: defaults.codex?.sandbox ?? "",
     approvalPolicy: defaults.codex?.approvalPolicy || "on-request",
-    serverCmd: defaults.codex?.serverCmd ?? "",
-    serverPort: defaults.server?.port ?? 0
   };
 }
 
-function toRuntimeConfig(project: ProjectLike | null, defaults: RuntimeDefaults): RuntimeConfig {
+function toRuntimeConfig(project: ProjectRecord | null, defaults: RuntimeDefaults): RuntimeConfig {
   return {
     backend: defaults.defaultBackend,
     cwd: project?.cwd ?? defaults.cwd,
-    baseBranch: project?.defaultBranch,
+    baseBranch: project?.workBranch,
     sandbox: project?.sandbox ?? defaults.sandbox,
     approvalPolicy: project?.approvalPolicy ?? defaults.approvalPolicy,
-    serverCmd: defaults.serverCmd,
-    serverPort: defaults.serverPort
   };
 }
 

@@ -14,7 +14,6 @@ export interface ManagedProcess extends EventEmitter {
 
 export interface ProcessSpawnConfig {
   serverCmd?: string;
-  serverPort?: number;
   cwd?: string;
   /** Extra env vars for the spawned process (e.g. OPENCODE_CONFIG) */
   env?: Record<string, string>;

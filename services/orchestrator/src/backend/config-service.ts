@@ -153,7 +153,7 @@ export class BackendConfigService {
     private modelStatuses: Map<string, Map<string, ModelInfo[]>> = new Map();
     private dynamicProviders: Map<string, Array<{ name: string; baseUrl?: string; apiKeyEnv?: string }>> = new Map();
 
-    constructor(configDir: string = "data/config") {
+    constructor(configDir: string) {
         this.configDir = configDir;
     }
 
@@ -200,6 +200,20 @@ export class BackendConfigService {
             }
         }
         return configs;
+    }
+
+    /**
+     * Resolve the final serverCmd + env for a backend.
+     * Each backend's buildServerCmd handles its own profile/model-specific overrides.
+     * Callers (FactoryRegistry) don't need to know backend-specific details.
+     */
+    async resolveServerCmd(backendId: string, profileName: string, cwd?: string): Promise<CodexServerCmdResult> {
+        const configs = await this.readAllConfigs();
+        const config = configs.find(c => c.name === backendId);
+        if (!config) {
+            throw new Error(`backend config not found: ${backendId}`);
+        }
+        return config.buildServerCmd(profileName, cwd);
     }
 
     /** Read codex config from data/config/codex.toml */

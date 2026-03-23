@@ -20,6 +20,7 @@ interface TurnRow {
   approval_resolved_at: string | null;
   last_agent_message: string | null;
   token_usage_json: string | null;
+  turn_number: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -41,8 +42,8 @@ export class SqliteTurnRepository implements TurnRepository {
       `INSERT INTO turn_records (
         project_id, chat_id, thread_name, thread_id, turn_id, user_id, trace_id, status,
         cwd, snapshot_sha, files_changed, diff_summary, stats_json, approval_required,
-        approval_resolved_at, last_agent_message, token_usage_json, created_at, updated_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        approval_resolved_at, last_agent_message, token_usage_json, turn_number, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id, turn_id) DO UPDATE SET
         chat_id = excluded.chat_id,
         thread_name = excluded.thread_name,
@@ -59,6 +60,7 @@ export class SqliteTurnRepository implements TurnRepository {
         approval_resolved_at = excluded.approval_resolved_at,
         last_agent_message = excluded.last_agent_message,
         token_usage_json = excluded.token_usage_json,
+        turn_number = excluded.turn_number,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
         completed_at = excluded.completed_at`
@@ -80,6 +82,7 @@ export class SqliteTurnRepository implements TurnRepository {
       record.approvalResolvedAt ?? null,
       record.lastAgentMessage ?? null,
       record.tokenUsage ? JSON.stringify(record.tokenUsage) : null,
+      record.turnNumber ?? null,
       record.createdAt,
       record.updatedAt,
       record.completedAt ?? null,
@@ -146,6 +149,13 @@ export class SqliteTurnRepository implements TurnRepository {
     return row ? this.toRecord(row) : null;
   }
 
+  async getMaxTurnNumber(projectId: string, threadName: string): Promise<number> {
+    const row = this.db.prepare(
+      `SELECT MAX(turn_number) as max_num FROM turn_records WHERE project_id = ? AND thread_name = ?`
+    ).get(projectId, threadName) as { max_num: number | null } | undefined;
+    return row?.max_num ?? 0;
+  }
+
   private toRecord(row: TurnRow): TurnRecord {
     return {
       chatId: row.chat_id,
@@ -165,6 +175,7 @@ export class SqliteTurnRepository implements TurnRepository {
       approvalResolvedAt: row.approval_resolved_at ?? undefined,
       lastAgentMessage: row.last_agent_message ?? undefined,
       tokenUsage: row.token_usage_json ? JSON.parse(row.token_usage_json) as { input: number; output: number; total?: number } : undefined,
+      turnNumber: row.turn_number ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       completedAt: row.completed_at ?? undefined,

@@ -9,16 +9,13 @@
  *
  * NOTE: user management (USER_ADD/ROLE/REMOVE) requires system.admin.
  * Project roles do NOT grant user management ability.
+ *
+ * ProjectRole / EffectiveRole 定义权在 contracts/src/types/iam.ts（唯一来源）。
+ * Permission 枚举和 RolePermissionMap 是 L2 内部实现，保留在此文件。
  */
 
-/** Project-level role — persisted in adminState.members[projectId] */
-export type ProjectRole = "maintainer" | "developer" | "auditor";
-
-/**
- * Effective role — the resolved role used by authorizeIntent.
- * "admin" is derived from UserRepository.isAdmin(), never stored as a ProjectRole.
- */
-export type EffectiveRole = "admin" | ProjectRole;
+import type { ProjectRole, EffectiveRole } from "../../../../services/contracts/src/types/iam";
+export type { ProjectRole, EffectiveRole };
 
 export type Permission =
   // System-level (admin only)

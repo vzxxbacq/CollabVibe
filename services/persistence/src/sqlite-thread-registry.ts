@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { BackendIdentity } from "../../../packages/agent-core/src/backend-identity";
 import { createBackendIdentity, isBackendId } from "../../../packages/agent-core/src/backend-identity";
-import type { ThreadListEntry, ThreadRecord, ThreadRegistry, ThreadReservation } from "../../orchestrator/src/thread-state/thread-registry";
+import type { ThreadListEntry, ThreadRecord, ThreadRegistry, ThreadReservation } from "../../orchestrator/src/thread/thread-registry";
 
 interface ProjectThreadRow {
   thread_id: string;
@@ -14,6 +14,9 @@ interface ProjectThreadRow {
   transport: string;
   model: string | null;
   status: string;
+  base_sha: string | null;
+  has_diverged: number;
+  worktree_path: string | null;
 }
 
 function rowToRecord(row: ProjectThreadRow): ThreadRecord {
@@ -26,10 +29,12 @@ function rowToRecord(row: ProjectThreadRow): ThreadRecord {
   const backend: BackendIdentity = createBackendIdentity(row.backend_name, row.model);
   return {
     projectId: row.project_id,
-    chatId: row.chat_id || undefined,
     threadName: row.thread_name,
     threadId: row.thread_id,
     backend,
+    baseSha: row.base_sha ?? undefined,
+    hasDiverged: row.has_diverged === 1,
+    worktreePath: row.worktree_path ?? undefined,
   };
 }
 
@@ -43,7 +48,6 @@ function rowToListEntry(row: ProjectThreadRow): ThreadListEntry {
   const backend: BackendIdentity = createBackendIdentity(row.backend_name, row.model);
   return {
     projectId: row.project_id,
-    chatId: row.chat_id || undefined,
     threadName: row.thread_name,
     threadId: row.status === "active" ? row.thread_id : undefined,
     status: row.status === "creating" ? "creating" : "active",
@@ -105,14 +109,14 @@ export class SqliteThreadRegistry implements ThreadRegistry {
       ).run(
         reservationId,
         projectId,
-        record.chatId ?? "",
+        "",
         record.threadName,
         record.backend.backendId,
         record.backend.transport,
         record.backend.model,
       );
       this.commit();
-      return { reservationId, projectId, chatId: record.chatId, threadName: record.threadName };
+      return { reservationId, projectId, threadName: record.threadName };
     } catch (error) {
       this.rollback();
       throw error;
@@ -137,7 +141,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
       ).run(
         record.threadId,
         projectId,
-        record.chatId ?? "",
+        "",
         record.threadName,
         record.backend.backendId,
         record.backend.transport,
@@ -176,7 +180,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
       ).run(
         record.threadId,
         projectId,
-        record.chatId ?? "",
+        "",
         record.threadName,
         record.backend.backendId,
         record.backend.transport,
@@ -193,7 +197,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
     const row = this.db
       .prepare(
          `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model
-         , status
+         , status, base_sha, has_diverged, worktree_path
          FROM project_threads
          WHERE project_id = ? AND thread_name = ? AND status = 'active'`
       )
@@ -205,7 +209,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
     const rows = this.db
       .prepare(
          `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model
-         , status
+         , status, base_sha, has_diverged, worktree_path
          FROM project_threads
          WHERE project_id = ? AND status = 'active'`
       )
@@ -227,7 +231,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
   listAll(): ThreadRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model, status
+        `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model, status, base_sha, has_diverged, worktree_path
          FROM project_threads
          WHERE status = 'active'`
       )
@@ -243,12 +247,24 @@ export class SqliteThreadRegistry implements ThreadRegistry {
       .run(projectId, threadName);
   }
 
+  update(projectId: string, threadName: string, patch: Partial<Pick<import("../../orchestrator/src/thread/thread-registry").ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath">>): void {
+    const sets: string[] = [];
+    const params: (string | number | null)[] = [];
+    if (patch.baseSha !== undefined) { sets.push("base_sha = ?"); params.push(patch.baseSha); }
+    if (patch.hasDiverged !== undefined) { sets.push("has_diverged = ?"); params.push(patch.hasDiverged ? 1 : 0); }
+    if (patch.worktreePath !== undefined) { sets.push("worktree_path = ?"); params.push(patch.worktreePath); }
+    if (sets.length === 0) return;
+    params.push(projectId, threadName);
+    this.db.prepare(
+      `UPDATE project_threads SET ${sets.join(", ")} WHERE project_id = ? AND thread_name = ? AND status = 'active'`
+    ).run(...params);
+  }
+
   replaceEmptyThreadId(params: {
     projectId: string;
     threadName: string;
     oldThreadId: string;
     newThreadId: string;
-    chatId?: string;
     backend: BackendIdentity;
   }): void {
     this.beginImmediate();
@@ -266,7 +282,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
             AND status = 'active'`
       ).run(
         params.newThreadId,
-        params.chatId ?? "",
+        "",
         params.backend.backendId,
         params.backend.transport,
         params.backend.model,

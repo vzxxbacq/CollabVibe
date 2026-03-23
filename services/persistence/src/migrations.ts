@@ -416,6 +416,10 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE merge_sessions ADD COLUMN resolver_model TEXT;`,
   `DROP TABLE IF EXISTS skill_allowlist;`,
   `DROP TABLE IF EXISTS project_plugin_bindings;`,
+  `ALTER TABLE project_threads ADD COLUMN base_sha TEXT;`,
+  `ALTER TABLE project_threads ADD COLUMN has_diverged INTEGER NOT NULL DEFAULT 0;`,
+  `ALTER TABLE project_threads ADD COLUMN worktree_path TEXT;`,
+  `ALTER TABLE turn_records ADD COLUMN turn_number INTEGER;`,
 ];
 
 const SCHEMA_VERSIONS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS schema_versions (

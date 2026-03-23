@@ -48,7 +48,7 @@ export class SqliteSnapshotRepository implements SnapshotRepository {
             )
             .run(
                 this.requireProjectId(record.projectId),
-                record.chatId ?? "",
+                "",
                 record.threadId,
                 record.turnId,
                 record.turnIndex,
@@ -102,7 +102,6 @@ export class SqliteSnapshotRepository implements SnapshotRepository {
     private toRecord(row: SqliteSnapshotRow): TurnSnapshotRecord {
         return {
             projectId: row.project_id,
-            chatId: row.chat_id || undefined,
             threadId: row.thread_id,
             turnId: row.turn_id,
             turnIndex: row.turn_index,

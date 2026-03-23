@@ -10,6 +10,7 @@ export const ResultMode = {
   MERGE_FILE_REVIEW: "merge-file-review",
   MERGE_SUMMARY:   "merge-summary",
   MERGE_RESOLVING: "merge-resolving",
+  THREAD_SYNC_TEXT: "thread-sync-text",
   TURN:            "turn",
 } as const;
 
@@ -31,4 +32,5 @@ export type HandleIntentResult =
   | { mode: typeof ResultMode.MERGE_FILE_REVIEW; id: string; fileReview: IMFileMergeReview }
   | { mode: typeof ResultMode.MERGE_SUMMARY; id: string; mergeSummary: IMMergeSummary }
   | { mode: typeof ResultMode.MERGE_RESOLVING; id: string; conflicts: string[] }
+  | { mode: typeof ResultMode.THREAD_SYNC_TEXT; id: string; text: string }
   | { mode: typeof ResultMode.TURN; id: string };

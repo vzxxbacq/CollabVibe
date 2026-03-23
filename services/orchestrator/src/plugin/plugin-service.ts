@@ -10,7 +10,7 @@ import type {
     PluginCatalogStore,
     PluginSourceType,
 } from "../../persistence/src/contracts";
-import type { AdminStateStore, ProjectConfig } from "../../contracts/admin/contracts";
+import type { AdminStateStore, ProjectRecord } from "../../contracts/admin/contracts";
 import { createLogger } from "../../../../packages/logger/src/index";
 import { shallowClone } from "../../../../packages/git-utils/src/index";
 import { ensurePluginSymlink, getWorktreePath, listWorktrees } from "../../../../packages/git-utils/src/worktree";
@@ -232,11 +232,11 @@ export class PluginService {
         return { ok: true, normalizedName };
     }
 
-    private readProjects(): ProjectConfig[] {
+    private readProjects(): ProjectRecord[] {
         return this.adminStateStore?.read().projects ?? [];
     }
 
-    private requireProject(projectId: string): ProjectConfig {
+    private requireProject(projectId: string): ProjectRecord {
         const project = this.readProjects().find((item) => item.id === projectId);
         if (!project) {
             throw new Error(`project not found: ${projectId}`);
@@ -244,7 +244,7 @@ export class PluginService {
         return project;
     }
 
-    private updateProject(projectId: string, mutate: (project: ProjectConfig) => void): ProjectConfig {
+    private updateProject(projectId: string, mutate: (project: ProjectRecord) => void): ProjectRecord {
         if (!this.adminStateStore) {
             throw new Error("adminStateStore is required for project skill operations");
         }
@@ -264,7 +264,7 @@ export class PluginService {
         return [...(this.requireProject(projectId).enabledSkills ?? [])];
     }
 
-    private async syncProjectBackendLinks(project: ProjectConfig): Promise<void> {
+    private async syncProjectBackendLinks(project: ProjectRecord): Promise<void> {
         const enabled = new Set(project.enabledSkills ?? []);
         for (const backendDir of ALL_BACKEND_SKILL_DIRS) {
             const projectSkillDir = pathResolve(project.cwd, backendDir);

@@ -10,7 +10,7 @@
  * | Function                  | Intent           | Returns                    |
  * |---------------------------|------------------|----------------------------|
  * | `createProject()`         | PROJECT_CREATE   | `ProjectCreateResult`      |
- * | `listProjects()`          | PROJECT_LIST     | `ProjectConfig[]`          |
+ * | `listProjects()`          | PROJECT_LIST     | `ProjectRecord[]`          |
  * | `listSkills()`            | SKILL_LIST       | installable skill array    |
  * | `installSkill()`          | SKILL_INSTALL    | installed skill definition |
  * | `removeSkill()`           | SKILL_REMOVE     | boolean                    |
@@ -30,7 +30,7 @@ import type { CoreDeps } from "../handler-types";
 import type { PlatformOutput, TextOutput } from "../../../contracts/im/platform-output";
 import { MAIN_THREAD_NAME } from "../../../../packages/agent-core/src/constants";
 import { createLogger } from "../../../../packages/logger/src/index";
-import type { ProjectConfig } from "../../../contracts/admin/contracts";
+import type { ProjectRecord } from "../../../contracts/admin/contracts";
 import { detectDefaultBranch } from "../../../../packages/git-utils/src/index";
 import { getPlatformCommandStrings } from "./platform-commands.strings";
 
@@ -49,7 +49,7 @@ export interface ProjectCreateResult {
 }
 
 export async function createProject(
-  deps: CoreDeps, chatId: string, userId: string, args: { name?: string; cwd?: string }
+  deps: CoreDeps, chatId: string, userId: string, args: { name?: string; cwd?: string; workBranch?: string }
 ): Promise<ProjectCreateResult> {
   const s = getPlatformCommandStrings(deps.config.locale);
   const existingProject = deps.findProjectByChatId(chatId);
@@ -61,15 +61,16 @@ export async function createProject(
   const cwd = args.cwd || deps.config.cwd;
   const id = `proj-${Date.now().toString(36)}`;
   const now = new Date().toISOString();
-  let defaultBranch: string | undefined;
+  let defaultBranch = "main";
   try {
     defaultBranch = await detectDefaultBranch(cwd);
   } catch (error) {
-    log.warn({ cwd, err: error instanceof Error ? error.message : String(error) }, "createProject: default branch detection failed");
+    log.warn({ cwd, err: error instanceof Error ? error.message : String(error) }, "createProject: default branch detection failed, using 'main'");
   }
+  const workBranch = args.workBranch?.trim() || `collabvibe/${name}`;
   const state = deps.adminStateStore.read();
   state.projects.push({
-    id, name, chatId, cwd, defaultBranch,
+    id, name, chatId, cwd, defaultBranch, workBranch,
     enabledSkills: [],
     sandbox: deps.config.sandbox,
     approvalPolicy: deps.config.approvalPolicy,
@@ -93,7 +94,7 @@ export async function createProject(
 
 // ── PROJECT_LIST ────────────────────────────────────────────────────────────
 
-export function listProjects(deps: CoreDeps): ProjectConfig[] {
+export function listProjects(deps: CoreDeps): ProjectRecord[] {
   return deps.adminStateStore.read().projects;
 }
 

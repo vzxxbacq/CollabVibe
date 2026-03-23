@@ -131,7 +131,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, options?: { env
     })(),
     feishu: platformConfig.feishu,
     slack: platformConfig.slack,
-    cwd: env.COLLABVIBE_WORKSPACE_CWD ?? process.cwd(),
+    cwd: path.resolve(readRequired(env, "COLLABVIBE_WORKSPACE_CWD"), "workspace"),
+    dataDir: path.resolve(readRequired(env, "COLLABVIBE_WORKSPACE_CWD")),
     sandbox: env.CODEX_SANDBOX ?? "workspace-write",
     approvalPolicy: env.CODEX_APPROVAL_POLICY ?? "on-request",
     server: {

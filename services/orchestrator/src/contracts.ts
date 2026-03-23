@@ -5,17 +5,17 @@ export type { ManagedProcess } from "../../../packages/agent-core/src/agent-proc
 export type { RuntimeDefaults } from "./backend/runtime-defaults";
 export { ResultMode } from "./intent/result";
 export type { HandleIntentResult, MergeDiffStats, ResultModeValue } from "./intent/result";
-export type { UserThreadBinding, UserThreadBindingRepository } from "./thread-state/user-thread-binding-types";
-export type { ThreadRecord, ThreadRegistry } from "./thread-state/thread-registry";
-export type { ThreadTurnState } from "./thread-state/thread-turn-state";
-export type { ThreadTurnStateRepository } from "./thread-state/thread-turn-state-repository";
-export { ThreadService } from "./thread-state/thread-service";
-export type { SnapshotRepository, TurnSnapshotRecord } from "./thread-state/snapshot-types";
-export type { TurnRecord, TurnStatus, TurnTokenUsage } from "./turn-state/turn-record";
-export type { TurnRepository } from "./turn-state/turn-repository";
-export type { TurnDetailRecord, TurnPlanState, TurnToolCall, TurnToolOutput, TurnMode } from "./turn-state/turn-detail-record";
-export type { TurnDetailRepository } from "./turn-state/turn-detail-repository";
-export type { TurnListItem, TurnDetailAggregate, RecordTurnStartInput, TurnSummaryPatch, TurnMetadataPatch } from "./turn-types";
+export type { UserThreadBinding, UserThreadBindingRepository } from "./thread/user-thread-binding-types";
+export type { ThreadRecord, ThreadRegistry } from "./thread/thread-registry";
+export type { ThreadTurnState } from "./thread/thread-turn-state";
+export type { ThreadTurnStateRepository } from "./thread/thread-turn-state-repository";
+export { ThreadService } from "./thread/thread-service";
+export type { SnapshotRepository, TurnSnapshotRecord } from "./snapshot/snapshot-types";
+export type { TurnRecord, TurnStatus, TurnTokenUsage } from "./turn/turn-record";
+export type { TurnRepository } from "./turn/turn-repository";
+export type { TurnDetailRecord, TurnPlanState, TurnToolCall, TurnToolOutput, TurnMode } from "./turn/turn-detail-record";
+export type { TurnDetailRepository } from "./turn/turn-detail-repository";
+export type { TurnListItem, TurnDetailAggregate, RecordTurnStartInput, TurnSummaryPatch, TurnMetadataPatch } from "./turn/turn-types";
 export type { InboundWebhookParams, InboundWebhookResult } from "./intent/webhook";
 export type { ConversationState, ApprovalWaitConfig } from "./session/state-machine";
 export type { BackendDefinition } from "./backend/registry";
@@ -24,4 +24,4 @@ export type {
   MergeSessionRepository,
   PersistedMergeSessionFile,
   PersistedMergeSessionRecord,
-} from "./merge-state/merge-session-repository";
+} from "./merge/merge-session-repository";

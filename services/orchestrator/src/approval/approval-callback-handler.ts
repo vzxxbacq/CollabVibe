@@ -1,6 +1,18 @@
 import type { ApprovalDecision, ApprovalDecisionBridge, ApprovalDecisionStore } from "./contracts";
 export type { ApprovalDecision, ApprovalDecisionBridge, ApprovalDecisionStore } from "./contracts";
 
+/**
+ * Build a dedup key scoped to thread to prevent cross-thread collisions.
+ * Backend approval IDs (e.g., Codex `request.id`) restart from 0 per process,
+ * so using raw `approvalId` alone causes spurious duplicates across threads.
+ */
+function approvalDedupKey(decision: ApprovalDecision): string {
+  if (!decision.threadId) {
+    throw new Error(`ApprovalDecision.threadId is required for dedup: approvalId=${decision.approvalId}`);
+  }
+  return `${decision.threadId}:${decision.approvalId}`;
+}
+
 export class ApprovalCallbackHandler {
   private readonly seenApprovalIds = new Set<string>();
 
@@ -25,20 +37,23 @@ export class ApprovalCallbackHandler {
     if (!signatureValid) {
       return "rejected";
     }
-    if (this.seenApprovalIds.has(decision.approvalId) || this.inFlightApprovalIds.has(decision.approvalId)) {
+    const dedupKey = approvalDedupKey(decision);
+    if (this.seenApprovalIds.has(dedupKey) || this.inFlightApprovalIds.has(dedupKey)) {
       return "duplicate";
     }
-    this.inFlightApprovalIds.add(decision.approvalId);
+    this.inFlightApprovalIds.add(dedupKey);
     try {
       await this.store.save(decision);
+      // Pass raw approvalId to backend — the backend expects the original id, not the composite key
       const bridgeResult = await this.bridge.applyDecision(decision.approvalId, decision.action);
-      this.seenApprovalIds.add(decision.approvalId);
+      this.seenApprovalIds.add(dedupKey);
       if (bridgeResult === "duplicate") {
         return "bridge_duplicate";
       }
       return "applied";
     } finally {
-      this.inFlightApprovalIds.delete(decision.approvalId);
+      this.inFlightApprovalIds.delete(dedupKey);
     }
   }
 }
+

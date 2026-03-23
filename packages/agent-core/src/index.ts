@@ -9,6 +9,7 @@ export type {
   StoredProvider,
   StoredProfile,
   BackendConfigData,
+  BackendCmdResult,
   CodexServerCmdResult
 } from "./backend-config-types";
 
@@ -54,3 +55,24 @@ export type { EventMsg } from "./transports/codex/generated/EventMsg";
 // Transport implementations (merged from codex-client + acp-client)
 export { CodexProtocolApiFactory } from "./transports/codex/codex-api-factory";
 export { AcpApiFactory } from "./transports/acp/acp-api-factory";
+
+// ── Transport factory assembly ──────────────────────────────────────────────
+// Exposes a public API so L2 can obtain transport factories without importing
+// internal `transports/` paths directly.
+
+import type { AgentApiFactory as _AgentApiFactory } from "./types";
+import { AgentProcessManager as _AgentProcessManager } from "./agent-process-manager";
+import { CodexProtocolApiFactory as _CodexFactory } from "./transports/codex/codex-api-factory";
+import { AcpApiFactory as _AcpFactory } from "./transports/acp/acp-api-factory";
+
+/**
+ * Create the default set of transport factories (codex + acp).
+ * L2 calls this from `createOrchestratorLayer` so it never imports transport internals.
+ */
+export function createDefaultTransportFactories(): Record<string, _AgentApiFactory> {
+  const processManager = new _AgentProcessManager();
+  return {
+    codex: new _CodexFactory(processManager),
+    acp: new _AcpFactory(),
+  };
+}

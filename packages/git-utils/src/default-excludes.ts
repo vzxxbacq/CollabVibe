@@ -8,8 +8,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
-/** Config file path relative to project root. */
-const CONFIG_RELATIVE_PATH = "data/config/default.gitignore";
+/** Config file path relative to workspace data dir. */
+const CONFIG_FILE = "data/config/default.gitignore";
 
 /**
  * Built-in fallback patterns — written to the config file only when it
@@ -71,8 +71,11 @@ let resolvedPath: string | null = null;
  */
 export function getDefaultExcludesArgs(_cwd?: string): string[] {
     if (!resolvedPath) {
-        const base = process.cwd();
-        resolvedPath = join(base, CONFIG_RELATIVE_PATH);
+        const workspaceCwd = process.env.COLLABVIBE_WORKSPACE_CWD;
+        if (!workspaceCwd) {
+            throw new Error("COLLABVIBE_WORKSPACE_CWD is required but not set");
+        }
+        resolvedPath = join(workspaceCwd, CONFIG_FILE);
 
         if (!existsSync(resolvedPath)) {
             mkdirSync(dirname(resolvedPath), { recursive: true });

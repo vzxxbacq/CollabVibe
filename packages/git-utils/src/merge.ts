@@ -284,9 +284,6 @@ export async function mergeWorktree(
             ({ stdout } = await git(["merge", branchName, "--no-edit"], mainCwd, { logContext: context }));
         }
 
-        await removeWorktree(mainCwd, worktreePath, branchName);
-        logger.info({ worktreePath, branchName }, "merge: removed worktree");
-
         return { success: true, message: stdout.trim() };
     } catch (err) {
         const errObj = err as Error & { stderr?: string; stdout?: string };

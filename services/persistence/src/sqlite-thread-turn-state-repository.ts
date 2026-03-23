@@ -38,7 +38,7 @@ export class SqliteThreadTurnStateRepository implements ThreadTurnStateRepositor
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(
       this.requireProjectId(state.projectId),
-      state.chatId ?? "",
+      "",
       state.threadName,
       state.activeTurnId ?? null,
       state.blockingTurnId ?? null,
@@ -50,7 +50,6 @@ export class SqliteThreadTurnStateRepository implements ThreadTurnStateRepositor
   private toState(row: ThreadTurnStateRow): ThreadTurnState {
     return {
       projectId: row.project_id,
-      chatId: row.chat_id || undefined,
       threadName: row.thread_name,
       activeTurnId: row.active_turn_id ?? undefined,
       blockingTurnId: row.blocking_turn_id ?? undefined,

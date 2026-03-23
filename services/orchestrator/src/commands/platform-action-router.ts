@@ -5,6 +5,8 @@ import type {
   AdminUserToggleAction,
   ApprovalDecisionAction,
   HelpPanelAction,
+  HelpProjectSaveAction,
+  HelpProjectPushAction,
   HelpSkillInstallAction,
   HelpSkillRemoveAction,
   HelpThreadNewAction,
@@ -12,9 +14,12 @@ import type {
   UserInputReplyAction,
   MergeAcceptAllAction,
   MergeAgentAssistAction,
+  MergeBatchRetryAction,
   MergeCancelAction,
   MergeCommitAction,
   MergeConfirmAction,
+  KeepMergedThreadAction,
+  DeleteMergedThreadAction,
   MergeFileDecisionAction,
   MergeReviewCancelAction,
   MergePreviewAction,
@@ -110,9 +115,14 @@ export interface PlatformActionExecutor<Deps, Result = unknown> {
   mergeFileDecision?(deps: Deps, action: MergeFileDecisionAction): Promise<Result>;
   mergeAcceptAll?(deps: Deps, action: MergeAcceptAllAction): Promise<Result>;
   mergeAgentAssist?(deps: Deps, action: MergeAgentAssistAction): Promise<Result>;
+  mergeBatchRetry?(deps: Deps, action: MergeBatchRetryAction): Promise<Result>;
   mergeCommit?(deps: Deps, action: MergeCommitAction): Promise<Result>;
+  keepMergedThread?(deps: Deps, action: KeepMergedThreadAction): Promise<Result>;
+  deleteMergedThread?(deps: Deps, action: DeleteMergedThreadAction): Promise<Result>;
   adminUserToggle?(deps: Deps, action: AdminUserToggleAction): Promise<Result>;
   helpPanel?(deps: Deps, action: HelpPanelAction): Promise<Result>;
+  helpProjectSave?(deps: Deps, action: HelpProjectSaveAction): Promise<Result>;
+  helpProjectPush?(deps: Deps, action: HelpProjectPushAction): Promise<Result>;
   helpThreadNew?(deps: Deps, action: HelpThreadNewAction): Promise<Result>;
   // Project init / bind
   initProject?(deps: Deps, action: InitProjectAction): Promise<Result>;
@@ -224,12 +234,22 @@ export class PlatformActionRouter<Deps, Result = unknown> {
         return this.executor.mergeAcceptAll?.(deps, action);
       case "merge_agent_assist":
         return this.executor.mergeAgentAssist?.(deps, action);
+      case "merge_batch_retry":
+        return this.executor.mergeBatchRetry?.(deps, action);
       case "merge_commit":
         return this.executor.mergeCommit?.(deps, action);
+      case "keep_merged_thread":
+        return this.executor.keepMergedThread?.(deps, action);
+      case "delete_merged_thread":
+        return this.executor.deleteMergedThread?.(deps, action);
       case "admin_user_toggle":
         return this.executor.adminUserToggle?.(deps, action);
       case "help_panel":
         return this.executor.helpPanel?.(deps, action);
+      case "help_project_save":
+        return this.executor.helpProjectSave?.(deps, action);
+      case "help_project_push":
+        return this.executor.helpProjectPush?.(deps, action);
       case "help_thread_new":
         return this.executor.helpThreadNew?.(deps, action);
       // Project init / bind

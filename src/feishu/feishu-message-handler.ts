@@ -621,8 +621,8 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
         const resolverCwd = `${baseCwd}--${resolverThreadName}`;
 
         // Record the turn start for snapshot/revert support
-        await deps.orchestrator.recordTurnStart(projectForMerge.id, chatId, resolverThreadName, resolverThreadId, result.resolverThread.turnId, resolverCwd, userId, traceId);
-        deps.platformOutput.setCardThreadName(chatId, resolverTurnId, resolverThreadName);
+        const { turnNumber: resolverTurnNumber } = await deps.orchestrator.recordTurnStart(projectForMerge.id, chatId, resolverThreadName, resolverThreadId, result.resolverThread.turnId, resolverCwd, userId, traceId);
+        deps.platformOutput.setCardThreadName(chatId, resolverTurnId, resolverThreadName, resolverTurnNumber);
         requestLog.info({ resolverThreadId, resolverThreadName, resolverTurnId }, "merge-resolver turn started");
       }
       return;
@@ -636,6 +636,11 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
         baseBranch: typeof (result as { baseBranch?: unknown }).baseBranch === "string" ? (result as { baseBranch: string }).baseBranch : "main",
         message: result.message ?? s.mergeDone
       });
+      return;
+    }
+
+    if (result.mode === ResultMode.THREAD_SYNC_TEXT) {
+      await dispatcher.dispatch(chatId, { kind: "text", text: result.text });
       return;
     }
 
@@ -655,10 +660,10 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
 
     const baseCwd = projectForTurn.cwd;
     const turnCwd = threadName !== threadId ? `${baseCwd}--${threadName}` : baseCwd;
-    await deps.orchestrator.recordTurnStart(projectForTurn.id, chatId, threadName, threadId, result.id, turnCwd, userId, traceId);
+    const { turnNumber } = await deps.orchestrator.recordTurnStart(projectForTurn.id, chatId, threadName, threadId, result.id, turnCwd, userId, traceId);
 
     if (threadName !== threadId) {
-      deps.platformOutput.setCardThreadName(chatId, result.id, threadName);
+      deps.platformOutput.setCardThreadName(chatId, result.id, threadName, turnNumber);
     }
     // Set per-turn backend/model info on the card (not shared across turns)
     if (displayBackend || displayModel) {

@@ -7,8 +7,8 @@ import * as path from "node:path";
 import type { LogEntry } from "./logger";
 
 export interface FileLogSinkOptions {
-    /** 日志目录，默认 "data/logs" */
-    dir?: string;
+    /** 日志目录（必填，由 caller 从 config.dataDir 派生） */
+    dir: string;
     /** 单文件最大字节数，默认 10MB */
     maxSizeBytes?: number;
     /** 保留历史文件数，默认 5 */
@@ -17,7 +17,6 @@ export interface FileLogSinkOptions {
     baseName?: string;
 }
 
-const DEFAULT_DIR = "data/logs";
 const DEFAULT_MAX_SIZE = 10 * 1024 * 1024; // 10MB
 const DEFAULT_MAX_FILES = 5;
 const DEFAULT_BASE_NAME = "app";
@@ -28,10 +27,10 @@ const DEFAULT_BASE_NAME = "app";
  * 每条日志以 JSON 单行写入，格式与 pino 原生输出一致。
  * 超过 maxSizeBytes 时触发轮转：app.log → app.1.log → app.2.log → ...
  *
- * 环境变量覆盖：LOG_DIR, LOG_MAX_SIZE, LOG_MAX_FILES
+ * 环境变量覆盖：LOG_MAX_SIZE, LOG_MAX_FILES
  */
-export function createFileLogSink(options?: FileLogSinkOptions): (entry: LogEntry) => void {
-    const dir = process.env.LOG_DIR || options?.dir || DEFAULT_DIR;
+export function createFileLogSink(options: FileLogSinkOptions): (entry: LogEntry) => void {
+    const dir = process.env.LOG_DIR || options.dir;
     const maxSize = Number(process.env.LOG_MAX_SIZE) || options?.maxSizeBytes || DEFAULT_MAX_SIZE;
     const maxFiles = Number(process.env.LOG_MAX_FILES) || options?.maxFiles || DEFAULT_MAX_FILES;
     const baseName = options?.baseName || DEFAULT_BASE_NAME;

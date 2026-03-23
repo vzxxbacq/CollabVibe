@@ -1,6 +1,6 @@
-import type { EffectiveRole } from "../../orchestrator/src/iam/permissions";
-import type { AdminPersistedState, AdminStateStore, MemberRecord, ProjectConfig, ProjectRole } from "./contracts";
-export type { AdminPersistedState, AdminStateStore, MemberRecord, ProjectConfig, ProjectRole } from "./contracts";
+import type { EffectiveRole } from "../src/types/iam";
+import type { AdminPersistedState, AdminStateStore, MemberRecord, ProjectRecord, ProjectRole } from "./contracts";
+export type { AdminPersistedState, AdminStateStore, MemberRecord, ProjectRecord, ProjectRole } from "./contracts";
 
 export interface FeishuConfigInput {
   appId: string;
@@ -47,7 +47,7 @@ export class AdminApiService {
 
   private readonly wizardStep = new Map<string, number>();
 
-  private readonly projects = new Map<string, ProjectConfig>();
+  private readonly projects = new Map<string, ProjectRecord>();
 
   private readonly chatBindings = new Set<string>();
 
@@ -113,7 +113,7 @@ export class AdminApiService {
     await this.secretStore.write(`feishu:${orgId}:signingSecret`, config.signingSecret);
   }
 
-  async createProject(input: Omit<ProjectConfig, "status" | "createdAt" | "updatedAt" | "enabledSkills"> & { enabledSkills?: string[] }): Promise<ProjectConfig> {
+  async createProject(input: Omit<ProjectRecord, "status" | "createdAt" | "updatedAt" | "enabledSkills"> & { enabledSkills?: string[] }): Promise<ProjectRecord> {
     if ([...this.projects.values()].some((project) => project.name === input.name)) {
       throw new Error("project name already exists");
     }
@@ -122,7 +122,7 @@ export class AdminApiService {
     }
 
     const now = new Date().toISOString();
-    const project: ProjectConfig = {
+    const project: ProjectRecord = {
       ...input,
       enabledSkills: input.enabledSkills ?? [],
       status: "active",
@@ -136,11 +136,11 @@ export class AdminApiService {
     return project;
   }
 
-  listProjects(): ProjectConfig[] {
+  listProjects(): ProjectRecord[] {
     return [...this.projects.values()];
   }
 
-  findProjectByChatId(chatId: string): ProjectConfig | null {
+  findProjectByChatId(chatId: string): ProjectRecord | null {
     for (const project of this.projects.values()) {
       if (project.chatId === chatId) {
         return { ...project };
@@ -149,7 +149,7 @@ export class AdminApiService {
     return null;
   }
 
-  updateProjectStatus(projectId: string, status: "active" | "disabled"): ProjectConfig {
+  updateProjectStatus(projectId: string, status: "active" | "disabled"): ProjectRecord {
     const project = this.projects.get(projectId);
     if (!project) {
       throw new Error("project not found");
@@ -164,7 +164,7 @@ export class AdminApiService {
    * Update project metadata (name, gitUrl).
    * Name uniqueness is enforced within the same org scope.
    */
-  updateProject(projectId: string, patch: { name?: string; gitUrl?: string }): ProjectConfig {
+  updateProject(projectId: string, patch: { name?: string; gitUrl?: string }): ProjectRecord {
     const project = this.projects.get(projectId);
     if (!project) {
       throw new Error("project not found");
@@ -174,7 +174,7 @@ export class AdminApiService {
         throw new Error("project name already exists");
       }
     }
-    const updated: ProjectConfig = {
+    const updated: ProjectRecord = {
       ...project,
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.gitUrl !== undefined ? { gitUrl: patch.gitUrl } : {}),
@@ -189,7 +189,7 @@ export class AdminApiService {
    * Rebind a project to a different chat.
    * Pass empty string to unbind (release chatId without binding to new).
    */
-  rebindChat(projectId: string, newChatId: string): ProjectConfig {
+  rebindChat(projectId: string, newChatId: string): ProjectRecord {
     const project = this.projects.get(projectId);
     if (!project) {
       throw new Error("project not found");
@@ -205,7 +205,7 @@ export class AdminApiService {
     if (newChatId) {
       this.chatBindings.add(newChatId);
     }
-    const updated: ProjectConfig = {
+    const updated: ProjectRecord = {
       ...project,
       chatId: newChatId,
       updatedAt: new Date().toISOString()
@@ -238,7 +238,7 @@ export class AdminApiService {
    * List projects that have no active chat binding (chatId is empty).
    * Used by Init Card dual-mode to offer "bind existing project" option.
    */
-  listUnboundProjects(): ProjectConfig[] {
+  listUnboundProjects(): ProjectRecord[] {
     return [...this.projects.values()].filter(p => !p.chatId);
   }
 

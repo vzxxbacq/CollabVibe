@@ -41,7 +41,7 @@ export class FeishuOutputGateway implements OutputGateway {
         await this.deps.platformOutput.updateProgress(chatId, output.data);
         return;
       case "notification":
-        await this.deps.feishuAdapter.sendMessage({ chatId, text: this.renderer.renderNotification(output.data) });
+        await this.deps.platformOutput.notify(chatId, output.data);
         return;
       case "thread_operation":
         await this.deps.platformOutput.sendThreadOperation(chatId, output.data);

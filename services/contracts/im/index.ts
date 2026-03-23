@@ -17,4 +17,5 @@ export * from "./platform-input";
 export * from "./platform-action";
 export * from "./platform-output";
 export * from "./input-parser";
+export * from "./merge-naming";
 export { MAIN_THREAD_NAME } from "../../../packages/agent-core/src/constants";

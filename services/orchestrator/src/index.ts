@@ -30,7 +30,7 @@ export type { CreateThreadOptions, CreateThreadResult } from "./orchestrator";
 export { PluginService } from "./plugin/plugin-service";
 
 // ── Project setup (moved from src/services → orchestrator layer) ──
-export { ProjectSetupService } from "./project-setup-service";
+export { ProjectSetupService } from "./project/project-service";
 
 // ── Intent result types (used by message handlers for result dispatch) ──
 export { ResultMode } from "./intent/result";
@@ -40,11 +40,11 @@ export type { HandleIntentResult } from "./intent/result";
 export * from "./contracts";
 
 // ── Types needed for OrchestratorLike / external type consumers ──
-export type { TurnRecord, TurnStatus, TurnTokenUsage } from "./turn-state/turn-record";
-export type { TurnDetailRecord, TurnPlanState, TurnToolCall, TurnToolOutput, TurnMode } from "./turn-state/turn-detail-record";
-export type { TurnListItem, TurnDetailAggregate, RecordTurnStartInput, TurnSummaryPatch, TurnMetadataPatch } from "./turn-types";
-export type { ThreadTurnState } from "./thread-state/thread-turn-state";
-export type { ProjectResolver, ProjectContextRecord } from "./project-resolver";
+export type { TurnRecord, TurnStatus, TurnTokenUsage } from "./turn/turn-record";
+export type { TurnDetailRecord, TurnPlanState, TurnToolCall, TurnToolOutput, TurnMode } from "./turn/turn-detail-record";
+export type { TurnListItem, TurnDetailAggregate, RecordTurnStartInput, TurnSummaryPatch, TurnMetadataPatch } from "./turn/turn-types";
+export type { ThreadTurnState } from "./thread/thread-turn-state";
+export type { ProjectResolver } from "./project/project-resolver";
 export type { BackendSessionResolver, ResolvedBackendSession, AvailableBackend } from "./backend/session-resolver";
 export type { UnifiedAgentEvent } from "../../../packages/agent-core/src/unified-agent-event";
 export type { RouteBinding } from "./event/pipeline";

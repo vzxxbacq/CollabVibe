@@ -36,9 +36,10 @@ import {
 import { createLogger } from "../../../packages/logger/src/index";
 import { DEFAULT_APP_LOCALE, type AppLocale } from "../../../services/contracts/im/app-locale";
 import { MAIN_THREAD_NAME } from "../../../services/contracts/im/index";
-import type { FeishuCardStateStore } from "./feishu-card-state-store";
+
 import { getFeishuOutputAdapterStrings } from "./feishu-output-adapter.strings";
 import { TurnCardManager, type TurnCardMessageClient } from "./feishu-turn-card";
+import type { TurnCardDataProvider } from "../../../services/contracts/im/turn-card-data-provider";
 import {
   buildThreadListCard,
   buildMergePreviewCard,
@@ -53,6 +54,7 @@ import {
   buildInitSuccessCard,
   buildProjectResumedCard,
   buildHelpCard,
+  buildHelpProjectCard,
   buildHelpThreadCard,
   buildHelpThreadNewCard,
   buildHelpMergeCard,
@@ -97,6 +99,7 @@ export {
   buildInitSuccessCard,
   buildProjectResumedCard,
   buildHelpCard,
+  buildHelpProjectCard,
   buildHelpThreadCard,
   buildHelpThreadNewCard,
   buildHelpMergeCard,
@@ -138,7 +141,7 @@ export class FeishuOutputAdapter {
 
   constructor(
     private readonly client: FeishuMessageClient,
-    options?: { cardThrottleMs?: number; cardStateStore?: FeishuCardStateStore; locale?: AppLocale }
+    options?: { cardThrottleMs?: number; turnCardDataProvider?: TurnCardDataProvider; locale?: AppLocale }
   ) {
     this.locale = options?.locale ?? DEFAULT_APP_LOCALE;
     this.turnCard = new TurnCardManager(client, { ...options, locale: this.locale });
@@ -169,8 +172,8 @@ export class FeishuOutputAdapter {
   }
 
   /** Set thread name on a turn card early (before completeTurn). */
-  setCardThreadName(chatId: string, turnId: string, threadName: string): void {
-    this.turnCard.setCardThreadName(chatId, turnId, threadName);
+  setCardThreadName(chatId: string, turnId: string, threadName: string, turnNumber?: number): void {
+    this.turnCard.setCardThreadName(chatId, turnId, threadName, turnNumber);
   }
 
   // ── AgentStreamOutput methods (Path B: streaming events) ───────────────
@@ -252,7 +255,12 @@ export class FeishuOutputAdapter {
       : firstLine;
 
     const isLong = desc.length > TRUNCATE_THRESHOLD;
+    // Enrich turnNumber from TurnCardManager cached state (turn card is created before approval events)
+    const turnNumber = req.turnNumber ?? this.turnCard.getCachedState(chatId, req.turnId)?.turnNumber;
     const threadLabel = req.threadName || req.threadId;
+    const subtitleLabel = turnNumber != null
+      ? `${threadLabel} · Turn ${turnNumber}`
+      : threadLabel;
     const createdAtLabel = this.formatApprovalTime(req.createdAt);
     const changedFiles = Object.keys(req.changes ?? {});
     const filePreview = changedFiles.slice(0, 3);
@@ -366,7 +374,7 @@ export class FeishuOutputAdapter {
       schema: "2.0",
       header: {
         title: { tag: "plain_text", content: this.approvalTitle(req) },
-        subtitle: { tag: "plain_text", content: s.approvalSubtitle(threadLabel, createdAtLabel) },
+        subtitle: { tag: "plain_text", content: s.approvalSubtitle(subtitleLabel, createdAtLabel) },
         icon: {
           tag: "standard_icon",
           token: req.approvalType === "command_exec" ? "safe_outlined" : "file-detail_outlined",
@@ -822,6 +830,10 @@ export class FeishuOutputAdapter {
     ownerId: string,
     opts?: Parameters<typeof buildHelpCard>[1]
   ) { return buildHelpCard(ownerId, { ...opts, locale: this.locale }); }
+  buildHelpProjectCard(
+    data: Parameters<typeof buildHelpProjectCard>[0],
+    ownerId: string
+  ) { return buildHelpProjectCard(data, ownerId, this.locale); }
   buildThreadListCard(
     threads: Array<{
       threadName: string;
@@ -851,7 +863,8 @@ export class FeishuOutputAdapter {
     success: boolean,
     message: string,
     diffStats?: Parameters<typeof buildMergeResultCard>[4],
-  ) { return buildMergeResultCard(branchName, baseBranch, success, message, diffStats, this.locale); }
+    threadAction?: Parameters<typeof buildMergeResultCard>[6],
+  ) { return buildMergeResultCard(branchName, baseBranch, success, message, diffStats, this.locale, threadAction); }
   buildSnapshotHistoryCard(
     snapshots: Array<{ turnId: string; turnIndex: number; agentSummary?: string; filesChanged?: string[]; createdAt: string; isCurrent: boolean }>,
     threadId: string,

@@ -19,7 +19,7 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     if (!chatId || !actorId || !action) return null;
 
     const base = { platform: "feishu" as const, chatId, actorId, raw: event };
-    if (action === "interrupt") return { kind: "turn_interrupt", turnId: typeof actionValue.turnId === "string" ? actionValue.turnId : undefined, ...base };
+    if (action === "interrupt") return { kind: "turn_interrupt", turnId: typeof actionValue.turnId === "string" ? actionValue.turnId : undefined, threadName: typeof actionValue.threadName === "string" ? actionValue.threadName : undefined, ...base };
     if (action === "create_thread") {
       const formValue = payload.action?.form_value ?? {};
       const backendModelRaw = String(formValue.backend_model ?? actionValue.backend_model ?? "").trim();
@@ -53,17 +53,17 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
       };
     }
     if (action === "help_switch_thread") {
-      return { kind: "thread_join", threadName: String(actionValue.threadName ?? ""), ...base };
+      return { kind: "thread_join", threadName: String(actionValue.threadName ?? ""), fromHelp: true, ...base };
     }
     if (action === "help_switch_to_main") {
-      return { kind: "thread_leave", ...base };
+      return { kind: "thread_leave", fromHelp: true, ...base };
     }
     if (action === "accept_changes" && typeof actionValue.turnId === "string") return { kind: "turn_accept", turnId: actionValue.turnId, ...base };
     if (action === "revert_changes" && typeof actionValue.turnId === "string") return { kind: "turn_revert", turnId: actionValue.turnId, ...base };
     if (action === "approve" || action === "deny" || action === "approve_always") {
       return {
         kind: "approval_decision",
-        approvalId: String(actionValue.callId ?? ""),
+        approvalId: String(actionValue.approvalId ?? ""),
         decision: action,
         threadId: typeof actionValue.threadId === "string" ? actionValue.threadId : undefined,
         turnId: typeof actionValue.turnId === "string" ? actionValue.turnId : undefined,
@@ -95,7 +95,15 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     if (action === "merge_agent_assist_form") return { kind: "merge_review_agent_assist_form", branchName: String(actionValue.branchName ?? ""), ...base };
     if (action === "merge_accept_all") return { kind: "merge_accept_all", branchName: String(actionValue.branchName ?? ""), ...base };
     if (action === "merge_agent_assist_submit") return { kind: "merge_agent_assist", branchName: String(actionValue.branchName ?? ""), prompt: typeof actionValue.prompt === "string" ? actionValue.prompt : undefined, ...base };
+    if (action === "merge_batch_retry") {
+      const formValue = payload.action?.form_value ?? {};
+      const files = Array.isArray(formValue.batch_retry_files) ? formValue.batch_retry_files.map(String) : [];
+      const feedback = typeof formValue.batch_retry_feedback === "string" ? formValue.batch_retry_feedback : "";
+      return { kind: "merge_batch_retry", branchName: String(actionValue.branchName ?? ""), files, feedback, ...base };
+    }
     if (action === "merge_commit") return { kind: "merge_commit", branchName: String(actionValue.branchName ?? ""), ...base };
+    if (action === "keep_merged_thread") return { kind: "keep_merged_thread", branchName: String(actionValue.branchName ?? ""), ...base };
+    if (action === "delete_merged_thread") return { kind: "delete_merged_thread", branchName: String(actionValue.branchName ?? ""), projectId: String(actionValue.projectId ?? ""), ...base };
     if (action === "view_file_changes" || action === "file_changes_page") {
       return {
         kind: "turn_view_file_changes",
@@ -171,8 +179,14 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     if (action === "help_thread_new") {
       return { kind: "help_thread_new", messageId: String(payload.context?.open_message_id ?? ""), ...base };
     }
-    if (action === "help_home" || action === "help_threads" || action === "help_history" || action === "help_skills" || action === "help_backends" || action === "help_turns" || action === "help_merge") {
+    if (action === "help_home" || action === "help_threads" || action === "help_history" || action === "help_skills" || action === "help_backends" || action === "help_turns" || action === "help_merge" || action === "help_project") {
       return { kind: "help_panel", panel: action, messageId: String(payload.context?.open_message_id ?? ""), ...base };
+    }
+    if (action === "help_project_save") {
+      return { kind: "help_project_save", projectId: String(actionValue.projectId ?? ""), messageId: String(payload.context?.open_message_id ?? ""), ...base };
+    }
+    if (action === "help_project_push") {
+      return { kind: "help_project_push", projectId: String(actionValue.projectId ?? ""), messageId: String(payload.context?.open_message_id ?? ""), ...base };
     }
     if (action === "help_skill_install") return { kind: "help_skill_install", skillName: String(actionValue.skillName ?? ""), ...base };
     if (action === "help_skill_remove") return { kind: "help_skill_remove", name: String(actionValue.name ?? ""), ...base };
@@ -242,4 +256,3 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     return { kind: "raw", actionId: action, ...base };
   }
 }
-

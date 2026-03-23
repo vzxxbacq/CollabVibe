@@ -441,44 +441,87 @@ export function buildMergePreviewCard(
   elements.push({ tag: "hr" });
   if (canMerge) {
     if (diffStats.filesChanged.length === 0) {
+      // No-change case: show branch management (cleanup/delete) instead of merge
       elements.push(greyText(txt.mergeNoChangesCleanupHint));
+      elements.push({
+        tag: "column_set",
+        flex_mode: "bisect",
+        background_style: "default",
+        horizontal_spacing: "default",
+        columns: [
+          {
+            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+            elements: [{
+              tag: "interactive_container",
+              width: "fill", height: "auto",
+              has_border: true, border_color: "grey", corner_radius: "8px",
+              padding: "10px 12px 10px 12px",
+              confirm: {
+                title: { tag: "plain_text", content: txt.mergeDeleteBranch },
+                text: { tag: "plain_text", content: txt.mergeNoChangesCleanupHint }
+              },
+              behaviors: [{ type: "callback", value: { action: "delete_merged_thread", branchName, projectId: chatId } }],
+              elements: [{
+                tag: "markdown", content: txt.mergeDeleteBranch,
+                icon: { tag: "standard_icon", token: "delete_outlined", color: "red" }
+              }]
+            }]
+          },
+          {
+            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+            elements: [{
+              tag: "interactive_container",
+              width: "fill", height: "auto",
+              has_border: true, border_color: "grey", corner_radius: "8px",
+              padding: "10px 12px 10px 12px",
+              behaviors: [{ type: "callback", value: { action: "help_merge", ownerId, branchName } }],
+              elements: [{
+                tag: "markdown", content: txt.mergeBack,
+                icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
+              }]
+            }]
+          }
+        ]
+      });
+    } else {
+      // Normal merge case
+      elements.push({
+        tag: "column_set",
+        flex_mode: "bisect",
+        background_style: "default",
+        horizontal_spacing: "default",
+        columns: [
+          {
+            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+            elements: [{
+              tag: "interactive_container",
+              width: "fill", height: "auto",
+              has_border: true, border_color: "grey", corner_radius: "8px",
+              padding: "10px 12px 10px 12px",
+              behaviors: [{ type: "callback", value: { action: "confirm_merge", chatId, branchName, baseBranch } }],
+              elements: [{
+                tag: "markdown", content: txt.mergeConfirm,
+                icon: { tag: "standard_icon", token: "check_outlined", color: "green" }
+              }]
+            }]
+          },
+          {
+            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+            elements: [{
+              tag: "interactive_container",
+              width: "fill", height: "auto",
+              has_border: true, border_color: "grey", corner_radius: "8px",
+              padding: "10px 12px 10px 12px",
+              behaviors: [{ type: "callback", value: { action: "help_merge", ownerId, branchName } }],
+              elements: [{
+                tag: "markdown", content: txt.mergeBack,
+                icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
+              }]
+            }]
+          }
+        ]
+      });
     }
-    elements.push({
-      tag: "column_set",
-      flex_mode: "bisect",
-      background_style: "default",
-      horizontal_spacing: "default",
-      columns: [
-        {
-          tag: "column", width: "weighted", weight: 1, vertical_align: "center",
-          elements: [{
-            tag: "interactive_container",
-            width: "fill", height: "auto",
-            has_border: true, border_color: "grey", corner_radius: "8px",
-            padding: "10px 12px 10px 12px",
-            behaviors: [{ type: "callback", value: { action: "confirm_merge", chatId, branchName, baseBranch } }],
-            elements: [{
-              tag: "markdown", content: txt.mergeConfirm,
-              icon: { tag: "standard_icon", token: "check_outlined", color: "green" }
-            }]
-          }]
-        },
-        {
-          tag: "column", width: "weighted", weight: 1, vertical_align: "center",
-          elements: [{
-            tag: "interactive_container",
-            width: "fill", height: "auto",
-            has_border: true, border_color: "grey", corner_radius: "8px",
-            padding: "10px 12px 10px 12px",
-            behaviors: [{ type: "callback", value: { action: "help_merge", ownerId, branchName } }],
-            elements: [{
-              tag: "markdown", content: txt.mergeBack,
-              icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
-            }]
-          }]
-        }
-      ]
-    });
   } else {
     elements.push({
       tag: "markdown",
@@ -565,6 +608,7 @@ export function buildMergeResultCard(
   message: string,
   diffStats?: MergeDiffStats,
   locale: AppLocale = DEFAULT_APP_LOCALE,
+  threadAction?: { projectId: string; chatId: string },
 ): Record<string, unknown> {
   const txt = getFeishuCardBuilderStrings(locale);
   const elements: Record<string, unknown>[] = [];
@@ -581,6 +625,52 @@ export function buildMergeResultCard(
   if (message) {
     elements.push({ tag: "hr" });
     elements.push({ tag: "markdown", content: `\`\`\`\n${message.slice(0, 500)}\n\`\`\`` });
+  }
+
+  // Thread action buttons (only on success)
+  if (success && threadAction) {
+    elements.push({ tag: "hr" });
+    elements.push({
+      tag: "column_set",
+      flex_mode: "bisect",
+      background_style: "default",
+      horizontal_spacing: "default",
+      columns: [
+        {
+          tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+          elements: [{
+            tag: "interactive_container",
+            width: "fill", height: "auto",
+            has_border: true, border_color: "grey", corner_radius: "8px",
+            padding: "10px 12px 10px 12px",
+            behaviors: [{ type: "callback", value: { action: "keep_merged_thread", branchName } }],
+            elements: [{
+              tag: "markdown", content: txt.mergeKeepThread,
+              icon: { tag: "standard_icon", token: "check_outlined", color: "blue" }
+            }]
+          }]
+        },
+        {
+          tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+          elements: [{
+            tag: "interactive_container",
+            width: "fill", height: "auto",
+            has_border: true, border_color: "red", corner_radius: "8px",
+            padding: "10px 12px 10px 12px",
+            behaviors: [{ type: "callback", value: {
+              action: "delete_merged_thread",
+              branchName,
+              projectId: threadAction.projectId,
+              chatId: threadAction.chatId,
+            } }],
+            elements: [{
+              tag: "markdown", content: txt.mergeDeleteThread,
+              icon: { tag: "standard_icon", token: "delete_outlined", color: "red" }
+            }]
+          }]
+        }
+      ]
+    });
   }
 
   const resultTags: Record<string, unknown>[] = [
@@ -874,7 +964,8 @@ export function buildInitCreateMenuCard(locale: AppLocale = DEFAULT_APP_LOCALE):
     { icon: "edit_outlined", label: s.initCreateFields[0]!.label, name: "project_name", placeholder: s.initCreateFields[0]!.placeholder, defaultValue: "" },
     { icon: "folder_outlined", label: s.initCreateFields[1]!.label, name: "project_cwd", placeholder: s.initCreateFields[1]!.placeholder, defaultValue: "", hint: s.initCreateFields[1]!.hint },
     { icon: "sharelink_outlined", label: s.initCreateFields[2]!.label, name: "git_url", placeholder: s.initCreateFields[2]!.placeholder, defaultValue: "", hint: s.initCreateFields[2]!.hint },
-    { icon: "lock_outlined", label: s.initCreateFields[3]!.label, name: "git_token", placeholder: s.initCreateFields[3]!.placeholder, defaultValue: "", hint: s.initCreateFields[3]!.hint }
+    { icon: "lock_outlined", label: s.initCreateFields[3]!.label, name: "git_token", placeholder: s.initCreateFields[3]!.placeholder, defaultValue: "", hint: s.initCreateFields[3]!.hint },
+    { icon: "switch_outlined", label: s.initCreateFields[4]!.label, name: "work_branch", placeholder: s.initCreateFields[4]!.placeholder, defaultValue: "", hint: s.initCreateFields[4]!.hint }
   ];
 
   const formElements: unknown[] = [];
@@ -991,7 +1082,7 @@ export function buildProjectResumedCard(
 }
 
 export function buildInitSuccessCard(info: {
-  projectName: string; id: string; cwd: string; gitUrl: string; operatorId: string; displayName?: string;
+  projectName: string; id: string; cwd: string; gitUrl: string; workBranch?: string; operatorId: string; displayName?: string;
 }, locale: AppLocale = DEFAULT_APP_LOCALE): Record<string, unknown> {
   const s = getFeishuCardBuilderStrings(locale);
   const infoRows = [
@@ -999,6 +1090,7 @@ export function buildInitSuccessCard(info: {
     { icon: "hash_outlined", label: s.initSuccessId, value: `\`${info.id}\`` },
     { icon: "folder_outlined", label: s.initSuccessDir, value: `\`${info.cwd}\`` },
     { icon: "sharelink_outlined", label: s.initSuccessRepo, value: info.gitUrl || s.initSuccessLocalGit },
+    { icon: "switch_outlined", label: s.initSuccessBranch, value: `\`${info.workBranch || "collabvibe/" + info.projectName}\`` },
     { icon: "member_outlined", label: s.initSuccessOwner, value: formatUserLabel(info.operatorId, info.displayName) }
   ];
 
@@ -1048,6 +1140,11 @@ export function buildHelpCard(ownerId: string, opts?: {
     { iconToken: "app_outlined", label: s.helpPanelSkills, desc: s.helpPanelSkillsDesc, action: "help_skills" },
     { iconToken: "setting_outlined", label: s.helpPanelBackends, desc: s.helpPanelBackendsDesc, action: "help_backends" }
   ];
+
+  // Admin-only: project management
+  if (opts?.isAdmin) {
+    panels.push({ iconToken: "folder_outlined", label: s.helpPanelProject, desc: s.helpPanelProjectDesc, action: "help_project" });
+  }
 
   const elements: unknown[] = [];
 
@@ -1161,6 +1258,180 @@ export function buildHelpCard(ownerId: string, opts?: {
       vertical_spacing: "4px",
       padding: "4px 12px 12px 12px",
       elements
+    }
+  };
+}
+
+export interface HelpProjectCardData {
+  projectId: string;
+  projectName: string;
+  cwd: string;
+  gitUrl: string;
+  workBranch: string;
+  gitignoreContent: string;
+  agentsMdContent: string;
+}
+
+export function buildHelpProjectCard(
+  data: HelpProjectCardData,
+  ownerId: string,
+  locale: AppLocale = DEFAULT_APP_LOCALE
+): Record<string, unknown> {
+  const s = getFeishuCardBuilderStrings(locale);
+
+  // Read-only info rows
+  const infoElements: unknown[] = [
+    {
+      tag: "markdown",
+      content: `**${s.helpProjectPathLabel}**  \`${data.cwd}\``,
+      icon: { tag: "standard_icon", token: "folder_outlined", color: "blue" }
+    },
+    {
+      tag: "markdown",
+      content: `**${s.helpProjectIdLabel}**  \`${data.projectId}\``,
+      icon: { tag: "standard_icon", token: "hash_outlined", color: "blue" }
+    }
+  ];
+
+  // Form fields
+  const formElements: unknown[] = [
+    // Git Remote URL
+    {
+      tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
+      columns: [{
+        tag: "column", width: "fill", vertical_align: "center",
+        elements: [{
+          tag: "markdown", content: `**${s.helpProjectGitUrlLabel}**`,
+          icon: { tag: "standard_icon", token: "sharelink_outlined", color: "green" }
+        }]
+      }]
+    },
+    {
+      tag: "input", name: "git_url",
+      placeholder: { tag: "plain_text", content: s.helpProjectGitUrlPlaceholder },
+      default_value: data.gitUrl
+    },
+    // Work Branch
+    {
+      tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
+      columns: [{
+        tag: "column", width: "fill", vertical_align: "center",
+        elements: [{
+          tag: "markdown", content: `**${s.helpProjectWorkBranchLabel}**`,
+          icon: { tag: "standard_icon", token: "switch_outlined", color: "green" }
+        }]
+      }]
+    },
+    {
+      tag: "input", name: "work_branch",
+      placeholder: { tag: "plain_text", content: s.helpProjectWorkBranchPlaceholder },
+      default_value: data.workBranch
+    },
+    // .gitignore
+    {
+      tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
+      columns: [{
+        tag: "column", width: "fill", vertical_align: "center",
+        elements: [{
+          tag: "markdown", content: `**${s.helpProjectGitignoreLabel}**`,
+          icon: { tag: "standard_icon", token: "file-link-docx_outlined", color: "green" }
+        }]
+      }]
+    },
+    {
+      tag: "multi_line_text", name: "gitignore_content",
+      placeholder: { tag: "plain_text", content: s.helpProjectGitignorePlaceholder },
+      default_value: data.gitignoreContent,
+      rows: 4
+    },
+    // AGENTS.md
+    {
+      tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
+      columns: [{
+        tag: "column", width: "fill", vertical_align: "center",
+        elements: [{
+          tag: "markdown", content: `**${s.helpProjectAgentsMdLabel}**`,
+          icon: { tag: "standard_icon", token: "file-link-word_outlined", color: "green" }
+        }]
+      }]
+    },
+    {
+      tag: "multi_line_text", name: "agents_md_content",
+      placeholder: { tag: "plain_text", content: s.helpProjectAgentsMdPlaceholder },
+      default_value: data.agentsMdContent,
+      rows: 6
+    },
+    // Save button
+    {
+      tag: "button",
+      text: { tag: "plain_text", content: s.helpProjectSave },
+      type: "primary", width: "fill",
+      icon: { tag: "standard_icon", token: "done_outlined" },
+      form_action_type: "submit",
+      name: "help_project_save_submit",
+      behaviors: [{ type: "callback", value: { action: "help_project_save", projectId: data.projectId, ownerId } }]
+    }
+  ];
+
+  const form = {
+    tag: "form",
+    name: "help_project_form",
+    element_id: "help_project_form",
+    elements: formElements
+  };
+
+  // Bottom buttons (outside form)
+  const bottomButtons: unknown[] = [
+    { tag: "hr" },
+    {
+      tag: "column_set", flex_mode: "bisect", horizontal_spacing: "default",
+      columns: [
+        {
+          tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+          elements: [{
+            tag: "button",
+            text: { tag: "plain_text", content: s.helpProjectPush },
+            type: "default", size: "medium", width: "fill",
+            icon: { tag: "standard_icon", token: "upload_outlined" },
+            behaviors: [{ type: "callback", value: { action: "help_project_push", projectId: data.projectId, ownerId } }]
+          }]
+        },
+        {
+          tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+          elements: [{
+            tag: "button",
+            text: { tag: "plain_text", content: s.helpProjectBack },
+            type: "default", size: "medium", width: "fill",
+            icon: { tag: "standard_icon", token: "arrow-left_outlined" },
+            behaviors: [{ type: "callback", value: { action: "help_home", ownerId } }]
+          }]
+        }
+      ]
+    }
+  ];
+
+  return {
+    schema: "2.0",
+    config: { width_mode: "fill", update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: s.helpProjectTitle },
+      subtitle: { tag: "plain_text", content: s.helpProjectSubtitle(data.projectName) },
+      template: "turquoise",
+      icon: { tag: "standard_icon", token: "folder_outlined", color: "turquoise" },
+      text_tag_list: [
+        { tag: "text_tag", text: { tag: "plain_text", content: data.projectId.slice(0, 8) }, color: "blue" }
+      ]
+    },
+    body: {
+      direction: "vertical",
+      vertical_spacing: "8px",
+      padding: "8px 12px 12px 12px",
+      elements: [
+        ...infoElements,
+        { tag: "hr" },
+        form,
+        ...bottomButtons
+      ]
     }
   };
 }
@@ -3412,6 +3683,53 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
     elements.push(greyText(s.mergeReviewResolvingConflicts(overview.pendingConflicts + overview.agentPending)));
   }
 
+  // ── Batch retry form (agent_resolved files) ──
+  if (queues.agentResolvedPaths.length > 0 && sessionState === "reviewing") {
+    const retryOptions = queues.agentResolvedPaths.map(p => ({
+      text: { tag: "plain_text" as const, content: p },
+      value: p
+    }));
+    elements.push({
+      tag: "collapsible_panel",
+      expanded: false,
+      header: {
+        title: { tag: "markdown", content: `${s.mergeBatchRetrySelectLabel} (${queues.agentResolvedPaths.length})` },
+        icon: { tag: "standard_icon", token: "robot_outlined", color: "orange", size: "16px 16px" },
+        icon_position: "follow_text", icon_expanded_angle: -180
+      },
+      border: { color: "grey", corner_radius: "5px" },
+      vertical_spacing: "4px",
+      padding: "8px 8px 8px 8px",
+      elements: [{
+        tag: "form",
+        name: "merge_batch_retry_form",
+        elements: [
+          {
+            tag: "multi_select_static",
+            placeholder: { tag: "plain_text", content: s.mergeBatchRetrySelectLabel },
+            options: retryOptions,
+            name: "batch_retry_files"
+          },
+          {
+            tag: "multi_line_text",
+            placeholder: { tag: "plain_text", content: s.mergeBatchRetryFeedbackPlaceholder },
+            max_length: 2000,
+            name: "batch_retry_feedback"
+          },
+          {
+            tag: "button",
+            text: { tag: "plain_text", content: s.mergeBatchRetrySubmit },
+            type: "primary",
+            icon: { tag: "standard_icon", token: "robot_outlined" },
+            action_type: "form_submit",
+            name: "merge_batch_retry",
+            behaviors: [{ type: "callback", value: { action: "merge_batch_retry", branchName } }]
+          }
+        ]
+      }]
+    });
+  }
+
   elements.push({ tag: "hr" });
   elements.push({ tag: "markdown", content: s.mergeReviewSessionActionsTitle });
 
@@ -3457,6 +3775,10 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
       width: "fill", height: "auto",
       has_border: true, border_color: "grey", corner_radius: "8px",
       padding: "8px 12px 8px 12px",
+      confirm: {
+        title: { tag: "plain_text", content: s.mergeReviewCancelConfirmTitle },
+        text: { tag: "plain_text", content: s.mergeReviewCancelConfirmText }
+      },
       behaviors: [{ type: "callback", value: { action: "merge_cancel", branchName, baseBranch } }],
       elements: [{
         tag: "markdown", content: s.mergeSummaryCancel,
@@ -3581,6 +3903,7 @@ export function buildMergeFileDetailCard(review: IMFileMergeReview, locale: AppL
       const diffPreview = file.diff.length > 3000 ? file.diff.slice(0, 3000) + s.mergeDiffTruncated : file.diff;
       elements.push(buildCodePanel(s.mergeReviewViewDiff, diffPreview, "diff", totalFiles <= 3));
     }
+    elements.push(greyText(s.mergeDiffBaseline(baseBranch)));
   }
 
   elements.push({ tag: "hr" });

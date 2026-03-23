@@ -7,7 +7,7 @@ import type { FeishuHandlerDeps } from "./types";
 import { ConfigError } from "../config";
 import type { BootstrappedPlatformRuntime, PlatformModule, PlatformModuleContext } from "../platform/types";
 import { createLogger } from "../../packages/logger/src/index";
-import { FeishuAdapter, FeishuOutputAdapter, FetchHttpClient, SqliteCardStateStore } from "./channel/index";
+import { FeishuAdapter, FeishuOutputAdapter, FetchHttpClient } from "./channel/index";
 
 const log = createLogger("feishu-platform-module");
 
@@ -45,9 +45,8 @@ export class FeishuPlatformModule implements PlatformModule {
       apiBaseUrl: ctx.config.feishu.apiBaseUrl,
       httpClient,
     });
-    const cardStateStore = new SqliteCardStateStore(ctx.db);
     const feishuPlatformOutput = new FeishuOutputAdapter(feishuAdapter, {
-      cardStateStore,
+      turnCardDataProvider: ctx.layer.orchestrator,
       locale: ctx.config.locale,
     });
 

@@ -231,3 +231,24 @@ export async function resolveHelpTurnCard(deps: FeishuHandlerDeps, chatId: strin
         true
     );
 }
+
+export async function resolveHelpProjectCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const project = deps.findProjectByChatId(chatId);
+    if (!project) {
+        throw new Error("No project bound to this chat");
+    }
+    const safeRead = (filePath: string): string => {
+        try { return readFileSync(filePath, "utf-8"); } catch { return ""; }
+    };
+    return deps.platformOutput.buildHelpProjectCard({
+        projectId: project.id,
+        projectName: project.name,
+        cwd: project.cwd,
+        gitUrl: project.gitUrl ?? "",
+        workBranch: project.workBranch ?? "",
+        gitignoreContent: safeRead(join(project.cwd, ".gitignore")),
+        agentsMdContent: safeRead(join(project.cwd, "AGENTS.md")),
+    }, userId);
+}

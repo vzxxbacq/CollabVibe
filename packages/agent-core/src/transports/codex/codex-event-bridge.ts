@@ -141,6 +141,18 @@ function toEventMessage(notification: RpcNotification): Record<string, unknown> 
         type: "task_started",
         turn_id: readTurnId(params)
       };
+    case "thread/status/changed": {
+      // Map "resumed from waitingOnUserInput" to a visible notification
+      const activeFlags = params.activeFlags;
+      const isResumed = Array.isArray(activeFlags) && activeFlags.length === 0;
+      if (isResumed) {
+        return {
+          type: "thread_status_resumed",
+          turn_id: stringOrEmpty(params.turnId)
+        };
+      }
+      return null;
+    }
     default:
       break;
   }
@@ -208,6 +220,15 @@ function itemNotificationToUnifiedEvent(notification: RpcNotification): UnifiedA
           callId: itemId,
           tool: "collab_agent",
           label: stringOrEmpty(item.tool) || "协作 Agent"
+        };
+      case "reasoning":
+        // Empty reasoning started → weak progress hint ("正在推理")
+        return {
+          type: "tool_begin",
+          turnId,
+          callId: itemId,
+          tool: "mcp_tool",
+          label: "正在推理"
         };
       default:
         return null;
@@ -288,6 +309,16 @@ function itemNotificationToUnifiedEvent(notification: RpcNotification): UnifiedA
         agentId: receiverThreadIds[0]
       };
     }
+    case "reasoning":
+      // Empty reasoning completed → end the progress hint
+      return {
+        type: "tool_end",
+        turnId,
+        callId: itemId,
+        tool: "mcp_tool",
+        label: "推理完成",
+        status: "success"
+      };
     default:
       return null;
   }
@@ -441,6 +472,8 @@ export function codexNotificationToUnifiedEvent(notification: RpcNotification): 
         title: "Skills 已更新",
         detail: JSON.stringify((event as { skills?: unknown }).skills ?? [])
       };
+    case "thread_status_resumed":
+      return { type: "notification", turnId: String((event as { turn_id?: string }).turn_id ?? ""), category: "warning", title: "已收到你的选择，继续执行" };
     default:
       log.debug({ type: event.type }, "codex notification ignored: unsupported event type");
       return null;

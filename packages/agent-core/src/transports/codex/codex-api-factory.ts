@@ -175,7 +175,6 @@ export class CodexProtocolApiFactory implements AgentApiFactory {
     const projectThreadProcessKey = `${config.chatId}:${config.threadName ?? MAIN_THREAD_NAME}`;
     const process = await this.processManager.start(projectThreadProcessKey, {
       serverCmd: config.serverCmd,
-      serverPort: config.serverPort,
       cwd: config.cwd,
       env: config.env
     });

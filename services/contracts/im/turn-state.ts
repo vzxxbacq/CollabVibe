@@ -158,12 +158,6 @@ export class TurnState {
     this.turnMode = metadata.turnMode ?? this.turnMode;
   }
 
-  /** @deprecated compatibility shim; canonical source is content */
-  setLastAgentMessage(message: string | undefined): void {
-    if (message && !this.content) {
-      this.content = message;
-    }
-  }
 
   applyNotification(notification: IMNotification): void {
     if (notification.category === "token_usage") {

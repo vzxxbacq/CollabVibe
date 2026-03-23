@@ -19,6 +19,7 @@ export class SqliteApprovalStore implements ApprovalDecisionStore {
   }
 
   async save(decision: ApprovalDecision): Promise<void> {
+    const compositeId = `${this.requireApprovalField(decision.threadId, "threadId")}:${decision.approvalId}`;
     this.db
       .prepare(
         `INSERT INTO approvals (id, project_id, thread_id, turn_id, approval_type, decision, actor_id, created_at)
@@ -29,9 +30,9 @@ export class SqliteApprovalStore implements ApprovalDecisionStore {
            actor_id = excluded.actor_id`
       )
       .run(
-        decision.approvalId,
+        compositeId,
         this.requireApprovalField(decision.projectId, "projectId"),
-        this.requireApprovalField(decision.threadId, "threadId"),
+        decision.threadId,
         this.requireApprovalField(decision.turnId, "turnId"),
         this.requireApprovalField(decision.approvalType, "approvalType"),
         decision.action,

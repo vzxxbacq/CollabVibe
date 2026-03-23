@@ -26,10 +26,12 @@ export interface ThreadCreateAction extends PlatformActionBase {
 export interface ThreadJoinAction extends PlatformActionBase {
   kind: "thread_join";
   threadName: string;
+  fromHelp?: boolean;
 }
 
 export interface ThreadLeaveAction extends PlatformActionBase {
   kind: "thread_leave";
+  fromHelp?: boolean;
 }
 
 export interface MergeFileDecisionAction extends PlatformActionBase {
@@ -53,6 +55,7 @@ export interface UserInputReplyAction extends PlatformActionBase {
 export interface InterruptTurnAction extends PlatformActionBase {
   kind: "turn_interrupt";
   turnId?: string;
+  threadName?: string;
 }
 
 export interface AcceptTurnAction extends PlatformActionBase {
@@ -184,14 +187,44 @@ export interface MergeAgentAssistAction extends PlatformActionBase {
   prompt?: string;
 }
 
+export interface MergeBatchRetryAction extends PlatformActionBase {
+  kind: "merge_batch_retry";
+  branchName: string;
+  files: string[];
+  feedback: string;
+}
+
 export interface MergeCommitAction extends PlatformActionBase {
   kind: "merge_commit";
   branchName: string;
 }
 
+export interface KeepMergedThreadAction extends PlatformActionBase {
+  kind: "keep_merged_thread";
+  branchName: string;
+}
+
+export interface DeleteMergedThreadAction extends PlatformActionBase {
+  kind: "delete_merged_thread";
+  branchName: string;
+  projectId: string;
+}
+
 export interface HelpPanelAction extends PlatformActionBase {
   kind: "help_panel";
-  panel: "help_home" | "help_threads" | "help_history" | "help_skills" | "help_backends" | "help_turns" | "help_merge";
+  panel: "help_home" | "help_threads" | "help_history" | "help_skills" | "help_backends" | "help_turns" | "help_merge" | "help_project";
+  messageId?: string;
+}
+
+export interface HelpProjectSaveAction extends PlatformActionBase {
+  kind: "help_project_save";
+  projectId: string;
+  messageId?: string;
+}
+
+export interface HelpProjectPushAction extends PlatformActionBase {
+  kind: "help_project_push";
+  projectId: string;
   messageId?: string;
 }
 
@@ -428,8 +461,13 @@ export type PlatformAction =
   | AdminUserPageAction
   | MergeAcceptAllAction
   | MergeAgentAssistAction
+  | MergeBatchRetryAction
   | MergeCommitAction
+  | KeepMergedThreadAction
+  | DeleteMergedThreadAction
   | HelpPanelAction
+  | HelpProjectSaveAction
+  | HelpProjectPushAction
   | HelpThreadNewAction
   // Project init / bind
   | InitProjectAction

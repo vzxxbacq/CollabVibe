@@ -5,15 +5,15 @@
  * `server.ts` calls `createOrchestratorLayer(deps)` instead of manually constructing
  * 15+ internal services.
  */
-import type { DatabaseSync } from "node:sqlite";
 import type { OrchestratorConfig } from "../../contracts/admin/contracts";
-import type { PersistenceLayer } from "../../persistence/src/factory";
 import type { OutputGateway, PlatformOutput } from "../../contracts/im/platform-output";
 import { createLogger } from "../../../packages/logger/src/index";
 import { createBackendIdentity, isBackendId } from "../../../packages/agent-core/src/backend-identity";
-import { AgentProcessManager } from "../../../packages/agent-core/src/agent-process-manager";
-import { CodexProtocolApiFactory } from "../../../packages/agent-core/src/transports/codex/codex-api-factory";
-import { AcpApiFactory } from "../../../packages/agent-core/src/transports/acp/acp-api-factory";
+import { createDefaultTransportFactories } from "../../../packages/agent-core/src/index";
+import { createDatabase, createPersistenceLayer } from "../../persistence/src/index";
+import type { PersistenceLayer } from "../../persistence/src/factory";
+import type { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
 
 import { ConversationOrchestrator } from "./orchestrator";
 import { AgentApiFactoryRegistry } from "./session/factory-registry";
@@ -23,15 +23,15 @@ import type { RuntimeDefaults } from "./backend/runtime-defaults";
 import { createBackendRegistry } from "./backend/registry";
 import { DefaultBackendSessionResolver } from "./backend/session-resolver";
 import { BackendConfigService } from "./backend/config-service";
-import { UserThreadBindingService } from "./thread-state/user-thread-binding-service";
+import { UserThreadBindingService } from "./thread/user-thread-binding-service";
 import { EventPipeline } from "./event/pipeline";
 import { AgentEventRouter } from "./event/router";
 import { PluginService } from "./plugin/plugin-service";
 import { ApprovalCallbackHandler } from "./approval/index";
 import { RoleResolver } from "./iam/role-resolver";
 import { AuditService } from "./audit/index";
-import type { ProjectConfig } from "../../contracts/admin/contracts";
-import { ProjectSetupService } from "./project-setup-service";
+import type { ProjectRecord } from "../../contracts/admin/contracts";
+import { ProjectSetupService } from "./project/project-service";
 
 // ── Public result type ──────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ export interface OrchestratorLayer {
   /** Project setup service */
   projectSetupService: ProjectSetupService;
   /** Project lookup by chatId */
-  findProjectByChatId(chatId: string): ProjectConfig | null;
+  findProjectByChatId(chatId: string): ProjectRecord | null;
 
   /**
    * Wire the OutputGateway and run all startup tasks:
@@ -63,18 +63,27 @@ export interface OrchestratorLayer {
 
   /** Release all resources */
   shutdown(): Promise<void>;
+
+  /** Persistence layer (exposed for platform module bootstrap) */
+  persistence: PersistenceLayer;
+  /** Database handle (exposed for platform module bootstrap; will be removed after Debt-2) */
+  db: DatabaseSync;
 }
 
 // ── Factory function ────────────────────────────────────────────────────────
 
 export interface OrchestratorLayerDeps {
-  persistence: PersistenceLayer;
   config: OrchestratorConfig;
 }
 
 export async function createOrchestratorLayer(deps: OrchestratorLayerDeps): Promise<OrchestratorLayer> {
   const log = createLogger("orchestrator-factory");
-  const { persistence, config } = deps;
+  const { config } = deps;
+
+  // ── Database + Persistence (L2 owns lifecycle) ──
+  const dbPath = process.env.VITEST ? ":memory:" : join(config.dataDir, "codex-im.db");
+  const db = await createDatabase(dbPath);
+  const persistence = createPersistenceLayer(db);
   const adminStateStore = persistence.adminStateStore;
 
   // ── Project resolver ──
@@ -97,7 +106,7 @@ export async function createOrchestratorLayer(deps: OrchestratorLayerDeps): Prom
 
   // ── Backend infrastructure ──
   const backendRegistry = createBackendRegistry();
-  const backendConfigService = new BackendConfigService("data/config");
+  const backendConfigService = new BackendConfigService(join(config.dataDir, "config"));
   backendConfigService.ensureLocalConfigs();
   const threadRegistry = persistence.threadRegistry;
   const userThreadBindingService = new UserThreadBindingService(persistence.userThreadBindingRepo);
@@ -118,7 +127,6 @@ export async function createOrchestratorLayer(deps: OrchestratorLayerDeps): Prom
   );
 
   // ── API pool ──
-  const processManager = new AgentProcessManager();
   const currentBackend = backendRegistry.getDefault();
   const defaultBackendName = currentBackend?.name ?? "codex";
   const defaultModel = currentBackend?.models?.[0] ?? "gpt-5-codex";
@@ -130,14 +138,13 @@ export async function createOrchestratorLayer(deps: OrchestratorLayerDeps): Prom
     cwd: config.cwd,
     sandbox: config.sandbox,
     approvalPolicy: config.approvalPolicy,
-    serverCmd: currentBackend?.serverCmd ?? "codex app-server",
-    serverPort: config.server.port,
   };
   const runtimeConfigProvider = new DefaultRuntimeConfigProvider(projectResolver, runtimeDefaults);
-  const apiFactory = new AgentApiFactoryRegistry({
-    codex: new CodexProtocolApiFactory(processManager),
-    acp: new AcpApiFactory(),
-  });
+  const apiFactory = new AgentApiFactoryRegistry(
+    createDefaultTransportFactories(),
+    backendRegistry,
+    backendConfigService,
+  );
   const apiPool = new DefaultAgentApiPool({ apiFactory });
 
   // ── Orchestrator ──
@@ -240,14 +247,20 @@ export async function createOrchestratorLayer(deps: OrchestratorLayerDeps): Prom
             dirty = true;
           } catch (error) {
             log.warn({ projectId: p.id, cwd: p.cwd, err: error instanceof Error ? error.message : String(error) }, "startup: detectDefaultBranch failed");
+            p.defaultBranch = "main";
+            dirty = true;
           }
+        }
+        if (!p.workBranch) {
+          p.workBranch = `collabvibe/${p.name}`;
+          dirty = true;
         }
         if (!p.createdAt) { p.createdAt = new Date().toISOString(); dirty = true; }
         if (!p.updatedAt) { p.updatedAt = p.createdAt ?? new Date().toISOString(); dirty = true; }
       }
       if (dirty) {
         adminStateStore.write(state);
-        log.info("startup: backfilled project gitUrl/defaultBranch/timestamps");
+        log.info("startup: backfilled project gitUrl/defaultBranch/workBranch/timestamps");
       }
     } catch (err) {
       log.warn({ err }, "startup: project metadata backfill failed");
@@ -292,11 +305,14 @@ export async function createOrchestratorLayer(deps: OrchestratorLayerDeps): Prom
     projectSetupService,
     findProjectByChatId,
     runStartup,
+    persistence,
+    db,
     shutdown: async () => {
       orchestrator.stopHealthCheck();
       if (typeof apiPool.releaseAll === "function") {
         await apiPool.releaseAll();
       }
+      db.close();
     },
   };
 }

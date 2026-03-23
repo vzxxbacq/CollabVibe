@@ -2,7 +2,7 @@ import type { BackendIdentity, TransportType } from "../../../../packages/agent-
 import { createBackendIdentity, isBackendId } from "../../../../packages/agent-core/src/backend-identity";
 import type { BackendDefinition, BackendRegistry } from "./registry";
 import type { BackendConfigService } from "./config-service";
-import type { ThreadRecord } from "../thread-state/thread-registry";
+import type { ThreadRecord } from "../thread/thread-registry";
 
 // ── Resolved session types ──────────────────────────────────────────────────
 

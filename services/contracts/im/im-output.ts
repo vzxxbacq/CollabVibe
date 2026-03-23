@@ -85,6 +85,7 @@ export interface IMApprovalRequest {
   threadId: string;
   turnId: string;
   threadName?: string;
+  turnNumber?: number;
   approvalId: string;
   callId: string;
   approvalType: "command_exec" | "file_change";
@@ -298,6 +299,7 @@ export interface IMFileMergeReview {
     conflictPaths: string[];
     directPaths: string[];
     agentPendingPaths: string[];
+    agentResolvedPaths: string[];
   };
   recoveryError?: string;
   /** 已完成的审阅进度 */

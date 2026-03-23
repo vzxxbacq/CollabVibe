@@ -5,7 +5,5 @@ export interface RuntimeDefaults {
   cwd: string;
   sandbox: string;
   approvalPolicy: string;
-  serverCmd: string;
-  serverPort: number;
 }
 

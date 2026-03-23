@@ -120,3 +120,36 @@ export async function shallowClone(source: string, targetDir: string): Promise<v
     // Note: cwd doesn't matter much for clone since it creates the targetDir
     await git(["clone", "--depth", "1", source, targetDir], process.cwd());
 }
+
+/**
+ * Ensure a work branch exists in the repository.
+ * If the branch doesn't exist, creates it from `fromBranch`.
+ * Checks out the work branch after creation.
+ *
+ * @param cwd Repository path
+ * @param branchName The work branch to ensure (e.g. "codex/my-project")
+ * @param fromBranch The branch to create from (e.g. "main")
+ */
+export async function ensureWorkBranch(cwd: string, branchName: string, fromBranch: string): Promise<void> {
+    // Check if branch already exists
+    try {
+        await git(["rev-parse", "--verify", `refs/heads/${branchName}`], cwd);
+        // Branch exists, just checkout
+        await git(["checkout", branchName], cwd);
+        return;
+    } catch {
+        // Branch doesn't exist, create it
+    }
+    await git(["checkout", "-b", branchName, fromBranch], cwd);
+}
+
+/**
+ * Push a branch to the remote.
+ *
+ * @param cwd Repository path
+ * @param branchName Branch to push
+ * @param remote Remote name (default: "origin")
+ */
+export async function pushBranch(cwd: string, branchName: string, remote = "origin"): Promise<void> {
+    await git(["push", remote, branchName], cwd);
+}

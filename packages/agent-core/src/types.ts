@@ -22,8 +22,8 @@ export interface RuntimeConfig {
   approvalPolicy?: string;
   personality?: string;
   serviceName?: string;
+  /** @deprecated Resolved by AgentApiFactoryRegistry via BackendRegistry. Only set for codex profile overrides. */
   serverCmd?: string;
-  serverPort?: number;
   /** Extra env vars for spawned process (e.g. OPENCODE_CONFIG) */
   env?: Record<string, string>;
   /** Thread name from the active binding — used by pool/factory for keying */
@@ -87,6 +87,7 @@ export interface RuntimeConfigProvider {
   getProjectRuntimeConfig(projectId: string, userId?: string): Promise<RuntimeConfig>;
 }
 
+/** @internal Used only by ThreadRuntimeService. External callers should use ThreadRuntimeService API. */
 export interface AgentApiPool {
   /** Create a new API from a pre-built RuntimeConfig. Caches by project-thread key (derived from bound chatId + threadName). */
   createWithConfig(chatId: string, threadName: string, config: RuntimeConfig): Promise<AgentApi>;

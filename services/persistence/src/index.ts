@@ -1,7 +1,7 @@
 export * from "./migrations";
 export * from "./database";
 export * from "./audit-log-repository";
-export * from "./project-repository";
+
 export * from "./secret-service";
 export * from "./sqlite-admin-state-store";
 export * from "./sqlite-approval-store";

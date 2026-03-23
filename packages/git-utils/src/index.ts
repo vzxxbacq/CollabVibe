@@ -1,5 +1,5 @@
 // Worktree management
-export { createWorktree, removeWorktree, listWorktrees, getWorktreePath } from "./worktree";
+export { createWorktree, removeWorktree, listWorktrees, getWorktreePath, assertWorktreeValid, getHeadSha, fastForwardWorktree } from "./worktree";
 
 // Merge operations
 export { dryRunMerge, mergeWorktree, startConflictMerge, checkConflictsResolved, unquoteGitPath,
@@ -17,7 +17,7 @@ export { commitAndDiffWorktreeChanges, isWorktreeDirty } from "./commit";
 export type { TurnDiffResult } from "./commit";
 
 // Repository operations
-export { initRepo, getRemoteUrl, setRemoteUrl, shallowClone, detectDefaultBranch, getCurrentBranch } from "./repo";
+export { initRepo, getRemoteUrl, setRemoteUrl, shallowClone, detectDefaultBranch, getCurrentBranch, ensureWorkBranch, pushBranch } from "./repo";
 
 // Diff parsing (moved from channel-core)
 export { parseDiffFileNames, parseDiffStats } from "./diff-parser";

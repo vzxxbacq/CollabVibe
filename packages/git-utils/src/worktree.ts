@@ -50,7 +50,7 @@ export async function createWorktree(
     mainCwd: string,
     branchName: string,
     worktreePath: string,
-    options?: { pluginDirs?: string[] }
+    options?: { pluginDirs?: string[]; baseBranch?: string }
 ): Promise<string> {
     try {
         await access(worktreePath);
@@ -71,7 +71,11 @@ export async function createWorktree(
     }
 
     try {
-        await git(["worktree", "add", worktreePath, "-b", branchName], mainCwd);
+        const args = ["worktree", "add", worktreePath, "-b", branchName];
+        if (options?.baseBranch) {
+            args.push(options.baseBranch);
+        }
+        await git(args, mainCwd);
     } catch {
         await git(["worktree", "add", worktreePath, branchName], mainCwd);
     }
@@ -163,6 +167,23 @@ export async function removeWorktree(
 }
 
 /**
+ * Assert that a worktree is valid: exists on disk AND registered in git.
+ * Throws a clear error if either condition fails.
+ * Call before merge preview/confirm/start-review to fail fast.
+ */
+export async function assertWorktreeValid(mainCwd: string, worktreePath: string): Promise<void> {
+    try {
+        await access(worktreePath);
+    } catch {
+        throw new Error(`worktree directory does not exist: ${worktreePath}`);
+    }
+    const { stdout } = await git(["worktree", "list", "--porcelain"], mainCwd);
+    if (!stdout.includes(worktreePath)) {
+        throw new Error(`worktree directory exists but is not registered in git: ${worktreePath}`);
+    }
+}
+
+/**
  * List all worktrees for a repository.
  */
 export async function listWorktrees(
@@ -191,4 +212,24 @@ export async function listWorktrees(
  */
 export function getWorktreePath(mainCwd: string, threadName: string): string {
     return `${mainCwd}--${threadName}`;
+}
+
+/**
+ * Get the HEAD commit SHA of a git directory.
+ */
+export async function getHeadSha(cwd: string): Promise<string> {
+    const { stdout } = await git(["rev-parse", "HEAD"], cwd);
+    return stdout.trim();
+}
+
+/**
+ * Fast-forward a worktree to a target branch/ref.
+ * Only safe when the worktree has no uncommitted changes and no diverged commits.
+ * Uses `git merge --ff-only` to ensure it's a true fast-forward.
+ * Returns the new HEAD SHA after the operation.
+ */
+export async function fastForwardWorktree(worktreePath: string, targetRef: string): Promise<string> {
+    // Fetch the latest refs first (the main repo shares objects with worktrees)
+    await git(["merge", "--ff-only", targetRef], worktreePath);
+    return getHeadSha(worktreePath);
 }

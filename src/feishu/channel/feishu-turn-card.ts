@@ -16,14 +16,14 @@
  *
  * Extracted from FeishuOutputAdapter for better cohesion.
  */
-import {
-  StreamAggregator,
-  type IMTurnSummary,
-} from "../../../services/contracts/im/index";
+import { StreamAggregator } from "../../../services/contracts/im/index";
+import { parseMergeResolverName } from "../../../services/contracts/im/merge-naming";
 import { createLogger } from "../../../packages/logger/src/index";
 import { DEFAULT_APP_LOCALE, type AppLocale } from "../../../services/contracts/im/app-locale";
+import type { IMTurnSummary } from "../../../services/contracts/im/im-output";
+
+import type { TurnCardDataProvider } from "../../../services/contracts/im/turn-card-data-provider";
 import { parseDiffFiles, splitDiffByFile } from "./diff-utils";
-import type { FeishuCardStateStore } from "./feishu-card-state-store";
 import { getFeishuTurnCardStrings } from "./feishu-turn-card.strings";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -297,7 +297,8 @@ export class TurnCardManager {
   private readonly cardDirty = new Set<string>();
   private readonly cardThrottleMs: number;
 
-  private readonly cardStateStore?: FeishuCardStateStore;
+
+  private readonly turnCardDataProvider?: TurnCardDataProvider;
   private readonly locale: AppLocale;
   private readonly log = createLogger("card");
 
@@ -308,11 +309,10 @@ export class TurnCardManager {
 
   constructor(
     private readonly client: TurnCardMessageClient,
-    options?: { cardThrottleMs?: number; cardStateStore?: FeishuCardStateStore; locale?: AppLocale }
+    options?: { cardThrottleMs?: number; locale?: AppLocale }
   ) {
     this.locale = options?.locale ?? DEFAULT_APP_LOCALE;
     this.cardThrottleMs = options?.cardThrottleMs ?? 5000;
-    this.cardStateStore = options?.cardStateStore;
   }
 
   // ── State Management ─────────────────────────────────────────────────────
@@ -347,7 +347,7 @@ export class TurnCardManager {
       return next;
     }
 
-    const persistedCurrent = this.cardStateStore?.getLatestTurnNumber?.(chatId, threadName);
+    const persistedCurrent = 0; // turnNumber now sourced from L2 via setCardThreadName
     const seed = typeof persistedCurrent === "number" && Number.isFinite(persistedCurrent) ? persistedCurrent : 0;
     const next = seed + 1;
     this.turnCounter.set(projectThreadCounterKey, next);
@@ -355,10 +355,12 @@ export class TurnCardManager {
   }
 
   /** Set thread name on card state early (before completeTurn). */
-  setCardThreadName(chatId: string, turnId: string, threadName: string): void {
+  setCardThreadName(chatId: string, turnId: string, threadName: string, turnNumber?: number): void {
     const state = this.getOrCreateState(chatId, turnId);
     state.threadName = threadName;
-    if (state.turnNumber === undefined) {
+    if (turnNumber !== undefined) {
+      state.turnNumber = turnNumber;
+    } else if (state.turnNumber === undefined) {
       state.turnNumber = this.nextTurnNumber(chatId, threadName);
     }
   }
@@ -419,7 +421,7 @@ export class TurnCardManager {
       this.cardUpdateTimers.delete(key);
     }
     this.cardDirty.delete(key);
-    try { this.cardStateStore?.remove(key); } catch { /* ignore */ }
+
   }
 
   // ── Throttled Updates ────────────────────────────────────────────────────
@@ -659,6 +661,11 @@ export class TurnCardManager {
     const state = this.getOrCreateState(chatId, notif.turnId);
     if (notif.category === "token_usage" && notif.tokenUsage) {
       state.tokenUsage = notif.tokenUsage;
+      // Refresh streaming footer so users see token count incrementing during reasoning gaps
+      if (this.supportsNativeStreaming()) {
+        await this.ensureCard(chatId, notif.turnId);
+        await this.syncNativeStreamText(chatId, notif.turnId, STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state));
+      }
       return "handled";
     }
     if (notif.category === "turn_complete") {
@@ -679,6 +686,18 @@ export class TurnCardManager {
     }
     if (notif.category === "turn_started") {
       await this.ensureCard(chatId, notif.turnId);
+      return "handled";
+    }
+    // Show warning/status notifications as progress entries in the streaming card
+    if (notif.category === "warning" && notif.turnId) {
+      state.tools.push(`⚡ ${notif.title}`);
+      if (this.supportsNativeStreaming()) {
+        await this.ensureCard(chatId, notif.turnId);
+        await this.syncNativeStreamText(chatId, notif.turnId, STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state));
+        await this.syncNativeStreamText(chatId, notif.turnId, STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state));
+        return "handled";
+      }
+      await this.scheduleCardUpdate(chatId, notif.turnId);
       return "handled";
     }
     return "passthrough";
@@ -742,32 +761,7 @@ export class TurnCardManager {
       this.log.warn({ chatId, turnId: summary.turnId, err: error instanceof Error ? error.message : String(error) }, "send turn completion notice failed");
     }
 
-    // 持久化卡片状态 — 无条件保存全部字段，支持随时调出完整 Turn Card
-    if (this.cardStateStore && cardToken) {
-      try {
-        this.cardStateStore.save(key, {
-          chatId, turnId: summary.turnId, cardToken,
-          threadName: state.threadName, message: state.message,
-          promptSummary: state.promptSummary,
-          turnNumber: state.turnNumber,
-          backendName: state.backendName,
-          modelName: state.modelName,
-          thinking: state.thinking,
-          tools: state.tools,
-          toolOutputs: [...state.toolOutputs.entries()].map(
-            ([callId, { command, output }]) => ({ callId, command, output })
-          ),
-          planState: state.planState,
-          fileChanges: state.fileChanges, tokenUsage: state.tokenUsage,
-          footer: state.footer,
-          agentNote: state.agentNote,
-          actionTaken: state.actionTaken,
-          turnMode: state.turnMode,
-        });
-      } catch (error) {
-        this.log.warn({ chatId, turnId: summary.turnId, err: error instanceof Error ? error.message : String(error) }, "persist turn card state failed");
-      }
-    }
+
 
     try {
       this.onTurnComplete?.(chatId, summary);
@@ -783,32 +777,37 @@ export class TurnCardManager {
     let state = this.cardState.get(key);
     this.log.info({ key, action, hasState: !!state }, "updateCardAction");
 
-    if (!state && this.cardStateStore) {
-      const persisted = this.cardStateStore.load(key);
-      if (persisted) {
-        this.log.info({ key }, "updateCardAction: recovered state from store");
-        state = {
-          chatId: persisted.chatId, turnId: persisted.turnId,
-          threadName: persisted.threadName,
-          turnNumber: persisted.turnNumber,
-          thinking: persisted.thinking ?? "",
-          message: persisted.message,
-          tools: persisted.tools ?? [],
-          fileChanges: persisted.fileChanges,
-          toolOutputs: new Map(
-            (persisted.toolOutputs ?? []).map(e => [e.callId, { command: e.command, output: e.output }])
-          ),
-          planState: persisted.planState,
-          callIdToLabel: new Map(), footer: persisted.footer,
-          tokenUsage: persisted.tokenUsage,
-          promptSummary: persisted.promptSummary,
-          backendName: persisted.backendName,
-          modelName: persisted.modelName,
-          agentNote: persisted.agentNote,
-          turnMode: persisted.turnMode,
-        };
-        this.cardState.set(key, state);
-        this.cardTokenByTurn.set(key, persisted.cardToken);
+    // 从 L2 TurnCardDataProvider 恢复卡片状态（重启后恢复）
+    if (!state && this.turnCardDataProvider) {
+      try {
+        const data = await this.turnCardDataProvider.getTurnCardData(chatId, turnId);
+        if (data) {
+          this.log.info({ key }, "updateCardAction: recovered state from L2");
+          const s = getFeishuTurnCardStrings(this.locale);
+          state = {
+            chatId: data.chatId, turnId: data.turnId,
+            threadName: data.threadName,
+            turnNumber: data.turnNumber,
+            thinking: data.reasoning ?? "",
+            message: data.message ?? "",
+            tools: data.tools.map(t => t.label),
+            fileChanges: data.fileChanges,
+            toolOutputs: new Map(
+              data.toolOutputs.map(e => [e.callId, { command: e.command, output: e.output }])
+            ),
+            planState: data.planState,
+            callIdToLabel: new Map(), footer: s.footerDone(toTokenText(data.tokenUsage), data.fileChanges.reduce((sum, fc) => sum + fc.filesChanged.length, 0)),
+            tokenUsage: data.tokenUsage,
+            promptSummary: data.promptSummary,
+            backendName: data.backendName,
+            modelName: data.modelName,
+            agentNote: data.agentNote,
+            turnMode: data.turnMode,
+          };
+          this.cardState.set(key, state);
+        }
+      } catch (error) {
+        this.log.warn({ key, err: error instanceof Error ? error.message : String(error) }, "updateCardAction: L2 recovery failed");
       }
     }
 
@@ -818,32 +817,6 @@ export class TurnCardManager {
     }
     state.actionTaken = action;
     const card = this.renderCard(state);
-
-    // 持久化最终状态（含 actionTaken），保留 SQLite 记录供后续调出
-    if (this.cardStateStore) {
-      try {
-        const cardToken = this.cardTokenByTurn.get(key) ?? "";
-        this.cardStateStore.save(key, {
-          chatId, turnId, cardToken,
-          threadName: state.threadName, message: state.message,
-          promptSummary: state.promptSummary,
-          turnNumber: state.turnNumber,
-          backendName: state.backendName,
-          modelName: state.modelName,
-          thinking: state.thinking,
-          tools: state.tools,
-          toolOutputs: [...state.toolOutputs.entries()].map(
-            ([callId, { command, output }]) => ({ callId, command, output })
-          ),
-          planState: state.planState,
-          fileChanges: state.fileChanges, tokenUsage: state.tokenUsage,
-          footer: state.footer,
-          agentNote: state.agentNote,
-          actionTaken: action,
-          turnMode: state.turnMode,
-        });
-      } catch { /* persist failure non-critical */ }
-    }
 
     // 清理内存状态，保留 SQLite 记录
     this.log.info("updateCardAction: card rendered, cleaning up memory");
@@ -1159,31 +1132,7 @@ export class TurnCardManager {
     const state = this.buildHistoricalState(input);
     const key = keyOf(input.chatId, input.turnId);
     this.cardState.set(key, state);
-    if (this.cardStateStore) {
-      try {
-        this.cardStateStore.save(key, {
-          chatId: state.chatId,
-          turnId: state.turnId,
-          cardToken: this.cardTokenByTurn.get(key) ?? "",
-          threadName: state.threadName,
-          message: state.message,
-          promptSummary: state.promptSummary,
-          turnNumber: state.turnNumber,
-          backendName: state.backendName,
-          modelName: state.modelName,
-          thinking: state.thinking,
-          tools: state.tools,
-          toolOutputs: [...state.toolOutputs.entries()].map(([callId, { command, output }]) => ({ callId, command, output })),
-          planState: state.planState,
-          fileChanges: state.fileChanges,
-          tokenUsage: state.tokenUsage,
-          footer: state.footer,
-          agentNote: state.agentNote,
-          actionTaken: state.actionTaken,
-          turnMode: state.turnMode,
-        });
-      } catch { /* ignore cache failure */ }
-    }
+    // 仅内存缓存，不再持久化（内容已在 L2 TurnDetailRecord 中）
     return state;
   }
 
@@ -1255,8 +1204,7 @@ export class TurnCardManager {
         [STREAM_THINK_ELEMENT_ID, this.renderStreamingThinking(state)],
         [STREAM_PROGRESS_ELEMENT_ID, this.renderStreamingProgress(state)],
         [STREAM_TOOLS_ELEMENT_ID, this.renderStreamingTools(state)],
-        [STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state)],
-        [STREAM_ACTIONS_ELEMENT_ID, this.renderStreamingActionPlaceholder(state)]
+        [STREAM_FOOTER_ELEMENT_ID, this.renderStreamingFooter(state)]
       ]),
       degraded: false
     });
@@ -1406,6 +1354,46 @@ export class TurnCardManager {
     return quoteMarkdown(s.actionsTitle, s.actionsAvailableAfterCompletion);
   }
 
+  /**
+   * Render the interrupt button for streaming cards.
+   * Uses interactive_container so it's clickable during streaming.
+   * Verified: streaming_mode:true cards support mixed interactive_container + markdown elements.
+   */
+  private renderStreamingInterruptButton(state: TurnCardState): Record<string, unknown> {
+    const s = getFeishuTurnCardStrings(this.locale);
+    const isMergeResolver = parseMergeResolverName(state.threadName ?? "") !== null;
+    const buttonLabel = isMergeResolver ? "**中断当前 Turn**" : s.stopExecution;
+    const buttonHint = isMergeResolver ? "停止 Agent 当前轮次" : s.stopAgentTask;
+    return {
+      tag: "interactive_container",
+      element_id: STREAM_ACTIONS_ELEMENT_ID,
+      width: "fill", height: "auto",
+      has_border: true, border_color: "grey", corner_radius: "8px",
+      padding: "10px 12px 10px 12px",
+      confirm: {
+        title: { tag: "plain_text", content: s.confirmStopTitle },
+        text: { tag: "plain_text", content: s.confirmStopText }
+      },
+      behaviors: [{ type: "callback", value: { action: "interrupt", chatId: state.chatId, turnId: state.turnId, threadName: state.threadName ?? "" } }],
+      elements: [{
+        tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
+        columns: [
+          {
+            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+            elements: [{
+              tag: "markdown", content: buttonLabel,
+              icon: { tag: "standard_icon", token: "close_outlined", color: "red" }
+            }]
+          },
+          {
+            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+            elements: [greyText(buttonHint)]
+          }
+        ]
+      }]
+    };
+  }
+
   private renderFinalActionsElement(state: TurnCardState): Record<string, unknown> {
     const s = getFeishuTurnCardStrings(this.locale);
     if (!state.actionTaken && state.fileChanges.length > 0) {
@@ -1512,7 +1500,7 @@ export class TurnCardManager {
           { tag: "markdown", content: this.renderStreamingProgress(state), element_id: STREAM_PROGRESS_ELEMENT_ID },
           { tag: "markdown", content: this.renderStreamingTools(state), element_id: STREAM_TOOLS_ELEMENT_ID },
           { tag: "markdown", content: this.renderStreamingFooter(state), element_id: STREAM_FOOTER_ELEMENT_ID },
-          { tag: "markdown", content: this.renderStreamingActionPlaceholder(state), element_id: STREAM_ACTIONS_ELEMENT_ID }
+          this.renderStreamingInterruptButton(state)
         ]
       }
     };

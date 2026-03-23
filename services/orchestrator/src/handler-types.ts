@@ -27,7 +27,7 @@ import type {
   ProjectSetupService,
 } from "./index";
 import type { AdminPersistedState, AdminStateStore } from "../../contracts/admin/contracts";
-import type { AppConfig, ProjectConfig } from "../../contracts/admin/contracts";
+import type { AppConfig, ProjectRecord } from "../../contracts/admin/contracts";
 import type { RoleResolver } from "./iam/index";
 import type { UserRepository } from "../../contracts/admin/user-repository";
 
@@ -87,9 +87,18 @@ export type OrchestratorLike = Pick<
   | "configureMergeResolver"
   | "resolveConflictsViaAgent"
   | "retryMergeFile"
+  | "retryMergeFiles"
   // Project lifecycle
   | "onProjectDeactivated"
   | "recoverSessions"
+  // Push
+  | "pushWorkBranch"
+  // Thread lifecycle
+  | "deleteThread"
+  // Stale thread detection
+  | "detectStaleThreads"
+  // Card data recovery
+  | "getTurnCardData"
 
 >;
 
@@ -112,7 +121,7 @@ export interface CoreDeps {
   pluginService: PluginServiceLike;
   approvalHandler: ApprovalHandlerLike;
   adminStateStore: AdminStateStoreLike;
-  findProjectByChatId(chatId: string): ProjectConfig | null;
+  findProjectByChatId(chatId: string): ProjectRecord | null;
   userRepository: UserRepository;
   roleResolver: RoleResolver;
 }

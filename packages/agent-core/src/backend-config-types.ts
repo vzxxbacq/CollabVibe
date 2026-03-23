@@ -90,14 +90,16 @@ export interface BackendConfigData {
   profiles: StoredProfile[];
 }
 
-// ── Deploy / ServerCmd output ────────────────────────────────────────────────
-
 /**
- * Result of buildCodexServerCmd() — CLI flags + env vars to inject.
+ * Result of backend buildServerCmd() — CLI command + env vars to inject.
+ * Shared by all backends (codex, opencode, claude-code, etc.).
  */
-export interface CodexServerCmdResult {
-  /** Complete serverCmd string including all -c flags */
+export interface BackendCmdResult {
+  /** Complete serverCmd string including all flags */
   serverCmd: string;
   /** Env vars to inject (e.g. { CODEX_API_KEY: "sk-xxx" }) */
   env: Record<string, string>;
 }
+
+/** @deprecated Use BackendCmdResult instead */
+export type CodexServerCmdResult = BackendCmdResult;

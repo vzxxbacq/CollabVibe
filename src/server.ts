@@ -15,6 +15,7 @@
  * ```
  */
 import * as Lark from "@larksuiteoapi/node-sdk";
+import path from "node:path";
 
 import {
   createLogger,
@@ -30,10 +31,6 @@ import {
 import {
   createOrchestratorLayer,
 } from "../services/orchestrator/src/index";
-import {
-  createDatabase,
-  createPersistenceLayer,
-} from "../services/persistence/src/index";
 import { ConfigError, loadConfig } from "./config";
 import { PlatformModuleRegistry } from "./platform/registry";
 import { FeishuPlatformModule } from "./feishu/feishu-platform-module";
@@ -78,13 +75,14 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
       noisyDebugLoggers.has(entry.name) && entry.level <= LOG_LEVEL_VALUES.debug;
     const isBackendRpcEntry = (entry: { name: string }) => entry.name === "backend-rpc";
 
-    const mainFileSink = createFileLogSink({ dir: process.env.LOG_DIR ?? "data/logs" });
+    const logDir = process.env.LOG_DIR ?? path.join(config.dataDir, "logs");
+    const mainFileSink = createFileLogSink({ dir: logDir });
     const stdioFileSink = createFileLogSink({
-      dir: process.env.LOG_DIR ?? "data/logs",
+      dir: logDir,
       baseName: process.env.LOG_STDIO_BASE_NAME ?? "agent-stdio"
     });
     const backendRpcFileSink = createFileLogSink({
-      dir: process.env.LOG_DIR ?? "data/logs",
+      dir: logDir,
       baseName: process.env.LOG_BACKEND_RPC_BASE_NAME ?? "backend-rpc"
     });
 
@@ -97,9 +95,7 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
   }
   const log = createLogger("server");
 
-  const db = await createDatabase(process.env.VITEST ? ":memory:" : "./data/codex-im.db");
-  const persistence = createPersistenceLayer(db);
-  const layer = await createOrchestratorLayer({ persistence, config });
+  const layer = await createOrchestratorLayer({ config });
 
   const platformRegistry = new PlatformModuleRegistry([
     new FeishuPlatformModule(),
@@ -107,9 +103,9 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
   ]);
   const platformRuntime: BootstrappedPlatformRuntime = await platformRegistry.get(config.platform).bootstrap({
     config,
-    db,
+    db: layer.db,
     layer,
-    persistence,
+    persistence: layer.persistence,
   });
 
   // Wire OutputGateway + backfill + session recovery
@@ -120,7 +116,6 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
   const shutdown = async (): Promise<void> => {
     await layer.shutdown();
     await platformRuntime.stop();
-    db.close();
   };
 
   return { platform: config.platform, wsClient: platformRuntime.wsClient, slackApp: platformRuntime.slackApp, shutdown };

@@ -26,11 +26,13 @@ import { armPendingFeishuSkillInstall, clearFeishuSkillInstallState, consumeStag
 import {
   sendProjectList, sendSnapshotList, sendModelList, sendThreadNewForm,
   resolveHelpCard, resolveHelpThreadCard, resolveHelpThreadNewCard, resolveHelpMergeCard,
-  resolveSnapshotCard, resolveHelpSkillCard, resolveHelpBackendCard, resolveHelpTurnCard
+  resolveSnapshotCard, resolveHelpSkillCard, resolveHelpBackendCard, resolveHelpTurnCard,
+  resolveHelpProjectCard
 } from "./shared-handlers";
 import { routeIntent } from "../../services/contracts/im/intent-router";
 import type { IntentType } from "../../services/contracts/im/types";
 import { MAIN_THREAD_NAME } from "../../services/contracts/im/index";
+import { parseMergeResolverName } from "../../services/contracts/im/merge-naming";
 import { isBackendId, transportFor } from "../../services/orchestrator/src/index";
 import { createLogger } from "../../packages/logger/src/index";
 import { authorizeIntent } from "../../services/orchestrator/src/iam/index";
@@ -41,6 +43,7 @@ import { join as pathJoin } from "node:path";
 import { promisify } from "node:util";
 import { getFeishuNotifyCatalog, notify } from "./feishu-notify";
 import { getFeishuCardHandlerStrings } from "./feishu-card-handler.strings";
+import { getFeishuCardBuilderStrings } from "./channel/feishu-card-builders.strings";
 import { rm } from "node:fs/promises";
 import { PlatformActionRouter } from "../../services/orchestrator/src/commands/platform-action-router";
 
@@ -89,6 +92,10 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   interruptTurn: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "TURN_INTERRUPT");
     await deps.orchestrator.handleTurnInterrupt(action.chatId, action.actorId || undefined);
+
+    // Merge resolver: interrupt only stops the current turn.
+    // The merge review session is NOT cancelled — user must use the summary card cancel button for that.
+
     const card = await deps.platformOutput.updateCardAction(action.chatId, action.turnId ?? "", "interrupted");
     return card ? rawCard(card) : undefined;
   },
@@ -200,12 +207,13 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   threadJoin: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_SWITCH");
     return handleThreadSwitchAction(deps, action.chatId, action.actorId, "switch_thread", {
+      fromHelp: action.fromHelp,
       threadName: action.threadName
     });
   },
   threadLeave: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_SWITCH");
-    return handleThreadSwitchAction(deps, action.chatId, action.actorId, "switch_to_main", {});
+    return handleThreadSwitchAction(deps, action.chatId, action.actorId, "switch_to_main", { fromHelp: action.fromHelp });
   },
   helpPanel: async (deps, action) => {
     switch (action.panel) {
@@ -224,6 +232,8 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
         return rawCard(await resolveHelpBackendCard(deps, action.actorId));
       case "help_turns":
         return rawCard(await resolveHelpTurnCard(deps, action.chatId, action.actorId));
+      case "help_project":
+        return rawCard(await resolveHelpProjectCard(deps, action.chatId, action.actorId));
       case "help_merge": {
         await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
         const actionValue = (((action.raw as CardActionData)?.action?.value ?? {}) as Record<string, unknown>);
@@ -242,6 +252,73 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   helpThreadNew: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_NEW");
     return rawCard(await resolveHelpThreadNewCard(deps, action.chatId, action.actorId));
+  },
+  helpProjectSave: async (deps, action) => {
+    const { getFeishuCardBuilderStrings } = await import("./channel/feishu-card-builders.strings");
+    const payload = action.raw as CardActionData;
+    const formValues = payload.action?.form_value ?? {};
+    const actionValue = (payload.action?.value ?? {}) as Record<string, unknown>;
+    const projectId = String(actionValue.projectId ?? "");
+    if (!projectId) return;
+    const bs = getFeishuCardBuilderStrings(deps.config.locale);
+    const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
+
+    try {
+      const { writeFileSync, mkdirSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { execSync } = await import("node:child_process");
+      const state = deps.adminStateStore.read();
+      const project = state.projects.find((p: { id: string }) => p.id === projectId);
+      if (!project) throw new Error("Project not found");
+
+      // Update project fields
+      const gitUrl = String(formValues.git_url ?? "").trim();
+      const workBranch = String(formValues.work_branch ?? "").trim();
+      if (gitUrl !== (project.gitUrl ?? "")) project.gitUrl = gitUrl;
+      if (workBranch && workBranch !== project.workBranch) project.workBranch = workBranch;
+      deps.adminStateStore.write(state);
+
+      // Write .gitignore and AGENTS.md
+      const cwd = project.cwd;
+      mkdirSync(cwd, { recursive: true });
+      const gitignore = String(formValues.gitignore_content ?? "");
+      const agentsMd = String(formValues.agents_md_content ?? "");
+      writeFileSync(join(cwd, ".gitignore"), gitignore, "utf-8");
+      writeFileSync(join(cwd, "AGENTS.md"), agentsMd, "utf-8");
+
+      // Update git remote if changed
+      if (gitUrl) {
+        try { execSync(`git remote set-url origin ${gitUrl}`, { cwd, stdio: "ignore" }); } catch { /* ignore */ }
+      }
+
+      await notify(deps, action.chatId, bs.helpProjectSaveSuccess);
+      return rawCard(await resolveHelpProjectCard(deps, action.chatId, action.actorId));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error({ projectId, err: msg }, "help_project_save failed");
+      await notify(deps, action.chatId, ERR.generic(bs.helpProjectSaveFailed(msg)));
+    }
+  },
+  helpProjectPush: async (deps, action) => {
+    const { getFeishuCardBuilderStrings } = await import("./channel/feishu-card-builders.strings");
+    const actionValue = ((action.raw as CardActionData)?.action?.value ?? {}) as Record<string, unknown>;
+    const projectId = String(actionValue.projectId ?? "");
+    if (!projectId) return;
+    const bs = getFeishuCardBuilderStrings(deps.config.locale);
+    const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
+
+    try {
+      const { execSync } = await import("node:child_process");
+      const state = deps.adminStateStore.read();
+      const project = state.projects.find((p: { id: string }) => p.id === projectId);
+      if (!project) throw new Error("Project not found");
+      execSync(`git push origin ${project.workBranch}`, { cwd: project.cwd, stdio: "pipe" });
+      await notify(deps, action.chatId, bs.helpProjectPushSuccess);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error({ projectId, err: msg }, "help_project_push failed");
+      await notify(deps, action.chatId, ERR.generic(bs.helpProjectPushFailed(msg)));
+    }
   },
   helpSkillInstall: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "SKILL_INSTALL");
@@ -474,6 +551,21 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       return;
     }
   },
+  mergeBatchRetry: async (deps, action) => {
+    await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
+    const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
+    if (!action.branchName || !action.files || action.files.length === 0) return;
+    try {
+      const review = await deps.orchestrator.retryMergeFiles(
+        action.chatId, action.branchName, action.files, action.feedback,
+        { userId: action.actorId }
+      );
+      return rawCard(deps.platformOutput.buildFileReviewCard(review));
+    } catch (error) {
+      await notify(deps, action.chatId, ERR.generic(error instanceof Error ? error.message : String(error)));
+      return;
+    }
+  },
   turnViewFileChanges: async (deps, action) => {
     const targetChatId = action.targetChatId?.trim() || action.chatId;
     const page = action.page ?? 0;
@@ -553,7 +645,64 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   mergeCommit: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
     const result = await deps.orchestrator.commitMergeReview(action.chatId, action.branchName, { userId: action.actorId });
-    return rawCard(deps.platformOutput.buildMergeResultCard(action.branchName, "main", result.success, result.message));
+    const project = deps.findProjectByChatId(action.chatId);
+    const threadAction = result.success && project?.id ? { projectId: project.id, chatId: action.chatId } : undefined;
+    // Fire-and-forget: detect stale threads after successful merge
+    if (result.success && project?.id) {
+      deps.orchestrator.detectStaleThreads(project.id, action.branchName).catch(() => {});
+    }
+    return rawCard(deps.platformOutput.buildMergeResultCard(action.branchName, "main", result.success, result.message, undefined, threadAction));
+  },
+  keepMergedThread: async (deps, action) => {
+    const s = getFeishuCardBuilderStrings(deps.config.locale);
+    return rawCard({
+      schema: "2.0",
+      config: { width_mode: "fill", update_multi: true },
+      header: {
+        title: { tag: "plain_text", content: `✓ ${action.branchName}` },
+        subtitle: { tag: "plain_text", content: s.mergeKeepThreadSuccessSubtitle },
+        template: "blue",
+        icon: { tag: "standard_icon", token: "check_outlined", color: "blue" },
+      },
+      body: {
+        direction: "vertical",
+        vertical_spacing: "8px",
+        padding: "8px 12px 12px 12px",
+        elements: [
+          {
+            tag: "interactive_container",
+            width: "fill",
+            height: "auto",
+            has_border: true,
+            border_color: "grey",
+            corner_radius: "8px",
+            padding: "10px 12px 10px 12px",
+            behaviors: [{ type: "callback", value: { action: "help_threads", ownerId: action.actorId } }],
+            elements: [{
+              tag: "markdown",
+              content: s.mergeBackToThreads,
+              icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
+            }]
+          }
+        ]
+      }
+    });
+  },
+  deleteMergedThread: async (deps, action) => {
+    await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_MERGE");
+    await deps.orchestrator.deleteThread(action.projectId, action.chatId, action.branchName);
+    const s = getFeishuCardBuilderStrings(deps.config.locale);
+    return rawCard({
+      schema: "2.0",
+      config: { width_mode: "fill", update_multi: true },
+      header: {
+        title: { tag: "plain_text", content: `🗑 ${action.branchName}` },
+        subtitle: { tag: "plain_text", content: s.mergeDeleteThreadSuccessSubtitle },
+        template: "grey",
+        icon: { tag: "standard_icon", token: "delete_outlined", color: "grey" },
+      },
+      body: { direction: "vertical", elements: [] }
+    });
   },
   adminUserToggle: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_ADD");
@@ -1300,6 +1449,7 @@ async function handleInitProjectAction(
   const rawCwd = String(formValues?.project_cwd ?? actionValue.project_cwd ?? "").trim();
   const gitUrl = String(formValues?.git_url ?? actionValue.git_url ?? "").trim();
   const gitToken = String(formValues?.git_token ?? actionValue.git_token ?? "").trim();
+  const workBranch = String(formValues?.work_branch ?? actionValue.work_branch ?? "").trim();
 
   let sanitized: { absolute: string; relative: string };
   try {
@@ -1317,6 +1467,7 @@ async function handleInitProjectAction(
       projectCwd: sanitized.absolute,
       gitUrl: gitUrl || undefined,
       gitToken: gitToken || undefined,
+      workBranch: workBranch || undefined,
       ownerId: operatorId
     });
     const displayName = await deps.feishuAdapter.getUserDisplayName?.(operatorId);
@@ -1325,6 +1476,7 @@ async function handleInitProjectAction(
       id: result.projectId,
       cwd: sanitized.relative,
       gitUrl: result.gitUrl ?? "",
+      workBranch: result.workBranch,
       operatorId: result.ownerId,
       displayName
     });
@@ -1483,7 +1635,7 @@ async function handleApprovalAction(
   if (approvalType !== "command_exec" && approvalType !== "file_change") {
     throw new Error(`approval action requires valid approvalType for approvalId=${approvalId}`);
   }
-  await deps.approvalHandler.handle({
+  const result = await deps.approvalHandler.handle({
     approvalId,
     approverId: operatorId || "unknown-approver",
     action,
@@ -1492,6 +1644,22 @@ async function handleApprovalAction(
     turnId,
     approvalType
   }, true);
+
+  // Fallback governance: duplicate/rejected must NOT show "approved" card
+  if (result === "duplicate" || result === "bridge_duplicate") {
+    return rawCard({
+      schema: "2.0",
+      header: { title: { tag: "plain_text", content: "该审批已被处理" }, template: "orange" },
+      body: { elements: [{ tag: "markdown", content: "此审批请求已被其他用户处理，无需重复操作。" }] }
+    });
+  }
+  if (result === "rejected") {
+    return rawCard({
+      schema: "2.0",
+      header: { title: { tag: "plain_text", content: "审批签名无效" }, template: "red" },
+      body: { elements: [{ tag: "markdown", content: "签名验证失败，审批未被执行。" }] }
+    });
+  }
 
   // Build updated card without buttons, showing who acted and when
   const actionLabel = action === "approve" ? s.approvalApproved : action === "deny" ? s.approvalRejected : s.approvalApprovedOnce;
@@ -1564,6 +1732,7 @@ async function handleThreadSwitchAction(
   }
 
   try {
+    const fromHelp = actionValue.fromHelp === true;
     if (action === "switch_thread") {
       const threadName = String(actionValue.threadName ?? "");
       if (!threadName) {
@@ -1574,19 +1743,19 @@ async function handleThreadSwitchAction(
       const activeBinding = await deps.orchestrator.getUserActiveThread(chatId, userId);
       const threads = await deps.orchestrator.handleThreadListEntries(chatId);
       const displayName = await deps.feishuAdapter.getUserDisplayName?.(userId);
-      return rawCard(deps.platformOutput.buildThreadListCard(
-        threads.map((thread) => ({
-          threadName: thread.threadName,
-          threadId: thread.threadId,
-          status: thread.status,
-          backendName: thread.backendId,
-          modelName: thread.model,
-          active: thread.status === "active" && activeBinding?.threadId === thread.threadId
-        })),
-        userId,
-        displayName,
-        false
-      ));
+      const items = threads.map((thread) => ({
+        threadName: thread.threadName,
+        threadId: thread.threadId,
+        status: thread.status,
+        backendName: thread.backendId,
+        modelName: thread.model,
+        active: thread.status === "active" && activeBinding?.threadId === thread.threadId
+      }));
+      return rawCard(
+        fromHelp
+          ? deps.platformOutput.buildHelpThreadCard(items, userId, displayName, false)
+          : deps.platformOutput.buildThreadListCard(items, userId, displayName, false)
+      );
     }
 
     // switch_to_main: leave thread, keep old thread's API alive
@@ -1594,19 +1763,19 @@ async function handleThreadSwitchAction(
     log.info("switch_to_main: binding cleared, threads stay alive");
     const threads = await deps.orchestrator.handleThreadListEntries(chatId);
     const displayName = await deps.feishuAdapter.getUserDisplayName?.(userId);
-    return rawCard(deps.platformOutput.buildThreadListCard(
-      threads.map((thread) => ({
-        threadName: thread.threadName,
-        threadId: thread.threadId,
-        status: thread.status,
-        backendName: thread.backendId,
-        modelName: thread.model,
-        active: false
-      })),
-      userId,
-      displayName,
-      true
-    ));
+    const items = threads.map((thread) => ({
+      threadName: thread.threadName,
+      threadId: thread.threadId,
+      status: thread.status,
+      backendName: thread.backendId,
+      modelName: thread.model,
+      active: false
+    }));
+    return rawCard(
+      fromHelp
+        ? deps.platformOutput.buildHelpThreadCard(items, userId, displayName, true)
+        : deps.platformOutput.buildThreadListCard(items, userId, displayName, true)
+    );
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     await notify(deps, chatId, ERR.switchFailed(msg));
@@ -1627,7 +1796,9 @@ async function handleMergeAction(
   if (action === "confirm_merge" && branchName) {
     try {
       const mergeResult = await deps.orchestrator.handleMergeConfirm(chatId, branchName, undefined, context);
-      return rawCard(deps.platformOutput.buildMergeResultCard(branchName, baseBranch, mergeResult.success, mergeResult.message));
+      const project = deps.findProjectByChatId(chatId);
+      const threadAction = mergeResult.success && project?.id ? { projectId: project.id, chatId } : undefined;
+      return rawCard(deps.platformOutput.buildMergeResultCard(branchName, baseBranch, mergeResult.success, mergeResult.message, undefined, threadAction));
     } catch (error) {
       return rawCard(deps.platformOutput.buildMergeResultCard(
         branchName,
