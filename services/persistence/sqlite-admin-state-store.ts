@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 
 import type { AdminPersistedState, AdminStateStore } from "../project/app-config";
 
@@ -31,8 +31,10 @@ function clone<T>(input: T): T {
 }
 
 export class SqliteAdminStateStore implements AdminStateStore {
-  constructor(private readonly db: DatabaseSync) {
-    this.db.exec(
+  constructor(private readonly db: AsyncDatabaseProxy) {}
+
+  async init(): Promise<void> {
+    await this.db.exec(
       `CREATE TABLE IF NOT EXISTS admin_state (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         state_json TEXT NOT NULL
@@ -40,8 +42,8 @@ export class SqliteAdminStateStore implements AdminStateStore {
     );
   }
 
-  read(): AdminPersistedState {
-    const row = this.db.prepare("SELECT state_json FROM admin_state WHERE id = 1").get() as AdminStateRow | undefined;
+  async read(): Promise<AdminPersistedState> {
+    const row = await this.db.get("SELECT state_json FROM admin_state WHERE id = 1") as AdminStateRow | undefined;
     if (!row) {
       return clone(EMPTY_STATE);
     }
@@ -53,14 +55,13 @@ export class SqliteAdminStateStore implements AdminStateStore {
     }
   }
 
-  write(state: AdminPersistedState): void {
-    this.db
-      .prepare(
-        `INSERT INTO admin_state (id, state_json)
-         VALUES (1, ?)
-         ON CONFLICT(id)
-         DO UPDATE SET state_json = excluded.state_json`
-      )
-      .run(JSON.stringify(normalizeState(state)));
+  async write(state: AdminPersistedState): Promise<void> {
+    await this.db.run(
+      `INSERT INTO admin_state (id, state_json)
+       VALUES (1, ?)
+       ON CONFLICT(id)
+       DO UPDATE SET state_json = excluded.state_json`,
+      JSON.stringify(normalizeState(state)),
+    );
   }
 }

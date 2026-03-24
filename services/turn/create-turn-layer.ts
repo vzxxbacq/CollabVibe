@@ -34,7 +34,7 @@ export interface TurnLayer {
   turnCommandService: TurnCommandService;
 }
 
-export function createTurnLayer(deps: TurnLayerDeps): TurnLayer {
+export async function createTurnLayer(deps: TurnLayerDeps): Promise<TurnLayer> {
   const nowIso = () => new Date().toISOString();
 
   const baseDeps = {
@@ -51,8 +51,8 @@ export function createTurnLayer(deps: TurnLayerDeps): TurnLayer {
   // These were orchestrator private methods bound via .bind(this).
   // Now they are plain lambdas referencing already-constructed services.
 
-  const requireProjectId = (projectId: string): string => {
-    const resolvedProjectId = deps.projectResolver.findProjectById?.(projectId)?.id ?? null;
+  const requireProjectId = async (projectId: string): Promise<string> => {
+    const resolvedProjectId = (await deps.projectResolver.findProjectById?.(projectId))?.id ?? null;
     if (!resolvedProjectId) {
       throw new OrchestratorError(ErrorCode.PROJECT_NOT_FOUND, `project not found: ${projectId}`);
     }
@@ -60,13 +60,14 @@ export function createTurnLayer(deps: TurnLayerDeps): TurnLayer {
   };
 
   const resolveAgentApi = async (projectId: string, threadName: string): Promise<AgentApi> => {
-    const resolvedProjectId = requireProjectId(projectId);
+    const resolvedProjectId = await requireProjectId(projectId);
     const cached = deps.threadRuntimeService.getApi(resolvedProjectId, threadName);
     if (cached) {
-      await deps.pluginService?.ensureProjectThreadSkills?.(resolvedProjectId, threadName);
+      const record = await deps.threadService.getRecord(resolvedProjectId, threadName);
+      await deps.pluginService?.ensureProjectThreadSkills?.(resolvedProjectId, threadName, record?.worktreePath);
       return cached;
     }
-    const record = deps.threadService.getRecord(resolvedProjectId, threadName);
+    const record = await deps.threadService.getRecord(resolvedProjectId, threadName);
     if (!record) {
       throw new OrchestratorError(ErrorCode.AGENT_API_UNAVAILABLE, `agent api unavailable for project-thread ${resolvedProjectId}/${threadName}`);
     }
@@ -78,7 +79,7 @@ export function createTurnLayer(deps: TurnLayerDeps): TurnLayer {
 
   const resolveThreadName = async (projectId: string, userId?: string): Promise<string | null> => {
     if (!userId) return null;
-    const binding = await deps.threadService.getUserBinding(requireProjectId(projectId), userId);
+    const binding = await deps.threadService.getUserBinding(await requireProjectId(projectId), userId);
     return binding?.threadName ?? null;
   };
 

@@ -30,23 +30,23 @@ export interface UserRecord {
  */
 export interface UserRepository {
   /** Check whether a user is a system admin (sys_role = 1). */
-  isAdmin(userId: string): boolean;
+  isAdmin(userId: string): Promise<boolean>;
 
   /** List all system admins with their source annotation. */
-  listAdmins(): UserRecord[];
+  listAdmins(): Promise<UserRecord[]>;
 
   /** Promote a user to admin. Idempotent — if already admin, no-op. */
-  setAdmin(userId: string, source: "env" | "im"): void;
+  setAdmin(userId: string, source: "env" | "im"): Promise<void>;
 
   /**
    * Demote an admin to normal user.
    * env-sourced admins cannot be removed — returns `{ ok: false }`.
    */
-  removeAdmin(userId: string): { ok: boolean; reason?: string };
+  removeAdmin(userId: string): Promise<{ ok: boolean; reason?: string }>;
 
   /** Ensure a user record exists (INSERT OR IGNORE with sys_role=0). */
-  ensureUser(userId: string): void;
+  ensureUser(userId: string): Promise<void>;
 
   /** List all registered users with optional pagination and ID filter. Admin-first ordering. */
-  listAll(opts?: { offset?: number; limit?: number; userIds?: string[] }): { users: UserRecord[]; total: number };
+  listAll(opts?: { offset?: number; limit?: number; userIds?: string[] }): Promise<{ users: UserRecord[]; total: number }>;
 }

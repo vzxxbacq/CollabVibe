@@ -146,7 +146,12 @@ export class FeishuOutputAdapter {
 
   constructor(
     private readonly client: FeishuMessageClient,
-    options?: { cardThrottleMs?: number; turnCardReader?: TurnCardReader; locale?: AppLocale }
+    options?: {
+      cardThrottleMs?: number;
+      turnCardReader?: TurnCardReader;
+      locale?: AppLocale;
+      deliveryMode?: "static" | "stream";
+    }
   ) {
     this.locale = options?.locale ?? DEFAULT_APP_LOCALE;
     this.turnCard = new TurnCardManager(client, { ...options, locale: this.locale });
@@ -174,6 +179,10 @@ export class FeishuOutputAdapter {
   /** Set per-turn prompt summary from user's prompt text. */
   setCardPromptSummary(chatId: string, turnId: string, promptText: string): void {
     this.turnCard.setCardPromptSummary(chatId, turnId, promptText);
+  }
+
+  async initializeTurnCard(chatId: string, turnId: string): Promise<void> {
+    await this.turnCard.initializeTurnCard(chatId, turnId);
   }
 
   /** Set thread name on a turn card early (before completeTurn). */

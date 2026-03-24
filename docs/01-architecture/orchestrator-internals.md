@@ -35,10 +35,12 @@ OrchestratorApi (Facade)
  ├── §9 ApprovalService
  └── [横切] ApiGuard (Proxy 拦截层)
 
-EventPipeline (路径 B — 独立于 API Facade)
- ├── AgentEventRouter
- ├── PlanFinalizer
- └── → OutputGateway (L1 提供)
+EventPipeline facade (路径 B — 独立于 API Facade)
+ ├── ThreadRuntimeRegistry
+ ├── ThreadEventRuntime
+  ├── AgentEventRouter
+  ├── OutputIntentBuffer
+  └── → OutputGateway / L1 CardDispatchCoordinator
 ```
 
 ### 2.1 Service 职责与依赖
@@ -47,7 +49,7 @@ EventPipeline (路径 B — 独立于 API Facade)
 |---------|------|-------------------|-----------|
 | **ProjectService** | 项目 CRUD、绑定/解绑、停用/恢复 | `AdminStateStore` | — |
 | **ThreadService** | 线程创建/删除、用户绑定切换、列表 | `ThreadRegistry`, `UserThreadBindingRepo` | `git-utils/worktree` |
-| **TurnLifecycleService** | turn 发起/中断/接受/回滚、git snapshot | `TurnRepository`, `SnapshotRepository` | `agent-core/AgentApiPool`, `git-utils/snapshot` |
+| **TurnLifecycleService** | turn 发起/中断/接受/回滚、git snapshot（merge resolver 线程跳过 snapshot 和 commitAndDiff，见 M1-M2） | `TurnRepository`, `SnapshotRepository` | `agent-core/AgentApiPool`, `git-utils/snapshot` |
 | **TurnDataService** | turn 数据查询/更新、事件追加、状态同步 | `TurnRepository`, `TurnDetailRepository`, `ThreadTurnStateRepository` | — |
 | **SnapshotService** | 快照列表、跳转、diff | `SnapshotRepository` | `git-utils/snapshot` |
 | **MergeService** | 合并/预览/审查/冲突解决 | `MergeSessionRepository` | `git-utils/merge` |
@@ -64,7 +66,7 @@ EventPipeline (路径 B — 独立于 API Facade)
 | **FactoryRegistry** | transport-aware 工厂注册（codex ↔ stdio, acp ↔ SSE） | L2 session/ |
 | **ConversationStateMachine** | per-thread 状态机（IDLE→RUNNING→AWAITING_APPROVAL→IDLE） | L2 session/ |
 | **RuntimeConfigProvider** | 运行时配置组装（project + thread + backend → RuntimeConfig） | L2 backend/ |
-| **EventPipeline** | 路径 B 流式事件处理、throttle、turn 状态收集 | L2 event/ |
+| **EventPipeline** | 路径 B facade；按 thread 路由到 `ThreadRuntimeRegistry` / `ThreadEventRuntime` | L2 event/ |
 | **ApiGuard** | 鉴权 + 审计 Proxy 拦截层 | L2 api/ [NEW] |
 
 ---
@@ -265,7 +267,7 @@ createOrchestratorLayer(config)
 
 layer.runStartup(gateway)
   │
-  ├─ 绑定 EventPipeline → gateway（路径 B 推送目标）
+  ├─ 绑定 EventPipeline → gateway（路径 B 输出意图提交目标）
   ├─ 启动健康检查定时器（每 10 分钟）
   ├─ backfill 项目元数据（gitUrl, defaultBranch）
   └─ 恢复活跃项目的 agent 会话
@@ -294,15 +296,16 @@ TurnLifecycleService.createTurn()
 EventPipeline（路径 B）
   │
   ├─ L3 transport onNotification → UnifiedAgentEvent
-  ├─ AgentEventRouter.route(event) → 分类
+  ├─ ThreadEventRuntime（per thread）→ 保序 / 聚合 / finalize
+  ├─ AgentEventRouter.route(event) → 平台无关输出
   ├─ transformer.transform(event) → IMOutputMessage
   ├─ TurnDataService.appendTurnEvent() → 持久化
-  └─ OutputGateway.send(message) → L1 渲染
+  └─ OutputGateway.dispatch(message) → L1 交付队列（非网络完成等待）
 ```
 
 ### 7.1 EventPipeline 内部机制
 
-> EventPipeline 是路径 B 的核心，管理事件流的生命周期。
+> EventPipeline 是路径 B 的 facade；真正的 thread 内事件生命周期由 `ThreadEventRuntime` 管理。
 
 | 机制 | 方法 | 说明 |
 |------|------|------|

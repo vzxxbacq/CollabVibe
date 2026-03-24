@@ -320,6 +320,7 @@ export class TurnCardManager {
   private readonly cardUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly cardDirty = new Set<string>();
   private readonly cardThrottleMs: number;
+  private readonly deliveryMode: "static" | "stream";
 
 
   private readonly turnCardReader?: TurnCardReader;
@@ -337,10 +338,12 @@ export class TurnCardManager {
       cardThrottleMs?: number;
       locale?: AppLocale;
       turnCardReader?: TurnCardReader;
+      deliveryMode?: "static" | "stream";
     }
   ) {
     this.locale = options?.locale ?? DEFAULT_APP_LOCALE;
-    this.cardThrottleMs = options?.cardThrottleMs ?? 5000;
+    this.cardThrottleMs = options?.cardThrottleMs ?? 30_000;
+    this.deliveryMode = options?.deliveryMode ?? "static";
     this.turnCardReader = options?.turnCardReader;
   }
 
@@ -423,6 +426,22 @@ export class TurnCardManager {
   setCardPromptSummary(chatId: string, turnId: string, promptText: string): void {
     const state = this.getOrCreateState(chatId, turnId);
     state.promptSummary = extractKeywords(promptText);
+  }
+
+  async initializeTurnCard(chatId: string, turnId: string): Promise<void> {
+    const key = keyOf(chatId, turnId);
+    this.getOrCreateState(chatId, turnId);
+    void this.ensureCard(chatId, turnId)
+      .then(() => {
+        if (!this.supportsNativeStreaming()) {
+          this.cardDirty.add(key);
+          return this.flushCardUpdate(chatId, turnId);
+        }
+        return undefined;
+      })
+      .catch((err) => {
+        this.log.warn({ err, chatId, turnId }, "initializeTurnCard error");
+      });
   }
 
   // ── Card Lifecycle ───────────────────────────────────────────────────────
@@ -905,7 +924,7 @@ export class TurnCardManager {
     // 从 L2 TurnCardDataProvider 恢复卡片状态（重启后恢复）
     if (!state && this.turnCardReader) {
       try {
-        const projectId = this.turnCardReader.resolveProjectId(chatId);
+        const projectId = await this.turnCardReader.resolveProjectId(chatId);
         if (!projectId) {
           throw new Error(`project not found for chatId: ${chatId}`);
         }
@@ -1184,7 +1203,7 @@ export class TurnCardManager {
     } else if (isInterrupting || isInterrupted) {
       bodyElements.push({ tag: "hr" });
       bodyElements.push(greyText(isInterrupting ? s.actionInterrupting : s.actionInterrupted));
-    } else if (!state.actionTaken && state.fileChanges.length > 0) {
+    } else if (!state.actionTaken && state.fileChanges.length > 0 && !state.isMergeResolver) {
       bodyElements.push({ tag: "hr" });
       bodyElements.push({
         tag: "column_set",
@@ -1324,7 +1343,8 @@ export class TurnCardManager {
   }
 
   private supportsNativeStreaming(): boolean {
-    return typeof this.client.createCardEntity === "function"
+    return this.deliveryMode === "stream"
+      && typeof this.client.createCardEntity === "function"
       && typeof this.client.sendCardEntity === "function"
       && typeof this.client.updateCardSettings === "function"
       && typeof this.client.streamCardElement === "function";
@@ -1617,7 +1637,7 @@ export class TurnCardManager {
 
   private renderFinalActionsElement(state: TurnCardState): Record<string, unknown> {
     const s = getFeishuTurnCardStrings(this.locale);
-    if (!state.actionTaken && state.fileChanges.length > 0) {
+    if (!state.actionTaken && state.fileChanges.length > 0 && !state.isMergeResolver) {
       return {
         tag: "column_set",
         element_id: STREAM_ACTIONS_ELEMENT_ID,

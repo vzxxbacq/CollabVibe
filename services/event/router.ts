@@ -6,6 +6,7 @@ import { transformUnifiedAgentEvent } from "./transformer";
 import type { UnifiedAgentEvent } from "../../packages/agent-core/src/index";
 import { toPlatformOutput } from "./output-mapper";
 import { projectThreadRouteKey } from "./router-keys";
+import { OutputIntentBuffer } from "./output-intent-buffer";
 
 /**
  * Callback that dispatches a PlatformOutput to the IM layer.
@@ -21,14 +22,17 @@ export interface RouteTarget extends TransformContext {
 export class AgentEventRouter {
   private readonly dispatchOutput: OutputDispatchFn;
   private readonly persistMessage?: (projectId: string, message: IMOutputMessage) => Promise<void>;
+  private readonly intentBuffer?: OutputIntentBuffer;
 
   private readonly routes = new Map<string, RouteTarget>();
 
   constructor(dispatchOutput: OutputDispatchFn, options?: {
     persistMessage?: (projectId: string, message: IMOutputMessage) => Promise<void>;
+    intentBuffer?: OutputIntentBuffer;
   }) {
     this.dispatchOutput = dispatchOutput;
     this.persistMessage = options?.persistMessage;
+    this.intentBuffer = options?.intentBuffer;
   }
 
   registerRoute(projectId: string, route: RouteTarget): void {
@@ -49,10 +53,15 @@ export class AgentEventRouter {
     await this.routeMessage(projectId, message);
   }
 
-  async routeMessage(projectId: string, message: IMOutputMessage): Promise<void> {
-    if (this.persistMessage) {
+  async routeMessage(projectId: string, message: IMOutputMessage, options?: { skipPersist?: boolean }): Promise<void> {
+    if (this.persistMessage && !options?.skipPersist) {
       await this.persistMessage(projectId, message);
     }
-    await this.dispatchOutput(projectId, toPlatformOutput(message));
+    const output = toPlatformOutput(message);
+    if (this.intentBuffer) {
+      await this.intentBuffer.enqueuePlatformOutput(projectId, output);
+      return;
+    }
+    await this.dispatchOutput(projectId, output);
   }
 }

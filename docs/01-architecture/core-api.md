@@ -899,8 +899,34 @@ allocateStagingDir(scope: string, userId: string): Promise<string>
 handleApprovalCallback(input: {
   approvalId: string;
   decision: "accept" | "decline" | "approve_always";
-}): Promise<"resolved" | "duplicate">
+  actorId?: string;
+  includeDisplay?: boolean;
+}): Promise<
+  "resolved"
+  | "duplicate"
+  | {
+    status: "resolved" | "duplicate";
+    approval?: {
+      threadName: string;
+      threadId: string;
+      approvalType: "command_exec" | "file_change";
+      displayName?: string;
+      summary?: string;
+      reason?: string;
+      cwd?: string;
+      description: string;
+      files?: string[];
+      createdAt: string;
+      decision: "approve" | "deny" | "approve_always";
+      actorId: string;
+      resolvedAt: string;
+    };
+  }
+>
 ```
+
+- `includeDisplay` is optional and only enriches the existing callback result; it does **not** add a new L2 entrypoint.
+- The returned `approval` payload is a platform-agnostic display snapshot so L1 can render post-approval cards without reading callback metadata as a source of truth.
 
 ---
 
@@ -947,15 +973,28 @@ class OrchestratorError extends Error {
 
 > [!IMPORTANT]
 > 路径 B 是 L2 → L1 的**事件推送通道**，与路径 A（API 调用）同等重要。
-> L1 通过 `runStartup(gateway)` 注入 `OutputGateway`，L2 内部 EventPipeline 通过它推送事件。
+> L1 通过 `runStartup(gateway)` 注入 `OutputGateway`，L2 内部 `EventPipeline` / `ThreadEventRuntime` 通过它提交平台无关输出意图。
+> **重要语义变更：`OutputGateway` 的 Promise 仅表示“成功进入 L1 交付队列”，不表示平台网络发送已经完成。**
 
 ```typescript
 /** L1 提供给 L2 的唯一回调接口。
- *  L2 用 projectId 标识推送目标，L1 负责 projectId → chatId 反向映射。 */
+ *  L2 用 projectId 标识推送目标，L1 负责 projectId → chatId 反向映射。
+ *  dispatch() = enqueue 到 L1 内存交付系统成功，不等待真实网络发送完成。 */
 interface OutputGateway {
   dispatch(projectId: string, output: PlatformOutput): Promise<void>;
+  flushAll?(): Promise<void>;
 }
 ```
+
+### 输出边界职责
+
+| 层级 | 职责 |
+|------|------|
+| **L2** | 维护业务顺序、thread/turn 运行时状态、产出平台无关 `PlatformOutput` |
+| **L1** | 接收 `PlatformOutput`，解析 view/card 目标，按 `cardKey/messageKey` 串行网络发送 |
+
+> [!NOTE]
+> L2 **不等待**飞书/Slack 等平台网络发送完成；平台限流、重试、失败恢复属于 L1 交付层职责。
 
 ### PlatformOutput 类型分组（L2 产出）
 
@@ -1003,33 +1042,16 @@ type IMMergeEvent =
 ### L1 消费 PlatformOutput 示例
 
 ```typescript
-// L1: FeishuOutputAdapter — 实现 OutputGateway
+// L1: FeishuOutputGateway — 实现 OutputGateway
 class FeishuOutputAdapter implements OutputGateway {
   async dispatch(projectId: string, output: PlatformOutput): Promise<void> {
-    // 1. projectId → chatId 反向映射（L1 职责）
-    const chatId = this.projectChatMap.get(projectId);
-    if (!chatId) return;
+    // 1. projectId → chatId / viewKey 解析（L1 职责）
+    // 2. enqueue 到 L1 CardDispatchCoordinator
+    // 3. Promise resolve = 已入 L1 队列；真实网络发送在后台继续
+  }
 
-    // 2. 根据 kind 分发到平台渲染
-    switch (output.kind) {
-      case "content":
-        await this.appendToStreamCard(chatId, output.data);
-        break;
-      case "approval_request":
-        await this.sendApprovalCard(chatId, output.data);
-        break;
-      case "turn_summary":
-        await this.finalizeStreamCard(chatId, output.data);
-        break;
-      case "merge_event":
-        switch (output.data.action) {
-          case "resolver_done":   await this.refreshMergeReviewCard(chatId, output.data); break;
-          case "resolver_complete": await this.sendMergePreviewCard(chatId, output.data); break;
-          case "timeout":         await this.sendMergeTimeoutNotice(chatId, output.data); break;
-        }
-        break;
-      // ... 其他 kind 处理
-    }
+  async flushAll(): Promise<void> {
+    // 等待 L1 交付队列清空（主要用于 shutdown）
   }
 }
 

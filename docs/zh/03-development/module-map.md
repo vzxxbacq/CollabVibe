@@ -21,8 +21,10 @@ status: active
 | `services/index.ts` | L2 公共 API barrel |
 | `services/thread/*`, `services/turn/*`, `services/event/*`, `services/backend/*` | 线程、backend、turn、event pipeline |
 | `services/persistence/*` | SQLite、repository、store |
+| `services/merge/*` | 合并审查会话、冲突解决、ancestry 检查 |
+| `services/snapshot/*` | Turn 级 git 快照管理 |
 | `services/iam/*` | 角色与授权 |
-| `services/approval/*` | 审批卡片与回调衔接 |
+| `services/approval/*` | 审批运行时状态、展示快照保存与回调衔接 |
 | `services/audit/*` | 审计能力 |
 | `services/project/*` | Project 聚合根与解引用 |
 | `services/plugin/*` | 插件目录与绑定 |

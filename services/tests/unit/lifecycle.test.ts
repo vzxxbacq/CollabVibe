@@ -14,11 +14,11 @@ describe("project lifecycle", () => {
     const projectId = await sim.createProjectFromChat({ chatId: "c-life", userId: "admin-user", name: "p-life" });
 
     await sim.api.disableProject({ projectId, actorId: "admin-user" });
-    const record1 = sim.api.getProjectRecord(projectId);
+    const record1 = await sim.api.getProjectRecord(projectId);
     expect(record1?.status).toBe("disabled");
 
     await sim.api.reactivateProject({ projectId, actorId: "admin-user" });
-    const record2 = sim.api.getProjectRecord(projectId);
+    const record2 = await sim.api.getProjectRecord(projectId);
     expect(record2?.status).toBe("active");
   });
 
@@ -27,7 +27,7 @@ describe("project lifecycle", () => {
     const projectId = await sim.createProjectFromChat({ chatId: "c-del", userId: "admin-user", name: "p-del" });
 
     await sim.api.deleteProject({ projectId, actorId: "admin-user" });
-    const record = sim.api.getProjectRecord(projectId);
+    const record = await sim.api.getProjectRecord(projectId);
     expect(record).toBeNull();
   });
 
@@ -35,10 +35,10 @@ describe("project lifecycle", () => {
     sim = await SimHarness.create();
     const projectId = await sim.createProjectFromChat({ chatId: "c-unlink", userId: "admin-user", name: "p-unlink" });
 
-    expect(sim.api.resolveProjectId("c-unlink")).toBe(projectId);
+    expect(await sim.api.resolveProjectId("c-unlink")).toBe(projectId);
 
     await sim.api.unlinkProject({ projectId, actorId: "admin-user" });
-    expect(sim.api.resolveProjectId("c-unlink")).toBeNull();
+    expect(await sim.api.resolveProjectId("c-unlink")).toBeNull();
   });
 
   it("rebind project to different chat", async () => {
@@ -48,7 +48,7 @@ describe("project lifecycle", () => {
     await sim.api.unlinkProject({ projectId, actorId: "admin-user" });
     await sim.api.linkProjectToChat({ projectId, chatId: "c-new", ownerId: "admin-user", actorId: "admin-user" });
 
-    expect(sim.api.resolveProjectId("c-old")).toBeNull();
-    expect(sim.api.resolveProjectId("c-new")).toBe(projectId);
+    expect(await sim.api.resolveProjectId("c-old")).toBeNull();
+    expect(await sim.api.resolveProjectId("c-new")).toBe(projectId);
   });
 });

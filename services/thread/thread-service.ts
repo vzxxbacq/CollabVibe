@@ -13,37 +13,38 @@ export class ThreadService {
     private readonly userThreadBindingService: UserThreadBindingService,
     private readonly threadTurnStateRepository: ThreadTurnStateRepository,
     private readonly nowIso: () => string,
-    private readonly lookupTurnStatusSync?: (projectId: string, turnId: string) => TurnStatus | undefined,
+    private readonly lookupTurnStatusSync?: (projectId: string, turnId: string) => TurnStatus | undefined | Promise<TurnStatus | undefined>,
   ) {}
 
-  reserve(record: Omit<ThreadRecord, "threadId">): ThreadReservation {
-    return this.threadRegistry.reserve(record);
+  async reserve(record: Omit<ThreadRecord, "threadId">): Promise<ThreadReservation> {
+    return await this.threadRegistry.reserve(record);
   }
 
-  activate(reservationId: string, record: ThreadRecord): void {
-    this.threadRegistry.activate(reservationId, record);
+  async activate(reservationId: string, record: ThreadRecord): Promise<void> {
+    await this.threadRegistry.activate(reservationId, record);
   }
 
-  release(reservationId: string): void {
-    this.threadRegistry.release(reservationId);
+  async release(reservationId: string): Promise<void> {
+    await this.threadRegistry.release(reservationId);
   }
 
-  register(record: ThreadRecord): void {
-    this.threadRegistry.register(record);
+  async register(record: ThreadRecord): Promise<void> {
+    await this.threadRegistry.register(record);
   }
 
-  getRecord(projectId: string, threadName: string): ThreadRecord | null {
-    return this.threadRegistry.get(projectId, threadName);
+  async getRecord(projectId: string, threadName: string): Promise<ThreadRecord | null> {
+    return await this.threadRegistry.get(projectId, threadName);
   }
 
-  listRecords(projectId: string): ThreadRecord[] {
-    return this.threadRegistry.list(projectId);
+  async listRecords(projectId: string): Promise<ThreadRecord[]> {
+    return await this.threadRegistry.list(projectId);
   }
 
-  listEntries(projectId: string): ThreadListEntry[] {
-    const entries = this.threadRegistry.listEntries?.(projectId);
+  async listEntries(projectId: string): Promise<ThreadListEntry[]> {
+    const entries = await this.threadRegistry.listEntries?.(projectId);
     if (entries) return entries;
-    return this.threadRegistry.list(projectId).map((record) => ({
+    const records = await this.threadRegistry.list(projectId);
+    return records.map((record) => ({
       projectId,
       threadName: record.threadName,
       threadId: record.threadId,
@@ -52,19 +53,19 @@ export class ThreadService {
     }));
   }
 
-  listAllRecords(): ThreadRecord[] {
-    return this.threadRegistry.listAll?.() ?? [];
+  async listAllRecords(): Promise<ThreadRecord[]> {
+    return (await this.threadRegistry.listAll?.()) ?? [];
   }
 
-  markMerged(projectId: string, threadName: string): void {
-    this.threadRegistry.remove(projectId, threadName);
+  async markMerged(projectId: string, threadName: string): Promise<void> {
+    await this.threadRegistry.remove(projectId, threadName);
   }
 
-  updateRecordRuntime(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath">>): void {
+  async updateRecordRuntime(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath">>): Promise<void> {
     if (!this.threadRegistry.update) {
       throw new Error("ThreadRegistry.update is not available");
     }
-    this.threadRegistry.update(projectId, threadName, patch);
+    await this.threadRegistry.update(projectId, threadName, patch);
   }
 
   async reinitializeEmptyThread(params: {
@@ -77,7 +78,7 @@ export class ThreadService {
     if (!this.threadRegistry.replaceEmptyThreadId) {
       throw new Error("ThreadRegistry.replaceEmptyThreadId is not available");
     }
-    this.threadRegistry.replaceEmptyThreadId(params);
+    await this.threadRegistry.replaceEmptyThreadId(params);
     await this.userThreadBindingService.rebindThread(
       params.projectId,
       params.threadName,
@@ -110,7 +111,7 @@ export class ThreadService {
   } | null> {
     const binding = await this.userThreadBindingService.resolve(projectId, userId);
     if (!binding) return null;
-    const record = this.threadRegistry.get(projectId, binding.threadName);
+    const record = await this.threadRegistry.get(projectId, binding.threadName);
     if (!record) return null;
     return {
       threadName: binding.threadName,
@@ -123,9 +124,7 @@ export class ThreadService {
     return this.threadTurnStateRepository.get(projectId, threadName);
   }
 
-  getRuntimeStateSync(projectId: string, threadName: string): ThreadTurnState | null {
-    return this.threadTurnStateRepository.getSync(projectId, threadName);
-  }
+
 
   async markTurnRunning(projectId: string, threadName: string, turnId: string): Promise<void> {
     await this.upsertRuntimeState(projectId, threadName, {
@@ -182,8 +181,8 @@ export class ThreadService {
     return state?.lastCompletedTurnId ?? state?.activeTurnId ?? null;
   }
 
-  isPendingApproval(projectId: string, threadName: string): boolean {
-    const turnId = this.threadTurnStateRepository.getSync(projectId, threadName)?.blockingTurnId;
+  async isPendingApproval(projectId: string, threadName: string): Promise<boolean> {
+    const turnId = (await this.threadTurnStateRepository.get(projectId, threadName))?.blockingTurnId;
     if (!turnId || !this.lookupTurnStatusSync) return false;
     return this.lookupTurnStatusSync(projectId, turnId) === "awaiting_approval";
   }

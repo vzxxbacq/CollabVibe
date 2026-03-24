@@ -5,7 +5,7 @@
  * Only `createPersistenceLayer(db)` is exported — individual repo classes
  * are internal implementation details.
  */
-import type { DatabaseSync } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 import { SqliteAdminStateStore } from "./sqlite-admin-state-store";
 import { SqliteApprovalStore } from "./sqlite-approval-store";
 import { SqliteAuditStore } from "./sqlite-audit-store";
@@ -34,18 +34,29 @@ export interface PersistenceLayer {
   threadRegistry: SqliteThreadRegistry;
 }
 
-export function createPersistenceLayer(db: DatabaseSync): PersistenceLayer {
+export async function createPersistenceLayer(db: AsyncDatabaseProxy): Promise<PersistenceLayer> {
+  const adminStateStore = new SqliteAdminStateStore(db);
+  const userRepo = new SqliteUserRepository(db);
+  const pluginCatalogStore = new SqlitePluginCatalogStore(db);
+  const mergeSessionRepo = new SqliteMergeSessionRepository(db);
+
+  // Initialize repos that have DDL (CREATE TABLE IF NOT EXISTS)
+  await adminStateStore.init();
+  await userRepo.init();
+  await pluginCatalogStore.init();
+  await mergeSessionRepo.init();
+
   return {
-    adminStateStore: new SqliteAdminStateStore(db),
+    adminStateStore,
     approvalStore: new SqliteApprovalStore(db),
     auditStore: new SqliteAuditStore(db),
-    pluginCatalogStore: new SqlitePluginCatalogStore(db),
+    pluginCatalogStore,
     snapshotRepo: new SqliteSnapshotRepository(db),
-    mergeSessionRepo: new SqliteMergeSessionRepository(db),
+    mergeSessionRepo,
     turnRepo: new SqliteTurnRepository(db),
     turnDetailRepo: new SqliteTurnDetailRepository(db),
     threadTurnStateRepo: new SqliteThreadTurnStateRepository(db),
-    userRepo: new SqliteUserRepository(db),
+    userRepo,
     userThreadBindingRepo: new SqliteUserThreadBindingRepository(db),
     threadRegistry: new SqliteThreadRegistry(db),
   };

@@ -23,3 +23,9 @@ status: active
 | Does the change still follow Path A / Path B? | Do not add bypasses |
 | Does it preserve layering dependencies? | Do not add reverse cross-layer dependencies |
 | Does it introduce a second source of truth for state? | Thread / backend / user must still keep a single persistent source |
+
+## Approval flow note
+
+- Pending approval display data is snapshotted in L2 during event registration.
+- Post-approval Feishu cards should render from `handleApprovalCallback(..., includeDisplay: true)` rather than from callback button metadata.
+- Do not add a new approval query API just for card rendering; reuse the existing callback contract.

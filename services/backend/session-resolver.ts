@@ -44,7 +44,7 @@ export class DefaultBackendSessionResolver implements BackendSessionResolver {
     constructor(
         private readonly backendRegistry: BackendRegistry,
         private readonly backendConfigService: BackendConfigService,
-        private readonly resolveThreadRecord?: (projectId: string, threadName: string) => ThreadRecord | null,
+        private readonly resolveThreadRecord?: (projectId: string, threadName: string) => ThreadRecord | null | Promise<ThreadRecord | null>,
     ) { }
 
     /**
@@ -80,7 +80,7 @@ export class DefaultBackendSessionResolver implements BackendSessionResolver {
 
         // Priority 1: thread binding → read backend from ThreadRegistry
         if (threadName) {
-            const threadRecord = this.resolveThreadRecord?.(projectId, threadName);
+            const threadRecord = await this.resolveThreadRecord?.(projectId, threadName);
             if (!threadRecord?.backend) {
                 throw new Error(`thread backend session not found: projectId=${projectId} threadName=${threadName}`);
             }

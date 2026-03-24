@@ -30,9 +30,9 @@ export interface RoleResolveOptions {
  * Intentionally does NOT import AdminStateStore to avoid cross-service imports.
  */
 interface ProjectMemberState {
-  read(): { members: Record<string, Array<{ userId: string; role: string }>> };
+  read(): Promise<{ members: Record<string, Array<{ userId: string; role: string }>> }>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  write(state: any): void;
+  write(state: any): Promise<void>;
 }
 
 export class RoleResolver {
@@ -48,21 +48,21 @@ export class RoleResolver {
    * @param projectId - Project context (null → system-level only, returns admin or auditor)
    * @param opts      - Options (autoRegister unknown users)
    */
-  resolve(userId: string, projectId?: string | null, opts?: RoleResolveOptions): EffectiveRole {
+  async resolve(userId: string, projectId?: string | null, opts?: RoleResolveOptions): Promise<EffectiveRole> {
     // 1. System admin check (highest priority)
-    if (this.userRepo.isAdmin(userId)) return "admin";
+    if (await this.userRepo.isAdmin(userId)) return "admin";
 
     // 2. No project context → auditor
     if (!projectId) return "auditor";
 
     // 3. Project member lookup
-    const state = this.stateStore.read();
+    const state = await this.stateStore.read();
     const memberRole = state.members[projectId]?.find(m => m.userId === userId)?.role;
     if (memberRole) return memberRole as EffectiveRole;
 
     // 4. Unknown user → auto-register as auditor if requested
     if (opts?.autoRegister) {
-      this.autoRegister(userId, projectId);
+      await this.autoRegister(userId, projectId);
     }
     return "auditor";
   }
@@ -71,20 +71,20 @@ export class RoleResolver {
    * Register an unknown user as "auditor" in the specified project.
    * Idempotent — does nothing if user already exists.
    */
-  autoRegister(userId: string, projectId: string): void {
-    const state = this.stateStore.read();
+  async autoRegister(userId: string, projectId: string): Promise<void> {
+    const state = await this.stateStore.read();
     if (!state.members[projectId]) state.members[projectId] = [];
     if (!state.members[projectId]!.some(m => m.userId === userId)) {
       state.members[projectId]!.push({ userId, role: "auditor" });
-      this.stateStore.write(state);
+      await this.stateStore.write(state);
       log.info({ userId, projectId }, "auto-registered user as auditor");
     }
     // Also ensure user exists in users table
-    this.userRepo.ensureUser(userId);
+    await this.userRepo.ensureUser(userId);
   }
 
   /** Check if a user is a system administrator. */
-  isAdmin(userId: string): boolean {
-    return this.userRepo.isAdmin(userId);
+  async isAdmin(userId: string): Promise<boolean> {
+    return await this.userRepo.isAdmin(userId);
   }
 }

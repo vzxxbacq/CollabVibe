@@ -23,6 +23,7 @@ export interface FeishuCardHandlerStrings {
   approvalOperationTitle: string;
   approvalCommandTitleText: string;
   approvalReasonTitle: string;
+  approvalStatusReasonTitle: string;
   approvalWorkingDirectoryTitle: string;
   approvalFilesTitle: string;
   approvalMoreFiles(count: number): string;
@@ -32,6 +33,8 @@ export interface FeishuCardHandlerStrings {
   approvalExpiredBody: string;
   approvalDuplicateTitle: string;
   approvalDuplicateBody: string;
+  approvalInvalidTitle: string;
+  approvalInvalidBody: string;
   mergeCanceledTitle(branchName: string): string;
   mergeReviewCanceledTitle(branchName: string): string;
   branchUnchanged: string;
@@ -75,10 +78,20 @@ export interface FeishuCardHandlerStrings {
   asyncFailedTag: string;
   asyncPushTitle: string;
   asyncPushBody(branchName: string): string;
+  asyncRevertTurnTitle: string;
+  asyncRevertTurnBody(turnId: string): string;
+  asyncAcceptTurnTitle: string;
+  asyncAcceptTurnBody(turnId: string): string;
+  asyncApprovalDecisionTitle: string;
+  asyncApprovalDecisionBody(decision: string): string;
+  asyncSubmitUserInputTitle: string;
+  asyncSubmitUserInputBody: string;
   asyncEnableSkillTitle: string;
   asyncEnableSkillBody(skillName: string): string;
   asyncRunMergeTitle: string;
   asyncRunMergeBody(branchName: string): string;
+  asyncPreviewMergeTitle: string;
+  asyncPreviewMergeBody(branchName: string): string;
   asyncCancelMergeReviewTitle: string;
   asyncCancelMergeReviewBody(branchName: string): string;
   asyncStartMergeReviewTitle: string;
@@ -95,8 +108,21 @@ export interface FeishuCardHandlerStrings {
   asyncAgentTakeoverBody(branchName: string): string;
   asyncCommitMergeTitle: string;
   asyncCommitMergeBody(branchName: string): string;
+  asyncDeleteThreadTitle: string;
+  asyncDeleteThreadBody(threadName: string): string;
+  asyncSearchUsersTitle: string;
+  asyncSearchUsersBody(keyword: string): string;
   asyncInstallSkillTitle: string;
   asyncInstallSkillBody: string;
+  asyncSwitchThreadTitle: string;
+  asyncSwitchThreadBody(threadName: string): string;
+  asyncSwitchToMainTitle: string;
+  asyncSwitchToMainBody: string;
+  asyncRevertTurnFailedTitle: string;
+  asyncAcceptTurnFailedTitle: string;
+  asyncApprovalDecisionFailedTitle: string;
+  asyncSubmitUserInputFailedTitle: string;
+  asyncPreviewMergeFailedTitle: string;
   asyncCancelMergeReviewFailedTitle: string;
   asyncStartMergeReviewFailedTitle: string;
   asyncRetryMergeFileFailedTitle: string;
@@ -105,7 +131,11 @@ export interface FeishuCardHandlerStrings {
   asyncAcceptAllMergeFailedTitle: string;
   asyncAgentTakeoverFailedTitle: string;
   asyncCommitMergeFailedTitle: string;
+  asyncDeleteThreadFailedTitle: string;
+  asyncSearchUsersFailedTitle: string;
   asyncInstallSkillFailedTitle: string;
+  asyncSwitchThreadFailedTitle: string;
+  asyncSwitchToMainFailedTitle: string;
 }
 
 const zhCN: FeishuCardHandlerStrings = {
@@ -131,6 +161,7 @@ const zhCN: FeishuCardHandlerStrings = {
   approvalOperationTitle: "**操作对象**",
   approvalCommandTitleText: "**命令**",
   approvalReasonTitle: "**审批原因**",
+  approvalStatusReasonTitle: "**状态说明**",
   approvalWorkingDirectoryTitle: "**工作目录**",
   approvalFilesTitle: "**涉及文件**",
   approvalMoreFiles: (count) => `另有 ${count} 个文件`,
@@ -140,6 +171,8 @@ const zhCN: FeishuCardHandlerStrings = {
   approvalExpiredBody: "当前 turn 已中断，此审批请求已失效。",
   approvalDuplicateTitle: "该审批已被处理",
   approvalDuplicateBody: "此审批请求已被其他用户处理，无需重复操作。",
+  approvalInvalidTitle: "审批不存在",
+  approvalInvalidBody: "未找到对应审批记录，可能该卡片已过旧或审批记录已被清理。",
   mergeCanceledTitle: (branchName) => `⏹️ 已取消合并: ${branchName}`,
   mergeReviewCanceledTitle: (branchName) => `⏹️ 已取消合并审阅: ${branchName}`,
   branchUnchanged: "分支保持不变",
@@ -183,10 +216,20 @@ const zhCN: FeishuCardHandlerStrings = {
   asyncFailedTag: "失败",
   asyncPushTitle: "正在推送到 Remote",
   asyncPushBody: (branchName) => `正在执行 \`git push origin ${branchName}\`。`,
+  asyncRevertTurnTitle: "正在回滚 Turn",
+  asyncRevertTurnBody: (turnId) => `正在恢复 turn **${turnId}** 的文件与会话状态。`,
+  asyncAcceptTurnTitle: "正在确认 Turn",
+  asyncAcceptTurnBody: (turnId) => `正在确认 turn **${turnId}** 的变更。`,
+  asyncApprovalDecisionTitle: "正在处理审批",
+  asyncApprovalDecisionBody: (decision) => `正在提交审批动作：**${decision}**。`,
+  asyncSubmitUserInputTitle: "正在提交用户输入",
+  asyncSubmitUserInputBody: "正在将表单答案提交给 Agent。",
   asyncEnableSkillTitle: "正在启用 Skill",
   asyncEnableSkillBody: (skillName) => `正在启用 **${skillName}**。`,
   asyncRunMergeTitle: "正在执行合并",
   asyncRunMergeBody: (branchName) => `正在处理分支 **${branchName}** 的 merge。`,
+  asyncPreviewMergeTitle: "正在预览合并",
+  asyncPreviewMergeBody: (branchName) => `正在检查分支 **${branchName}** 的 merge 结果。`,
   asyncCancelMergeReviewTitle: "正在取消合并审阅",
   asyncCancelMergeReviewBody: (branchName) => `正在中止并清理 **${branchName}** 的 merge review。`,
   asyncStartMergeReviewTitle: "正在启动合并审阅",
@@ -203,8 +246,21 @@ const zhCN: FeishuCardHandlerStrings = {
   asyncAgentTakeoverBody: (branchName) => `正在让 Agent 接管 **${branchName}** 的剩余冲突文件。`,
   asyncCommitMergeTitle: "正在提交合并结果",
   asyncCommitMergeBody: (branchName) => `正在提交 **${branchName}** 的 merge review 结果。`,
+  asyncDeleteThreadTitle: "正在删除 Thread",
+  asyncDeleteThreadBody: (threadName) => `正在删除 **${threadName}** 的 worktree 与线程记录。`,
+  asyncSearchUsersTitle: "正在搜索用户",
+  asyncSearchUsersBody: (keyword) => `正在搜索包含 **${keyword}** 的用户。`,
   asyncInstallSkillTitle: "正在安装 Skill",
   asyncInstallSkillBody: "正在校验并安装上传的 Skill 文件。",
+  asyncSwitchThreadTitle: "正在切换 Thread",
+  asyncSwitchThreadBody: (threadName) => `正在切换到 **${threadName}**，完成后会自动刷新线程卡片。`,
+  asyncSwitchToMainTitle: "正在切回主会话",
+  asyncSwitchToMainBody: "正在解绑当前 Thread，完成后会自动刷新线程卡片。",
+  asyncRevertTurnFailedTitle: "回滚 Turn 失败",
+  asyncAcceptTurnFailedTitle: "确认 Turn 失败",
+  asyncApprovalDecisionFailedTitle: "审批处理失败",
+  asyncSubmitUserInputFailedTitle: "提交用户输入失败",
+  asyncPreviewMergeFailedTitle: "预览合并失败",
   asyncCancelMergeReviewFailedTitle: "取消合并审阅失败",
   asyncStartMergeReviewFailedTitle: "启动合并审阅失败",
   asyncRetryMergeFileFailedTitle: "Agent 重试启动失败",
@@ -213,7 +269,11 @@ const zhCN: FeishuCardHandlerStrings = {
   asyncAcceptAllMergeFailedTitle: "批量接受失败",
   asyncAgentTakeoverFailedTitle: "启动 Agent 接管失败",
   asyncCommitMergeFailedTitle: "提交合并失败",
+  asyncDeleteThreadFailedTitle: "删除 Thread 失败",
+  asyncSearchUsersFailedTitle: "搜索用户失败",
   asyncInstallSkillFailedTitle: "Skill 安装失败",
+  asyncSwitchThreadFailedTitle: "切换 Thread 失败",
+  asyncSwitchToMainFailedTitle: "切回主会话失败",
 };
 
 const enUS: FeishuCardHandlerStrings = {
@@ -239,6 +299,7 @@ const enUS: FeishuCardHandlerStrings = {
   approvalOperationTitle: "**Operation**",
   approvalCommandTitleText: "**Command**",
   approvalReasonTitle: "**Reason**",
+  approvalStatusReasonTitle: "**Status detail**",
   approvalWorkingDirectoryTitle: "**Working directory**",
   approvalFilesTitle: "**Files**",
   approvalMoreFiles: (count) => `${count} more file(s)`,
@@ -248,6 +309,8 @@ const enUS: FeishuCardHandlerStrings = {
   approvalExpiredBody: "The current turn was interrupted, so this approval request is no longer valid.",
   approvalDuplicateTitle: "Approval already processed",
   approvalDuplicateBody: "This approval request has already been handled by another user. No further action is needed.",
+  approvalInvalidTitle: "Approval not found",
+  approvalInvalidBody: "No matching approval record was found. The card may be stale or the approval may already have been cleaned up.",
   mergeCanceledTitle: (branchName) => `⏹️ Merge canceled: ${branchName}`,
   mergeReviewCanceledTitle: (branchName) => `⏹️ Merge review canceled: ${branchName}`,
   branchUnchanged: "Branch remains unchanged",
@@ -291,10 +354,20 @@ const enUS: FeishuCardHandlerStrings = {
   asyncFailedTag: "Failed",
   asyncPushTitle: "Pushing to remote",
   asyncPushBody: (branchName) => `Running \`git push origin ${branchName}\`.`,
+  asyncRevertTurnTitle: "Reverting turn",
+  asyncRevertTurnBody: (turnId) => `Restoring files and session state for turn **${turnId}**.`,
+  asyncAcceptTurnTitle: "Accepting turn",
+  asyncAcceptTurnBody: (turnId) => `Accepting changes for turn **${turnId}**.`,
+  asyncApprovalDecisionTitle: "Processing approval",
+  asyncApprovalDecisionBody: (decision) => `Submitting approval decision: **${decision}**.`,
+  asyncSubmitUserInputTitle: "Submitting user input",
+  asyncSubmitUserInputBody: "Submitting the form answers to the agent.",
   asyncEnableSkillTitle: "Enabling skill",
   asyncEnableSkillBody: (skillName) => `Enabling **${skillName}**.`,
   asyncRunMergeTitle: "Running merge",
   asyncRunMergeBody: (branchName) => `Processing merge for branch **${branchName}**.`,
+  asyncPreviewMergeTitle: "Previewing merge",
+  asyncPreviewMergeBody: (branchName) => `Checking the merge result for branch **${branchName}**.`,
   asyncCancelMergeReviewTitle: "Canceling merge review",
   asyncCancelMergeReviewBody: (branchName) => `Stopping and cleaning up merge review for **${branchName}**.`,
   asyncStartMergeReviewTitle: "Starting merge review",
@@ -311,8 +384,21 @@ const enUS: FeishuCardHandlerStrings = {
   asyncAgentTakeoverBody: (branchName) => `Starting agent takeover for remaining conflict files in **${branchName}**.`,
   asyncCommitMergeTitle: "Committing merge result",
   asyncCommitMergeBody: (branchName) => `Committing merge review result for **${branchName}**.`,
+  asyncDeleteThreadTitle: "Deleting thread",
+  asyncDeleteThreadBody: (threadName) => `Deleting the worktree and thread record for **${threadName}**.`,
+  asyncSearchUsersTitle: "Searching users",
+  asyncSearchUsersBody: (keyword) => `Searching users matching **${keyword}**.`,
   asyncInstallSkillTitle: "Installing skill",
   asyncInstallSkillBody: "Validating and installing the uploaded skill.",
+  asyncSwitchThreadTitle: "Switching thread",
+  asyncSwitchThreadBody: (threadName) => `Switching to **${threadName}**. The thread card will refresh automatically when finished.`,
+  asyncSwitchToMainTitle: "Switching to main session",
+  asyncSwitchToMainBody: "Clearing the current thread binding. The thread card will refresh automatically when finished.",
+  asyncRevertTurnFailedTitle: "Failed to revert turn",
+  asyncAcceptTurnFailedTitle: "Failed to accept turn",
+  asyncApprovalDecisionFailedTitle: "Failed to process approval",
+  asyncSubmitUserInputFailedTitle: "Failed to submit user input",
+  asyncPreviewMergeFailedTitle: "Failed to preview merge",
   asyncCancelMergeReviewFailedTitle: "Failed to cancel merge review",
   asyncStartMergeReviewFailedTitle: "Failed to start merge review",
   asyncRetryMergeFileFailedTitle: "Failed to start agent retry",
@@ -321,7 +407,11 @@ const enUS: FeishuCardHandlerStrings = {
   asyncAcceptAllMergeFailedTitle: "Failed to accept remaining files",
   asyncAgentTakeoverFailedTitle: "Failed to start agent takeover",
   asyncCommitMergeFailedTitle: "Failed to commit merge review",
+  asyncDeleteThreadFailedTitle: "Failed to delete thread",
+  asyncSearchUsersFailedTitle: "Failed to search users",
   asyncInstallSkillFailedTitle: "Skill installation failed",
+  asyncSwitchThreadFailedTitle: "Failed to switch thread",
+  asyncSwitchToMainFailedTitle: "Failed to switch to main session",
 };
 
 export function getFeishuCardHandlerStrings(locale: AppLocale): FeishuCardHandlerStrings {

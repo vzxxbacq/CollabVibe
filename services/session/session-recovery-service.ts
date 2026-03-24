@@ -1,4 +1,5 @@
 import { createLogger } from "../../packages/logger/src/index";
+import type { ApprovalDecisionStore } from "../approval/contracts";
 import type { MergeUseCase } from "../merge/merge-service";
 import type { ProjectResolver } from "../project/project-resolver";
 import type { ThreadRuntimeService } from "../thread/thread-runtime-service";
@@ -44,6 +45,7 @@ export class SessionRecoveryService {
     threadRuntimeService: ThreadRuntimeService;
     threadService: ThreadService;
     mergeUseCase: MergeUseCase;
+    approvalStore: ApprovalDecisionStore;
     releaseSessionStateByPrefix: (projectId: string) => void;
   }) {}
 
@@ -56,8 +58,15 @@ export class SessionRecoveryService {
   async recoverSessions(activeProjectIds: string[]): Promise<SessionRecoveryResult> {
     let summary = createEmptyRecoverySummary();
     const projectIdSet = new Set(activeProjectIds);
+    const expiredApprovals = await this.deps.approvalStore.expirePending(
+      activeProjectIds,
+      "service restarted before approval callback completed"
+    );
+    if (expiredApprovals > 0) {
+      log.warn({ activeProjectIds, expiredApprovals }, "expired pending approvals during session recovery");
+    }
 
-    for (const record of this.deps.threadService.listAllRecords()) {
+    for (const record of await this.deps.threadService.listAllRecords()) {
       const recordProjectId = record.projectId;
       if (!recordProjectId) {
         const reason = `thread ${record.threadName} is missing required projectId`;

@@ -23,3 +23,9 @@ status: active
 | 是否仍沿 Path A / Path B | 不新增旁路 |
 | 是否破坏分层依赖 | 不跨层反向依赖 |
 | 是否引入第二个状态事实源 | thread / backend / user 仍保持唯一持久源 |
+
+## 审批流程补充
+
+- 审批展示数据在事件注册阶段由 L2 生成并保存 snapshot。
+- 批准/拒绝后的 Feishu 卡片应通过 `handleApprovalCallback(..., includeDisplay: true)` 返回的展示数据渲染，而不是继续把按钮 callback metadata 当作真实来源。
+- 不要为了卡片渲染新增独立审批查询接口；复用既有审批回调契约即可。

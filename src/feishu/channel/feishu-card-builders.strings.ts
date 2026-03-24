@@ -314,7 +314,17 @@ export interface FeishuCardBuilderStrings {
   mergeReviewBatchAcceptHint: string;
   mergeReviewBatchResolveConflicts(count: number): string;
   mergeReviewResolvingConflicts(count: number): string;
+  mergeReviewContinueWithAgentTitle(count: number): string;
+  mergeReviewContinueWithAgentHint: string;
+  mergeReviewContinueWithAgentSteps: string;
+  mergeReviewBatchRetryOnlySelectedHint: string;
+  mergeReviewBatchRetrySelectionSummary(selected: number, unchanged: number): string;
+  mergeReviewBatchRetryUnchanged(count: number, list: string): string;
+  mergeReviewBatchRetrySubmitHint: string;
+  mergeReviewBackToBatchSelectionHint: string;
   mergeReviewAcceptAll(remaining: number): string;
+  mergeReviewAcceptAllConfirmTitle: string;
+  mergeReviewAcceptAllConfirmText: string;
   mergeReviewProgress(accepted: number, rejected: number, remaining: number, pct: number): string;
   mergeSummaryAccepted(count: number, list: string): string;
   mergeSummaryKeepMain(count: number, list: string): string;
@@ -411,6 +421,7 @@ export interface FeishuCardBuilderStrings {
   mergeStatusAdded: string;
   mergeStatusDeleted: string;
   mergeDiffTruncated: string;
+  mergeDiffUnavailable: string;
   mergeDecisionKeepMainLabel: string;
   mergeDecisionUseBranchLabel: string;
   mergeDecisionSkipLabel: string;
@@ -808,14 +819,24 @@ const zhCN: FeishuCardBuilderStrings = {
   mergeReviewFileActionsTitle: "**当前文件**",
   mergeReviewSessionActionsTitle: "**整场审阅**",
   mergeReviewAutoMergedHint: "系统已自动生成该文件的合并结果。请确认是否接受当前结果，或改为保留基线/使用分支。",
-  mergeReviewAgentResolvedHint: "Agent 已生成当前结果。你可以直接接受，或补充说明后要求 Agent 重试。",
+  mergeReviewAgentResolvedHint: "Agent 已生成当前结果。你可以直接接受，或返回总览后批量选择需要继续修改的文件。",
   mergeReviewConflictHint: "该文件仍有冲突，必须先选择保留基线或使用分支版本。",
   mergeReviewAddedHint: "这是分支新增文件。接受当前结果会把它带入本次合并；跳过则不合入该文件。",
   mergeReviewDeletedHint: "这是一次删除变更。接受当前结果会删除该文件；保留基线则继续保留它。",
   mergeReviewBatchAcceptHint: "该操作只会通过剩余的非冲突文件，不会替你决定冲突文件。",
   mergeReviewBatchResolveConflicts: (count) => `**让 Agent 批量处理剩余冲突** (${count} 个冲突)`,
   mergeReviewResolvingConflicts: (count) => `Agent 正在批量处理剩余 **${count}** 个冲突文件。处理完成后会自动回到审阅总览。`,
+  mergeReviewContinueWithAgentTitle: (count) => `**继续让 Agent 批量修改** (${count} 个结果可继续调整)`,
+  mergeReviewContinueWithAgentHint: "Agent 已完成本轮处理。请选择本轮需要继续修改的文件；未选中的文件本轮保持不变。",
+  mergeReviewContinueWithAgentSteps: "1. 勾选本轮要继续修改的文件\n2. 填写统一补充要求\n3. 提交后自动进入下一轮批量处理",
+  mergeReviewBatchRetryOnlySelectedHint: "只有选中的文件会发送给 Agent 修改；未选中的文件本轮不改变。",
+  mergeReviewBatchRetrySelectionSummary: (selected, unchanged) => `本轮将修改 ${selected} 个文件 · 保持不变 ${unchanged} 个文件`,
+  mergeReviewBatchRetryUnchanged: (count, list) => `**本轮保持不变 (${count})**\n${list}`,
+  mergeReviewBatchRetrySubmitHint: "提交前请确认：未选中的文件不会自动接受，只会保持当前结果等待后续处理。",
+  mergeReviewBackToBatchSelectionHint: "若要继续让 Agent 修改，请返回总览并在批量面板中选择文件。",
   mergeReviewAcceptAll: (remaining) => `**批量接受其余可直接通过文件** (剩余 ${remaining} 个文件)`,
+  mergeReviewAcceptAllConfirmTitle: "批量接受全部文件？",
+  mergeReviewAcceptAllConfirmText: "全部待处理文件将被标记为「接受当前结果」，随后可在总览中统一提交合并。",
   mergeReviewProgress: (accepted, rejected, remaining, pct) => `进度: 已接受 ${accepted} · 已拒绝 ${rejected} · 待处理 ${remaining} (${pct}%)`,
   mergeSummaryAccepted: (count, list) => `**接受当前结果 (${count})**\n${list}`,
   mergeSummaryKeepMain: (count, list) => `**保留基线 (${count})**\n${list}`,
@@ -866,7 +887,7 @@ const zhCN: FeishuCardBuilderStrings = {
   adminSkillFileWaitingSubtitle: "已进入上传等待状态：请直接在当前会话发送一个 zip / tgz Skill 压缩包",
   adminSkillFileWaitingHint: "当前会话已开始等待文件上传。Skill 最终名称在上传后的确认卡中填写或修改；10 分钟内未上传会自动取消。",
   adminSkillFileWaitingButton: "等待文件上传中",
-  mergeDecisionAccept: "接受当前结果",
+  mergeDecisionAccept: "不修改",
   mergeDecisionKeepMain: "保留基线",
   mergeDecisionUseBranch: "使用分支",
   mergeDecisionSkip: "跳过",
@@ -877,6 +898,7 @@ const zhCN: FeishuCardBuilderStrings = {
   mergeStatusAdded: "新增",
   mergeStatusDeleted: "删除",
   mergeDiffTruncated: "\n... (truncated)",
+  mergeDiffUnavailable: "Diff 暂不可用。请返回概览页刷新，或重新触发 Agent 处理。",
   mergeDecisionKeepMainLabel: "保留基线",
   mergeDecisionUseBranchLabel: "使用分支",
   mergeDecisionSkipLabel: "跳过",
@@ -964,10 +986,10 @@ const zhCN: FeishuCardBuilderStrings = {
   mergeDeleteBranch: "**删除分支**",
   mergeReviewCancelConfirmTitle: "确认取消合并审阅",
   mergeReviewCancelConfirmText: "取消将丢弃当前所有审阅进度，分支将恢复到合并前的状态",
-  mergeBatchRetrySelectLabel: "选择需要重修的文件",
+  mergeBatchRetrySelectLabel: "选择本轮要修改的文件",
   mergeBatchRetryFeedbackLabel: "修改要求",
   mergeBatchRetryFeedbackPlaceholder: "例: 保留 API 兼容性，不要删除现有校验",
-  mergeBatchRetrySubmit: "添加重修",
+  mergeBatchRetrySubmit: "开始本轮批量修改",
   mergeDiffBaseline: (baseBranch) => `vs ${baseBranch} (merge base)`,
   mergeConfirm: "**确认合并**",
   mergeBack: "**返回上一级**",
@@ -1313,14 +1335,24 @@ const enUS: FeishuCardBuilderStrings = {
   mergeReviewFileActionsTitle: "**Current file**",
   mergeReviewSessionActionsTitle: "**Review session**",
   mergeReviewAutoMergedHint: "The system already produced a merged result for this file. Confirm it, or switch to keeping the base version or the branch version.",
-  mergeReviewAgentResolvedHint: "The agent produced the current result. You can accept it directly or send more instructions and ask the agent to retry.",
+  mergeReviewAgentResolvedHint: "The agent produced the current result. You can accept it directly, or go back to the overview and batch-select files for another agent pass.",
   mergeReviewConflictHint: "This file still has conflicts. Choose either the base version or the branch version before continuing.",
   mergeReviewAddedHint: "This file is new on the branch. Accepting the current result will include it in the merge; skipping leaves it out.",
   mergeReviewDeletedHint: "This change deletes the file. Accepting the current result removes it; keeping base preserves it.",
   mergeReviewBatchAcceptHint: "This only accepts the remaining non-conflict files. It does not resolve conflicts for you.",
   mergeReviewBatchResolveConflicts: (count) => `**Let the agent resolve the remaining conflicts in batch** (${count} conflicts)`,
   mergeReviewResolvingConflicts: (count) => `The agent is processing the remaining **${count}** conflict files in batch. This card will return to the review overview automatically when it finishes.`,
+  mergeReviewContinueWithAgentTitle: (count) => `**Continue with agent in batch** (${count} results can be revised)`,
+  mergeReviewContinueWithAgentHint: "The agent finished this pass. Select the files to revise in this round; unselected files will remain unchanged.",
+  mergeReviewContinueWithAgentSteps: "1. Select the files to revise in this round\n2. Add one shared instruction block\n3. Submit to start the next batch pass",
+  mergeReviewBatchRetryOnlySelectedHint: "Only selected files will be sent back to the agent. Unselected files stay unchanged this round.",
+  mergeReviewBatchRetrySelectionSummary: (selected, unchanged) => `This round will revise ${selected} file(s) · leave ${unchanged} unchanged`,
+  mergeReviewBatchRetryUnchanged: (count, list) => `**Keep unchanged this round (${count})**\n${list}`,
+  mergeReviewBatchRetrySubmitHint: "Before submitting: unselected files are not auto-accepted. They keep their current result for later review.",
+  mergeReviewBackToBatchSelectionHint: "If you want another agent pass, go back to the overview and use the batch selection panel.",
   mergeReviewAcceptAll: (remaining) => `**Batch-accept the remaining directly reviewable files** (${remaining} files remaining)`,
+  mergeReviewAcceptAllConfirmTitle: "Accept all remaining files?",
+  mergeReviewAcceptAllConfirmText: "All pending files will be marked as accepted. You can then commit the merge from the overview.",
   mergeReviewProgress: (accepted, rejected, remaining, pct) => `Progress: accepted ${accepted} · rejected ${rejected} · remaining ${remaining} (${pct}%)`,
   mergeSummaryAccepted: (count, list) => `**Accepted current result (${count})**\n${list}`,
   mergeSummaryKeepMain: (count, list) => `**Kept base (${count})**\n${list}`,
@@ -1371,7 +1403,7 @@ const enUS: FeishuCardBuilderStrings = {
   adminSkillFileWaitingSubtitle: "Upload waiting has started: send a zip / tgz skill archive directly in this chat",
   adminSkillFileWaitingHint: "This chat is now waiting for a file upload. The final skill name can be filled in or changed in the confirmation card after upload. If no file is uploaded within 10 minutes, it will be canceled automatically.",
   adminSkillFileWaitingButton: "Waiting for file upload",
-  mergeDecisionAccept: "Accept current result",
+  mergeDecisionAccept: "Keep as-is",
   mergeDecisionKeepMain: "Keep base",
   mergeDecisionUseBranch: "Use branch",
   mergeDecisionSkip: "Skip",
@@ -1382,6 +1414,7 @@ const enUS: FeishuCardBuilderStrings = {
   mergeStatusAdded: "Added",
   mergeStatusDeleted: "Deleted",
   mergeDiffTruncated: "\n... (truncated)",
+  mergeDiffUnavailable: "Diff is currently unavailable. Please return to the overview to refresh, or re-trigger the Agent.",
   mergeDecisionKeepMainLabel: "Keep base",
   mergeDecisionUseBranchLabel: "Use branch",
   mergeDecisionSkipLabel: "Skip",
@@ -1469,10 +1502,10 @@ const enUS: FeishuCardBuilderStrings = {
   mergeDeleteBranch: "**Delete branch**",
   mergeReviewCancelConfirmTitle: "Confirm cancel merge review",
   mergeReviewCancelConfirmText: "Canceling will discard all review progress. The branch will be restored to its pre-merge state.",
-  mergeBatchRetrySelectLabel: "Select files to re-process",
+  mergeBatchRetrySelectLabel: "Select files for this round",
   mergeBatchRetryFeedbackLabel: "Instructions",
   mergeBatchRetryFeedbackPlaceholder: "e.g. Prioritize API compatibility and keep the current validation logic",
-  mergeBatchRetrySubmit: "Add retry",
+  mergeBatchRetrySubmit: "Start batch revision",
   mergeDiffBaseline: (baseBranch) => `vs ${baseBranch} (merge base)`,
   mergeConfirm: "**Confirm merge**",
   mergeBack: "**Back**",

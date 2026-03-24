@@ -26,6 +26,7 @@ export interface GitWorktreeOps {
   list(mainCwd: string): Promise<Array<{ path: string; branch: string; head: string }>>;
   getHeadSha(cwd: string): Promise<string>;
   fastForward(worktreePath: string, targetRef: string): Promise<string>;
+  fastForwardIfHeadMatches(worktreePath: string, expectedHead: string, targetRef: string): Promise<{ updated: boolean; newHead: string; reason?: string }>;
   ensurePluginSymlink(mainCwd: string, worktreePath: string,
     pluginDir: string): Promise<void>;
 }
@@ -80,6 +81,7 @@ export interface GitRepoOps {
   getRemoteUrl(cwd: string): Promise<string | null>;
   shallowClone(source: string, targetDir: string): Promise<void>;
   push(cwd: string, branchName: string, remote?: string): Promise<void>;
+  isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean>;
 }
 
 /* ── Unified interface ───────────────────────────────────────────────── */
@@ -98,7 +100,7 @@ export interface GitOps {
 
 import {
   createWorktree, removeWorktree, getWorktreePath, assertWorktreeValid,
-  listWorktrees, getHeadSha, fastForwardWorktree, ensurePluginSymlink,
+  listWorktrees, getHeadSha, fastForwardWorktree, fastForwardWorktreeIfHeadMatches, ensurePluginSymlink,
 } from "./worktree";
 import {
   dryRunMerge, mergeWorktree, startConflictMerge, checkConflictsResolved,
@@ -109,7 +111,7 @@ import { createSnapshot, restoreSnapshot, diffSnapshot, pinSnapshot } from "./sn
 import { commitAndDiffWorktreeChanges, isWorktreeDirty } from "./commit";
 import {
   initRepo, getCurrentBranch, detectDefaultBranch, ensureWorkBranch,
-  setRemoteUrl, getRemoteUrl, shallowClone, pushBranch,
+  setRemoteUrl, getRemoteUrl, shallowClone, pushBranch, isAncestor,
 } from "./repo";
 import { access } from "node:fs/promises";
 import { initDefaultExcludes } from "./default-excludes";
@@ -133,6 +135,7 @@ export function createGitOps(workspaceCwd: string): GitOps {
       list: listWorktrees,
       getHeadSha,
       fastForward: fastForwardWorktree,
+      fastForwardIfHeadMatches: fastForwardWorktreeIfHeadMatches,
       ensurePluginSymlink,
     },
     merge: {
@@ -168,6 +171,7 @@ export function createGitOps(workspaceCwd: string): GitOps {
       getRemoteUrl,
       shallowClone,
       push: pushBranch,
+      isAncestor,
     },
     accessCheck: access,
   };

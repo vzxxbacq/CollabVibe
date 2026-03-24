@@ -256,6 +256,11 @@ export class FeishuAdapter extends BaseChannelAdapter {
   /** 用户显示名缓存 */
   private readonly userNameCache = new Map<string, string>();
 
+  getCachedUserDisplayName(userId: string): string | undefined {
+    if (!userId) return undefined;
+    return this.userNameCache.get(userId);
+  }
+
   private pickUserDisplayName(...candidates: Array<unknown>): string {
     for (const candidate of candidates) {
       const normalized = String(candidate ?? "").trim();
@@ -365,35 +370,39 @@ export class FeishuAdapter extends BaseChannelAdapter {
 
   private async tryGet(path: string): Promise<unknown> {
     const url = `${this.apiBaseUrl}/${path}`;
+    let firstError: unknown;
     try {
       const first = await this.httpClient.get(url);
       if (first.status >= 200 && first.status < 300) {
         return first.data;
       }
       throw new Error(`request failed: ${first.status}`);
-    } catch {
+    } catch (error) {
+      firstError = error;
       const retry = await this.httpClient.get(url);
       if (retry.status >= 200 && retry.status < 300) {
         return retry.data;
       }
-      throw new ChannelError("CHANNEL_REQUEST_FAILED", `feishu GET failed for ${path}`);
+      throw new ChannelError("CHANNEL_REQUEST_FAILED", `feishu GET failed for ${path}; firstError=${formatRequestError(firstError)}`);
     }
   }
 
   private async tryDelete(path: string): Promise<unknown> {
     const url = `${this.apiBaseUrl}/${path}`;
+    let firstError: unknown;
     try {
       const first = await this.httpClient.delete(url);
       if (first.status >= 200 && first.status < 300) {
         return first.data;
       }
       throw new Error(`request failed: ${first.status}`);
-    } catch {
+    } catch (error) {
+      firstError = error;
       const retry = await this.httpClient.delete(url);
       if (retry.status >= 200 && retry.status < 300) {
         return retry.data;
       }
-      throw new ChannelError("CHANNEL_REQUEST_FAILED", `feishu DELETE failed for ${path}`);
+      throw new ChannelError("CHANNEL_REQUEST_FAILED", `feishu DELETE failed for ${path}; firstError=${formatRequestError(firstError)}`);
     }
   }
 
@@ -412,20 +421,32 @@ export class FeishuAdapter extends BaseChannelAdapter {
 
   private async tryRequest(method: "post" | "put" | "patch", path: string, body: unknown): Promise<unknown> {
     const url = `${this.apiBaseUrl}/${path}`;
+    let firstError: unknown;
     try {
       const first = await this.httpClient[method](url, body);
       if (first.status >= 200 && first.status < 300) {
         return first.data;
       }
       throw new Error(`request failed: ${first.status}`);
-    } catch {
+    } catch (error) {
+      firstError = error;
       const retry = await this.httpClient[method](url, body);
       if (retry.status >= 200 && retry.status < 300) {
         return retry.data;
       }
-      throw new ChannelError("CHANNEL_REQUEST_FAILED", `feishu request failed for ${path}`);
+      throw new ChannelError(
+        "CHANNEL_REQUEST_FAILED",
+        `feishu ${method.toUpperCase()} failed for ${path}; firstError=${formatRequestError(firstError)}`
+      );
     }
   }
+}
+
+function formatRequestError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 function sanitizeFilename(name: string): string {

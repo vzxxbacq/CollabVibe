@@ -122,7 +122,7 @@ export class PluginService {
         return dir;
     }
 
-    validateSkillNameCandidate(rawName: string): SkillNameValidationResult {
+    async validateSkillNameCandidate(rawName: string): Promise<SkillNameValidationResult> {
         const trimmed = rawName.trim();
         if (!trimmed) {
             return { ok: false, reason: "Skill 名称不能为空" };
@@ -137,7 +137,7 @@ export class PluginService {
                 reason: "Skill 名称只允许字母、数字、点、下划线、中划线，且不能以分隔符开头或结尾",
             };
         }
-        const catalogEntry = this.catalogStore?.get(normalizedName);
+        const catalogEntry = await this.catalogStore?.get(normalizedName);
         const canonicalPath = join(this.canonicalStore, normalizedName);
         const catalogInstalled = Boolean(
             catalogEntry
@@ -150,23 +150,23 @@ export class PluginService {
         return { ok: true, normalizedName };
     }
 
-    private readProjects(): ProjectRecord[] {
-        return this.adminStateStore?.read().projects ?? [];
+    private async readProjects(): Promise<ProjectRecord[]> {
+        return (await this.adminStateStore?.read())?.projects ?? [];
     }
 
-    private requireProject(projectId: string): ProjectRecord {
-        const project = this.readProjects().find((item) => item.id === projectId);
+    private async requireProject(projectId: string): Promise<ProjectRecord> {
+        const project = (await this.readProjects()).find((item) => item.id === projectId);
         if (!project) {
             throw new Error(`project not found: ${projectId}`);
         }
         return project;
     }
 
-    private updateProject(projectId: string, mutate: (project: ProjectRecord) => void): ProjectRecord {
+    private async updateProject(projectId: string, mutate: (project: ProjectRecord) => void): Promise<ProjectRecord> {
         if (!this.adminStateStore) {
             throw new Error("adminStateStore is required for project skill operations");
         }
-        const state = this.adminStateStore.read();
+        const state = await this.adminStateStore.read();
         const project = state.projects.find((item) => item.id === projectId);
         if (!project) {
             throw new Error(`project not found: ${projectId}`);
@@ -174,12 +174,12 @@ export class PluginService {
         mutate(project);
         project.enabledSkills = [...new Set((project.enabledSkills ?? []).filter(Boolean))].sort((a, b) => a.localeCompare(b));
         project.updatedAt = new Date().toISOString();
-        this.adminStateStore.write(state);
+        await this.adminStateStore.write(state);
         return project;
     }
 
-    private getProjectEnabledSkills(projectId: string): string[] {
-        return [...(this.requireProject(projectId).enabledSkills ?? [])];
+    private async getProjectEnabledSkills(projectId: string): Promise<string[]> {
+        return [...((await this.requireProject(projectId)).enabledSkills ?? [])];
     }
 
     private async syncProjectBackendLinks(project: ProjectRecord): Promise<void> {
@@ -194,7 +194,7 @@ export class PluginService {
                 }
             }
             for (const skillName of enabled) {
-                const catalogEntry = this.catalogStore?.get(skillName);
+                const catalogEntry = await this.catalogStore?.get(skillName);
                 const sourcePath = catalogEntry?.contentPath ?? join(this.canonicalStore, skillName);
                 if (!(await stat(sourcePath).catch(() => null))) {
                     throw new Error(`Skill "${skillName}" 尚未安装到系统`);
@@ -220,7 +220,7 @@ export class PluginService {
         if (!this.adminStateStore) {
             return;
         }
-        const project = this.requireProject(projectId);
+        const project = await this.requireProject(projectId);
         await this.syncProjectBackendLinks(project);
         const worktrees = await this.gitOps!.worktree.list(project.cwd).catch(() => []);
         for (const worktree of worktrees) {
@@ -231,15 +231,15 @@ export class PluginService {
         }
     }
 
-    async ensureProjectThreadSkills(projectId: string, threadName: string): Promise<void> {
+    async ensureProjectThreadSkills(projectId: string, threadName: string, worktreePath?: string): Promise<void> {
         if (!this.adminStateStore) {
             return;
         }
-        const project = this.requireProject(projectId);
+        const project = await this.requireProject(projectId);
         await this.syncProjectBackendLinks(project);
-        const worktreePath = this.gitOps!.worktree.getPath(project.cwd, threadName);
+        const resolvedPath = worktreePath ?? this.gitOps!.worktree.getPath(project.cwd, threadName);
         for (const backendDir of ALL_BACKEND_SKILL_DIRS) {
-            await this.gitOps!.worktree.ensurePluginSymlink(project.cwd, worktreePath, backendDir);
+            await this.gitOps!.worktree.ensurePluginSymlink(project.cwd, resolvedPath, backendDir);
         }
     }
 
@@ -320,7 +320,7 @@ export class PluginService {
         if (!projectId) {
             throw new Error("projectId is required to enable a skill");
         }
-        const catalogEntry = this.catalogStore?.get(pluginName);
+        const catalogEntry = await this.catalogStore?.get(pluginName);
         const canonicalPath = catalogEntry?.contentPath ?? join(this.canonicalStore, pluginName);
         if (!existsSync(canonicalPath)) {
             throw new Error(`Skill "${pluginName}" 尚未安装到系统`);
@@ -335,10 +335,10 @@ export class PluginService {
         if (!existsSync(canonicalPath)) {
             throw new Error(`Skill "${pluginName}" 尚未安装到系统`);
         }
-        const beforeEnabled = new Set(this.getProjectEnabledSkills(projectId));
+        const beforeEnabled = new Set(await this.getProjectEnabledSkills(projectId));
         const alreadyEnabled = beforeEnabled.has(pluginName);
         this.log.info({ projectId, pluginName, actorId, alreadyEnabled }, "bind skill to project: start");
-        this.updateProject(projectId, (project) => {
+        await this.updateProject(projectId, (project) => {
             project.enabledSkills = [...(project.enabledSkills ?? []), pluginName];
         });
         await this.syncProjectSkills(projectId);
@@ -349,7 +349,7 @@ export class PluginService {
     async unbindFromProject(projectId: string, pluginName: string): Promise<boolean> {
         let changed = false;
         this.log.info({ projectId, pluginName }, "unbind skill from project: start");
-        this.updateProject(projectId, (project) => {
+        await this.updateProject(projectId, (project) => {
             const before = new Set(project.enabledSkills ?? []);
             before.delete(pluginName);
             const next = [...before];
@@ -362,7 +362,7 @@ export class PluginService {
     }
 
     async list(): Promise<PluginDefinition[]> {
-        const entries = this.catalogStore?.list() ?? [];
+        const entries = (await this.catalogStore?.list()) ?? [];
         if (entries.length > 0) {
             const result: PluginDefinition[] = [];
             for (const entry of entries) {
@@ -389,12 +389,12 @@ export class PluginService {
         }
     }
 
-    listCatalog(): PluginCatalogEntry[] {
-        return this.catalogStore?.list() ?? [];
+    async listCatalog(): Promise<PluginCatalogEntry[]> {
+        return (await this.catalogStore?.list()) ?? [];
     }
 
-    listProjectBindings(projectId: string) {
-        return this.getProjectEnabledSkills(projectId).map((pluginName) => ({
+    async listProjectBindings(projectId: string) {
+        return (await this.getProjectEnabledSkills(projectId)).map((pluginName) => ({
             projectId,
             pluginName,
             enabledAt: "",
@@ -403,8 +403,8 @@ export class PluginService {
     }
 
     async listProjectPlugins(projectId: string): Promise<ProjectPluginDefinition[]> {
-        const bindings = new Set(this.getProjectEnabledSkills(projectId));
-        const catalogEntries = this.catalogStore?.list() ?? [];
+        const bindings = new Set(await this.getProjectEnabledSkills(projectId));
+        const catalogEntries = (await this.catalogStore?.list()) ?? [];
         const catalog = new Map(catalogEntries.map((entry) => [entry.pluginName, entry]));
         const names = new Set<string>([...bindings.keys(), ...catalog.keys()]);
         const results: ProjectPluginDefinition[] = [];
@@ -444,13 +444,13 @@ export class PluginService {
     }
 
     async remove(name: string): Promise<boolean> {
-        const referencedBy = this.readProjects()
+        const referencedBy = (await this.readProjects())
             .filter((project) => (project.enabledSkills ?? []).includes(name))
             .map((project) => project.id);
         if (referencedBy.length > 0) {
             throw new Error(`Skill "${name}" 正被项目引用，禁止删除`);
         }
-        const removedStore = this.catalogStore?.remove(name) ?? false;
+        const removedStore = (await this.catalogStore?.remove(name)) ?? false;
         await rm(join(this.canonicalStore, name), { recursive: true, force: true }).catch(() => undefined);
         this.onPluginChange?.({ type: "removed", name });
         return removedStore || true;
@@ -463,8 +463,8 @@ export class PluginService {
         installed: boolean;
         enabled?: boolean;
     }>> {
-        const bound = new Set(projectId ? this.getProjectEnabledSkills(projectId) : []);
-        const catalogEntries = (this.catalogStore?.list() ?? []).filter((item) => item.downloadStatus === "downloaded");
+        const bound = new Set(projectId ? await this.getProjectEnabledSkills(projectId) : []);
+        const catalogEntries = ((await this.catalogStore?.list()) ?? []).filter((item) => item.downloadStatus === "downloaded");
         return catalogEntries.map((entry) => {
             const pluginName = entry.pluginName;
             return {
@@ -530,7 +530,7 @@ export class PluginService {
             if (failedPluginName) {
                 const targetDir = join(this.canonicalStore, failedPluginName);
                 await rm(targetDir, { recursive: true, force: true }).catch(() => undefined);
-                this.catalogStore?.upsert({
+                await this.catalogStore?.upsert({
                     pluginName: failedPluginName,
                     sourceType: input.sourceType,
                     displayName: failedPluginName,
@@ -591,7 +591,7 @@ export class PluginService {
             await cp(input.skillRoot, input.targetDir, { recursive: true });
         }
         const definition = await this.readPluginDefinition(input.targetDir, input.source);
-        this.catalogStore?.upsert({
+        await this.catalogStore?.upsert({
             pluginName: input.pluginName,
             sourceType: input.sourceType,
             skillSubpath: input.skillSubpath,

@@ -44,7 +44,7 @@ export class DefaultRuntimeConfigProvider implements RuntimeConfigProvider {
     if (!projectId) {
       throw new OrchestratorError(ErrorCode.PROJECT_NOT_FOUND, "projectId is required for runtime config resolution");
     }
-    const project = this.adminApi.findProjectById(projectId);
+    const project = await this.adminApi.findProjectById(projectId);
     if (!project) {
       throw new OrchestratorError(ErrorCode.PROJECT_NOT_FOUND, `project not found: ${projectId}`);
     }

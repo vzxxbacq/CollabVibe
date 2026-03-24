@@ -8,6 +8,7 @@ import type { SnapshotRepository } from "../snapshot/contracts";
 import type { TurnDetailRecord, TurnToolCall } from "./types";
 import { TurnServiceBase, type TurnServiceBaseDeps } from "./turn-service-base";
 import type { EnsureTurnStartInput, RecordTurnStartInput, TurnMetadataPatch, TurnSummaryPatch } from "./contracts";
+import { parseMergeResolverName } from "../merge/merge-naming";
 
 export interface TurnCommandServiceDeps extends TurnServiceBaseDeps {
   snapshotRepo?: SnapshotRepository;
@@ -29,7 +30,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   async ensureTurnStarted(input: EnsureTurnStartInput): Promise<{ turnNumber: number }> {
-    const resolvedProjectId = this.requireProjectId(input.projectId);
+    const resolvedProjectId = await this.requireProjectId(input.projectId);
     const key = `${resolvedProjectId}:${input.turnId}`;
     const pending = this.startEnsureInflight.get(key);
     if (pending) {
@@ -46,7 +47,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   private async ensureTurnStartedInternal(input: EnsureTurnStartInput): Promise<{ turnNumber: number }> {
-    const resolvedProjectId = this.requireProjectId(input.projectId);
+    const resolvedProjectId = await this.requireProjectId(input.projectId);
     const existing = await this.deps.turnRepository.getByTurnId(resolvedProjectId, input.turnId);
     if (!existing) {
       const created = await this.createTurnStart(input);
@@ -91,9 +92,14 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   private async createTurnStart(input: RecordTurnStartInput): Promise<{ turnNumber: number }> {
-    const snapshotSha = await this.commandDeps.gitOps.snapshot.create(input.cwd);
+    const isMergeResolver = parseMergeResolverName(input.threadName) !== null;
+    // Merge resolver threads must NOT create snapshots: the `git stash create` +
+    // `git reset HEAD` sequence inside createSnapshot consumes MERGE_HEAD,
+    // producing single-parent commits that break the fast-forward ancestry check.
+    // Merge session rollback is handled by abortMergeSession / preMergeSha instead.
+    const snapshotSha = isMergeResolver ? "" : await this.commandDeps.gitOps.snapshot.create(input.cwd);
     const createdAt = this.deps.nowIso();
-    const threadRecord = this.deps.threadService.getRecord(input.projectId, input.threadName);
+    const threadRecord = await this.deps.threadService.getRecord(input.projectId, input.threadName);
     const maxTurnNumber = await this.deps.turnRepository.getMaxTurnNumber(input.projectId, input.threadName);
     const turnNumber = maxTurnNumber + 1;
     await this.deps.turnRepository.create({
@@ -126,7 +132,7 @@ export class TurnCommandService extends TurnServiceBase {
     });
     await this.deps.threadService.markTurnRunning(input.projectId, input.threadName, input.turnId);
 
-    if (this.commandDeps.snapshotRepo) {
+    if (this.commandDeps.snapshotRepo && !isMergeResolver) {
       try {
         await this.commandDeps.gitOps.snapshot.pin(input.cwd, snapshotSha, `codex-turn-${input.turnId}`);
         const turnIndex = (await this.commandDeps.snapshotRepo.getLatestIndex(input.projectId, input.threadId)) + 1;
@@ -154,7 +160,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   async updateTurnSummary(projectId: string, turnId: string, summary: TurnSummaryPatch): Promise<void> {
-    const turn = await this.deps.turnRepository.getByTurnId(this.requireProjectId(projectId), turnId);
+    const turn = await this.deps.turnRepository.getByTurnId(await this.requireProjectId(projectId), turnId);
     if (!turn) return;
     await this.deps.turnRepository.update({
       ...turn,
@@ -166,7 +172,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   async updateTurnMetadata(projectId: string, turnId: string, patch: TurnMetadataPatch): Promise<void> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const detail = await this.deps.turnDetailRepository.getByTurnId(resolvedProjectId, turnId);
     if (!detail) return;
     await this.deps.turnDetailRepository.update({
@@ -181,7 +187,7 @@ export class TurnCommandService extends TurnServiceBase {
 
   async appendTurnEvent(projectId: string, message: IMOutputMessage): Promise<void> {
     if (!("turnId" in message) || !message.turnId) return;
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const detail = await this.deps.turnDetailRepository.getByTurnId(resolvedProjectId, message.turnId);
     if (!detail) return;
 
@@ -228,7 +234,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   async syncTurnState(projectId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const detail = await this.deps.turnDetailRepository.getByTurnId(resolvedProjectId, turnId);
     if (!detail) return;
     await this.deps.turnDetailRepository.update({
@@ -266,7 +272,7 @@ export class TurnCommandService extends TurnServiceBase {
 
   async finalizeTurnState(projectId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void> {
     await this.syncTurnState(projectId, turnId, snapshot);
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const turn = await this.deps.turnRepository.getByTurnId(resolvedProjectId, turnId);
     if (!turn) return;
     await this.deps.turnRepository.update({
@@ -278,7 +284,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   async interruptTurn(projectId: string, userId?: string): Promise<{ interrupted: boolean }> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const threadName = await this.commandDeps.resolveThreadName(projectId, userId);
     if (!threadName) return { interrupted: false };
     const state = await this.getThreadTurnState(projectId, threadName);
@@ -297,7 +303,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   async acceptTurn(projectId: string, turnId: string): Promise<{ accepted: boolean }> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const turn = await this.deps.turnRepository.getByTurnId(resolvedProjectId, turnId);
     if (!turn || turn.status !== "awaiting_approval") return { accepted: false };
     const resolvedAt = this.deps.nowIso();
@@ -310,7 +316,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   async revertTurn(projectId: string, turnId: string): Promise<{ rolledBack: boolean }> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const turn = await this.deps.turnRepository.getByTurnId(resolvedProjectId, turnId);
     if (!turn?.snapshotSha) return { rolledBack: false };
     const api = await this.commandDeps.resolveAgentApi(projectId, turn.threadName);
@@ -325,7 +331,7 @@ export class TurnCommandService extends TurnServiceBase {
   }
 
   async completeActiveTurn(projectId: string, threadName: string, diff: TurnDiffResult | null): Promise<void> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const turnId = await this.deps.threadService.getActiveTurnId(resolvedProjectId, threadName);
     if (!turnId) {
       return;

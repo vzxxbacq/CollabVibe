@@ -58,13 +58,19 @@ function readOptionalPlatformConfig(env: NodeJS.ProcessEnv): Pick<AppConfig, "pl
       appSecret: readRequired(env, "FEISHU_APP_SECRET"),
       signingSecret: env.FEISHU_SIGNING_SECRET || undefined,
       encryptKey: env.FEISHU_ENCRYPT_KEY,
-      apiBaseUrl: env.FEISHU_API_BASE_URL ?? "https://open.feishu.cn/open-apis"
+      apiBaseUrl: env.FEISHU_API_BASE_URL ?? "https://open.feishu.cn/open-apis",
+      httpTimeoutMs: 15_000,
+      cardDeliveryMode: "static",
+      cardUpdateIntervalMs: 30_000,
     } : {
       appId: "",
       appSecret: "",
       signingSecret: undefined,
       encryptKey: undefined,
-      apiBaseUrl: env.FEISHU_API_BASE_URL ?? "https://open.feishu.cn/open-apis"
+      apiBaseUrl: env.FEISHU_API_BASE_URL ?? "https://open.feishu.cn/open-apis",
+      httpTimeoutMs: 15_000,
+      cardDeliveryMode: "static",
+      cardUpdateIntervalMs: 30_000,
     },
     slack: platform === "slack" ? {
       botToken: readRequired(env, "SLACK_BOT_TOKEN"),
@@ -85,6 +91,17 @@ function readNumber(value: string | undefined, fallback: number): number {
     return fallback;
   }
   return parsed;
+}
+
+function readFeishuCardDeliveryMode(value: string | undefined): "static" | "stream" {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || normalized.length === 0) {
+    return "static";
+  }
+  if (normalized === "static" || normalized === "stream") {
+    return normalized;
+  }
+  throw new ConfigError("invalid FEISHU_CARD_DELIVERY_MODE (expected: static | stream)");
 }
 
 let envLoaded = false;
@@ -115,7 +132,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, options?: { env
         throw new ConfigError(error instanceof Error ? error.message : `invalid APP_LOCALE (default: ${DEFAULT_APP_LOCALE})`);
       }
     })(),
-    feishu: platformConfig.feishu,
     slack: platformConfig.slack,
     cwd: path.resolve(readRequired(env, "COLLABVIBE_WORKSPACE_CWD"), "workspace"),
     dataDir: path.resolve(readRequired(env, "COLLABVIBE_WORKSPACE_CWD")),
@@ -128,6 +144,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, options?: { env
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
+    },
+    feishu: {
+      ...platformConfig.feishu,
+      httpTimeoutMs: readNumber(env.FEISHU_HTTP_TIMEOUT_MS, 15_000),
+      cardDeliveryMode: readFeishuCardDeliveryMode(env.FEISHU_CARD_DELIVERY_MODE),
+      cardUpdateIntervalMs: readNumber(env.FEISHU_CARD_UPDATE_INTERVAL_MS, 30_000),
     }
   };
 }

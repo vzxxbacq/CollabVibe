@@ -233,3 +233,21 @@ export async function fastForwardWorktree(worktreePath: string, targetRef: strin
     await git(["merge", "--ff-only", targetRef], worktreePath);
     return getHeadSha(worktreePath);
 }
+
+
+/**
+ * Fast-forward a worktree only when its current HEAD still matches the expected SHA.
+ * This lets callers safely update follower threads without racing a concurrent local commit.
+ */
+export async function fastForwardWorktreeIfHeadMatches(
+    worktreePath: string,
+    expectedHead: string,
+    targetRef: string
+): Promise<{ updated: boolean; newHead: string; reason?: string }> {
+    const currentHead = await getHeadSha(worktreePath);
+    if (currentHead !== expectedHead) {
+        return { updated: false, newHead: currentHead, reason: `head_mismatch:${currentHead}` };
+    }
+    const newHead = await fastForwardWorktree(worktreePath, targetRef);
+    return { updated: true, newHead };
+}

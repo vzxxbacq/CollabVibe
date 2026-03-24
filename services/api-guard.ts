@@ -46,6 +46,7 @@ const API_GUARDS: Partial<Record<keyof OrchestratorApi, ApiGuardConfig>> = {
   installFromGithub: { permission: "skill.manage", requiresProject: false, audit: true, auditAction: "skill.installGithub" },
   installFromLocalSource: { permission: "skill.manage", requiresProject: false, audit: true, auditAction: "skill.installLocal" },
   handleApprovalCallback: { permission: null, requiresProject: false, audit: true, auditAction: "approval.callback" },
+  enqueueAsyncPlatformMutation: { permission: null, requiresProject: false, audit: false },
   toggleProjectStatus: { permission: "config.write", requiresProject: true, audit: true, auditAction: "project.toggleStatus" },
   validateSkillNameCandidate: { permission: null, requiresProject: false, audit: false },
   listSkillCatalog: { permission: null, requiresProject: false, audit: false },
@@ -73,7 +74,39 @@ function extractProjectId(input: unknown): string | undefined {
   return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
 }
 
-function resolveRoleForGuard(roleResolver: RoleResolver, userId: string, projectId?: string) {
+function buildAuditDetail(prop: string, input: unknown, value?: unknown, error?: unknown): Record<string, unknown> | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const obj = input as Record<string, unknown>;
+  if (prop !== "handleApprovalCallback") {
+    return undefined;
+  }
+  const detail: Record<string, unknown> = {
+    approvalId: typeof obj.approvalId === "string" ? obj.approvalId : undefined,
+    decision: typeof obj.decision === "string" ? obj.decision : undefined,
+  };
+  if (typeof value === "string") {
+    detail.status = value;
+  } else if (value && typeof value === "object" && "status" in (value as Record<string, unknown>)) {
+    const resultObj = value as Record<string, unknown>;
+    detail.status = resultObj.status;
+      const approval = resultObj.approval;
+      if (approval && typeof approval === "object") {
+        const approvalObj = approval as Record<string, unknown>;
+        detail.threadId = approvalObj.threadId;
+        detail.backendApprovalId = approvalObj.backendApprovalId;
+        detail.approvalType = approvalObj.approvalType;
+        detail.resolvedAt = approvalObj.resolvedAt;
+      detail.expiredAt = approvalObj.expiredAt;
+      detail.statusReason = approvalObj.statusReason;
+    }
+  }
+  if (error instanceof Error) {
+    detail.error = error.message;
+  }
+  return Object.fromEntries(Object.entries(detail).filter(([, v]) => v !== undefined));
+}
+
+async function resolveRoleForGuard(roleResolver: RoleResolver, userId: string, projectId?: string) {
   return roleResolver.resolve(userId, projectId);
 }
 
@@ -93,26 +126,27 @@ export function withApiGuards(
         return original;
       }
 
-      return (...args: unknown[]) => {
+      return async (...args: unknown[]) => {
         const input = args[0];
         const actorId = extractActorId(input);
         const projectId = extractProjectId(input);
         const requiredPermission: Permission | null = guard.permission;
 
         if (actorId && requiredPermission) {
-          const role = resolveRoleForGuard(roleResolver, actorId, projectId);
+          const role = await resolveRoleForGuard(roleResolver, actorId, projectId);
           if (!hasPermission(role, requiredPermission)) {
             throw new AuthorizationError(actorId, requiredPermission);
           }
         }
 
-        const appendAudit = (result: "ok" | "denied" | "error") => {
+        const appendAudit = (result: "ok" | "denied" | "error", value?: unknown, error?: unknown) => {
           if (guard.audit && guard.auditAction && actorId) {
             void auditService.append({
               projectId: projectId ?? "system",
               actorId,
               action: guard.auditAction,
               result,
+              detailJson: buildAuditDetail(prop, input, value, error),
             });
           }
         };
@@ -122,18 +156,18 @@ export function withApiGuards(
           if (result && typeof result === "object" && "then" in result) {
             return (result as Promise<unknown>)
               .then((value) => {
-                appendAudit("ok");
+                appendAudit("ok", value);
                 return value;
               })
               .catch((error) => {
-                appendAudit(error instanceof AuthorizationError ? "denied" : "error");
+                appendAudit(error instanceof AuthorizationError ? "denied" : "error", undefined, error);
                 throw error;
               });
           }
-          appendAudit("ok");
+          appendAudit("ok", result);
           return result;
         } catch (error) {
-          appendAudit(error instanceof AuthorizationError ? "denied" : "error");
+          appendAudit(error instanceof AuthorizationError ? "denied" : "error", undefined, error);
           throw error;
         }
       };

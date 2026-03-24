@@ -20,9 +20,11 @@ export class SessionStateService {
   private readonly machines = new Map<ProjectThreadKey, ConversationStateMachine>();
   private readonly approvalManagers = new Map<ProjectThreadKey, ApprovalWaitManager>();
   private readonly interruptingTurns = new Map<ProjectThreadKey, string>();
-  readonly turnState = new TurnStateManager();
+  readonly turnState: TurnStateManager;
 
-  constructor(private readonly approvalTimeoutMs: number) {}
+  constructor(private readonly approvalTimeoutMs: number) {
+    this.turnState = new TurnStateManager(approvalTimeoutMs);
+  }
 
   /* ── accessors ── */
 

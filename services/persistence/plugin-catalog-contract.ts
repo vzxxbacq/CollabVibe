@@ -16,8 +16,8 @@ export interface PluginCatalogEntry {
 }
 
 export interface PluginCatalogStore {
-  upsert(entry: PluginCatalogEntry): void;
-  get(pluginName: string): PluginCatalogEntry | null;
-  list(): PluginCatalogEntry[];
-  remove(pluginName: string): boolean;
+  upsert(entry: PluginCatalogEntry): Promise<void>;
+  get(pluginName: string): Promise<PluginCatalogEntry | null>;
+  list(): Promise<PluginCatalogEntry[]>;
+  remove(pluginName: string): Promise<boolean>;
 }

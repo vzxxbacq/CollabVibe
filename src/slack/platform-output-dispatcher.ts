@@ -2,18 +2,55 @@ import type { PlatformOutput, OutputGateway } from "../common/platform-output";
 import { SlackRenderer } from "./channel/index";
 import type { SlackHelpPanelPayload } from "./shared-handlers";
 import type { SlackHandlerDeps } from "./types";
+import { CardDispatchCoordinator } from "../common/card-dispatch-coordinator";
 
 export class SlackOutputGateway implements OutputGateway {
   private readonly renderer = new SlackRenderer();
+  private readonly coordinator = new CardDispatchCoordinator();
 
   constructor(private readonly deps: SlackHandlerDeps) {}
 
-  private resolveChatId(targetId: string): string {
-    return this.deps.api.getProjectRecord(targetId)?.chatId || targetId;
+  private async resolveChatId(targetId: string): Promise<string> {
+    return (await this.deps.api.getProjectRecord(targetId))?.chatId || targetId;
   }
 
   async dispatch(targetId: string, output: PlatformOutput): Promise<void> {
-    const chatId = this.resolveChatId(targetId);
+    const chatId = await this.resolveChatId(targetId);
+    this.coordinator.enqueue(this.cardKey(chatId, output), async () => {
+      await this.dispatchNetwork(chatId, output);
+    });
+  }
+
+  async flushAll(): Promise<void> {
+    await this.coordinator.flushAll();
+  }
+
+  private cardKey(chatId: string, output: PlatformOutput): string {
+    switch (output.kind) {
+      case "content":
+      case "reasoning":
+      case "plan":
+      case "plan_update":
+      case "tool_output":
+      case "progress":
+      case "turn_summary":
+        return `slack:turn:${chatId}:${output.data.turnId}`;
+      case "notification":
+        return output.data.turnId ? `slack:turn:${chatId}:${output.data.turnId}` : `slack:notify:${chatId}:${Date.now()}:${Math.random()}`;
+      case "approval_request":
+        return `slack:approval:${chatId}:${output.data.approvalId}`;
+      case "user_input_request":
+        return `slack:user-input:${chatId}:${output.data.turnId}:${output.data.callId}`;
+      case "platform_mutation":
+        return output.data.messageId
+          ? `slack:message:${output.data.chatId || chatId}:${output.data.messageId}`
+          : `slack:chat:${output.data.chatId || chatId}:raw-card`;
+      default:
+        return `slack:${output.kind}:${chatId}:${Date.now()}:${Math.random()}`;
+    }
+  }
+
+  private async dispatchNetwork(chatId: string, output: PlatformOutput): Promise<void> {
     switch (output.kind) {
       case "content":
         await this.deps.platformOutput.appendContent(chatId, output.data.turnId, output.data.delta);
@@ -122,6 +159,29 @@ export class SlackOutputGateway implements OutputGateway {
       case "turn_detail":
       case "admin_panel":
         return;
+      case "platform_mutation": {
+        const payload = output.data.payload;
+        if (!payload || typeof payload !== "object") {
+          return;
+        }
+        if (isSlackHelpPanelPayload(payload)) {
+          if (output.data.messageId) {
+            await this.deps.slackMessageClient.updateMessage({
+              channel: output.data.chatId || chatId,
+              ts: output.data.messageId,
+              blocks: payload.blocks as Parameters<typeof this.deps.slackMessageClient.updateMessage>[0]["blocks"],
+              text: payload.text,
+            });
+            return;
+          }
+          await this.deps.slackMessageClient.postMessage({
+            channel: output.data.chatId || chatId,
+            blocks: payload.blocks as Parameters<typeof this.deps.slackMessageClient.postMessage>[0]["blocks"],
+            text: payload.text,
+          });
+        }
+        return;
+      }
     }
   }
 }

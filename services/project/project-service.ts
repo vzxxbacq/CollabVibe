@@ -93,7 +93,7 @@ export class ProjectSetupService {
       throw new Error("不允许直接在 workspace 根目录创建项目，请指定子目录");
     }
 
-    const state = this.adminStateStore.read();
+    const state = await this.adminStateStore.read();
     const existing = state.projects.find((project) => project.chatId === input.chatId);
     if (existing) {
       log.warn({ chatId: input.chatId, projectId: existing.id }, "project setup rejected: chat already bound");
@@ -155,7 +155,7 @@ export class ProjectSetupService {
     if (!members.some(m => m.userId === input.ownerId)) {
       members.push({ userId: input.ownerId, role: "maintainer" });
     }
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ chatId: input.chatId, projectId, cwd: resolved, ownerId: input.ownerId }, "project setup completed");
 
     return {
@@ -174,7 +174,7 @@ export class ProjectSetupService {
    * The project must already exist with chatId === "".
    */
   async bindExistingProject(chatId: string, projectId: string, ownerId: string): Promise<BindResult> {
-    const state = this.adminStateStore.read();
+    const state = await this.adminStateStore.read();
     const project = state.projects.find(p => p.id === projectId);
     if (!project) {
       log.warn({ chatId, projectId }, "bindExistingProject rejected: missing project");
@@ -202,7 +202,7 @@ export class ProjectSetupService {
     if (!project.defaultBranch && project.cwd) {
       project.defaultBranch = await this.gitOps.repo.detectDefaultBranch(project.cwd);
     }
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ chatId, projectId, ownerId }, "existing project bound to chat");
     return {
       projectId: project.id,
@@ -218,13 +218,13 @@ export class ProjectSetupService {
    * This is the shared lifecycle operation used by admin project management.
    */
   async disableAndUnbindProjectById(projectId: string): Promise<UnbindResult | null> {
-    const state = this.adminStateStore.read();
+    const state = await this.adminStateStore.read();
     const project = state.projects.find((item) => item.id === projectId);
     if (!project) {
       return null;
     }
     const result = this.disableAndUnbindProject(project);
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ projectId: result.projectId, oldChatId: result.oldChatId }, "project disabled and unbound");
     return result;
   }
@@ -234,13 +234,13 @@ export class ProjectSetupService {
    * Used when the bot is removed from a group.
    */
   async disableAndUnbindProjectByChatId(chatId: string): Promise<UnbindResult | null> {
-    const state = this.adminStateStore.read();
+    const state = await this.adminStateStore.read();
     const project = state.projects.find((item) => item.chatId === chatId);
     if (!project) {
       return null;
     }
     const result = this.disableAndUnbindProject(project);
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ chatId, projectId: result.projectId }, "project disabled and unbound from chat");
     return result;
   }
@@ -260,8 +260,8 @@ export class ProjectSetupService {
   /* ── Project CRUD (C6: replaces L1 raw adminStateStore.read/write) ── */
 
   /** Get a project by its ID. Returns undefined if not found. */
-  getProjectById(projectId: string): ProjectRecord | undefined {
-    const state = this.adminStateStore.read();
+  async getProjectById(projectId: string): Promise<ProjectRecord | undefined> {
+    const state = await this.adminStateStore.read();
     return state.projects.find(p => p.id === projectId);
   }
 
@@ -270,12 +270,12 @@ export class ProjectSetupService {
    * Returns the updated project, or null if not found.
    * Validates name uniqueness if `name` is being changed.
    */
-  updateProject(projectId: string, patch: {
+  async updateProject(projectId: string, patch: {
     name?: string;
     gitUrl?: string;
     workBranch?: string;
-  }): ProjectRecord | null {
-    const state = this.adminStateStore.read();
+  }): Promise<ProjectRecord | null> {
+    const state = await this.adminStateStore.read();
     const project = state.projects.find(p => p.id === projectId);
     if (!project) return null;
 
@@ -292,7 +292,7 @@ export class ProjectSetupService {
       project.workBranch = patch.workBranch;
     }
     project.updatedAt = new Date().toISOString();
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ projectId, patch: Object.keys(patch) }, "project updated");
     return project;
   }
@@ -301,17 +301,17 @@ export class ProjectSetupService {
    * Toggle project status between active/disabled.
    * Returns { project, wasActive } so caller can trigger side effects.
    */
-  toggleProjectStatus(projectId: string): {
+  async toggleProjectStatus(projectId: string): Promise<{
     project: ProjectRecord;
     wasActive: boolean;
-  } | null {
-    const state = this.adminStateStore.read();
+  } | null> {
+    const state = await this.adminStateStore.read();
     const project = state.projects.find(p => p.id === projectId);
     if (!project) return null;
     const wasActive = project.status === "active";
     project.status = wasActive ? "disabled" : "active";
     project.updatedAt = new Date().toISOString();
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ projectId, newStatus: project.status }, "project status toggled");
     return { project, wasActive };
   }
@@ -320,13 +320,13 @@ export class ProjectSetupService {
    * Re-enable a disabled project by ID.
    * Used when bot is re-added to a chat with a disabled project.
    */
-  reactivateProject(projectId: string): boolean {
-    const state = this.adminStateStore.read();
+  async reactivateProject(projectId: string): Promise<boolean> {
+    const state = await this.adminStateStore.read();
     const project = state.projects.find(p => p.id === projectId);
     if (!project || project.status === "active") return false;
     project.status = "active";
     project.updatedAt = new Date().toISOString();
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ projectId }, "project reactivated");
     return true;
   }
@@ -335,15 +335,15 @@ export class ProjectSetupService {
    * Permanently delete a project and its member list.
    * Returns the deleted project's chatId for side-effect cleanup (or null if not found).
    */
-  deleteProjectById(projectId: string): { oldChatId: string } | null {
-    const state = this.adminStateStore.read();
+  async deleteProjectById(projectId: string): Promise<{ oldChatId: string } | null> {
+    const state = await this.adminStateStore.read();
     const idx = state.projects.findIndex(p => p.id === projectId);
     if (idx < 0) return null;
     const project = state.projects[idx]!;
     const oldChatId = project.chatId;
     state.projects.splice(idx, 1);
     delete state.members[projectId];
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ projectId, oldChatId }, "project deleted");
     return { oldChatId };
   }
@@ -352,50 +352,50 @@ export class ProjectSetupService {
    * Update a member's role within a project.
    * Returns true if the member was found and updated, false otherwise.
    */
-  updateMemberRole(
+  async updateMemberRole(
     projectId: string, userId: string, role: ProjectRole
-  ): boolean {
-    const state = this.adminStateStore.read();
+  ): Promise<boolean> {
+    const state = await this.adminStateStore.read();
     const members = state.members[projectId] ?? [];
     const idx = members.findIndex(m => m.userId === userId);
     if (idx < 0) return false;
     members[idx] = { ...members[idx], role };
     state.members[projectId] = members;
-    this.adminStateStore.write(state);
+    await this.adminStateStore.write(state);
     log.info({ projectId, userId, role }, "member role updated");
     return true;
   }
 
   /** List all projects (raw records). Used by admin panel data aggregation. */
-  listAllProjectsRaw(): ProjectRecord[] {
-    return this.adminStateStore.read().projects;
+  async listAllProjectsRaw(): Promise<ProjectRecord[]> {
+    return (await this.adminStateStore.read()).projects;
   }
 
   /** List members for a specific project. */
-  listProjectMembers(projectId: string): MemberRecord[] {
-    return this.adminStateStore.read().members[projectId] ?? [];
+  async listProjectMembers(projectId: string): Promise<MemberRecord[]> {
+    return (await this.adminStateStore.read()).members[projectId] ?? [];
   }
 
   /** List unbound projects (chatId is empty). */
-  listUnboundProjects(): Array<{ id: string; name: string; cwd: string; gitUrl?: string }> {
-    return this.adminStateStore.read().projects
+  async listUnboundProjects(): Promise<Array<{ id: string; name: string; cwd: string; gitUrl?: string }>> {
+    return (await this.adminStateStore.read()).projects
       .filter((project) => !project.chatId)
       .map((project) => ({ id: project.id, name: project.name, cwd: project.cwd, gitUrl: project.gitUrl }));
   }
 
-  resolveProjectId(chatId: string): string | null {
-    return this.adminStateStore.read().projects.find((project) => project.chatId === chatId)?.id ?? null;
+  async resolveProjectId(chatId: string): Promise<string | null> {
+    return (await this.adminStateStore.read()).projects.find((project) => project.chatId === chatId)?.id ?? null;
   }
 
-  getProjectRecord(projectId: string): ProjectRecord | null {
-    return this.getProjectById(projectId) ?? null;
+  async getProjectRecord(projectId: string): Promise<ProjectRecord | null> {
+    return (await this.getProjectById(projectId)) ?? null;
   }
 
   async writeProjectFiles(projectId: string, patch: {
     gitignoreContent?: string;
     agentsMdContent?: string;
   }): Promise<void> {
-    const project = this.getProjectById(projectId);
+    const project = await this.getProjectById(projectId);
     if (!project) {
       throw new Error(`project not found: ${projectId}`);
     }
@@ -433,7 +433,7 @@ export class ProjectSetupService {
       agentsMdContent: decode(input.agentsMd, "AGENTS.md"),
     });
 
-    const project = this.getProjectById(projectId);
+    const project = await this.getProjectById(projectId);
     if (!project) {
       throw new Error(`project not found after writing initial files: ${projectId}`);
     }
@@ -453,11 +453,11 @@ export class ProjectService {
     private readonly defaultProjectCwd: string,
   ) {}
 
-  resolveProjectId(chatId: string): string | null {
+  async resolveProjectId(chatId: string): Promise<string | null> {
     return this.projectSetupService.resolveProjectId(chatId);
   }
 
-  getProjectRecord(projectId: string): ProjectRecord | null {
+  async getProjectRecord(projectId: string): Promise<ProjectRecord | null> {
     return this.projectSetupService.getProjectRecord(projectId);
   }
 
@@ -515,8 +515,8 @@ export class ProjectService {
   }
 
   async reactivateProject(projectId: string): Promise<void> {
-    this.projectSetupService.reactivateProject(projectId);
-    const project = this.projectSetupService.getProjectById(projectId);
+    await this.projectSetupService.reactivateProject(projectId);
+    const project = await this.projectSetupService.getProjectById(projectId);
     if (project?.chatId) {
       await this.onProjectReactivated(projectId);
     }
@@ -524,19 +524,19 @@ export class ProjectService {
 
   async deleteProject(projectId: string): Promise<void> {
     await this.onProjectDeactivated(projectId);
-    this.projectSetupService.deleteProjectById(projectId);
+    await this.projectSetupService.deleteProjectById(projectId);
   }
 
-  listProjects(): ProjectRecord[] {
+  async listProjects(): Promise<ProjectRecord[]> {
     return this.projectSetupService.listAllProjectsRaw();
   }
 
-  listUnboundProjects(): Array<{ id: string; name: string; cwd: string; gitUrl?: string }> {
+  async listUnboundProjects(): Promise<Array<{ id: string; name: string; cwd: string; gitUrl?: string }>> {
     return this.projectSetupService.listUnboundProjects();
   }
 
   async updateGitRemote(input: { projectId: string; gitUrl: string }): Promise<void> {
-    const project = this.projectSetupService.getProjectById(input.projectId);
+    const project = await this.projectSetupService.getProjectById(input.projectId);
     if (!project) {
       throw new Error(`project not found: ${input.projectId}`);
     }
@@ -550,7 +550,7 @@ export class ProjectService {
     gitignoreContent?: string;
     agentsMdContent?: string;
   }): Promise<void> {
-    this.projectSetupService.updateProject(input.projectId, {
+    await this.projectSetupService.updateProject(input.projectId, {
       workBranch: input.workBranch,
       gitUrl: input.gitUrl,
     });
@@ -560,7 +560,7 @@ export class ProjectService {
     });
   }
 
-  listProjectMembers(projectId: string): MemberRecord[] {
+  async listProjectMembers(projectId: string): Promise<MemberRecord[]> {
     return this.projectSetupService.listProjectMembers(projectId);
   }
 }
@@ -576,7 +576,7 @@ export async function pushProjectWorkBranch(
   projectId: string,
   gitOps: GitOps,
 ): Promise<void> {
-  const project = projectResolver.findProjectById?.(projectId);
+  const project = await projectResolver.findProjectById?.(projectId);
   if (!project) {
     throw new Error(`pushWorkBranch: project not found: ${projectId}`);
   }

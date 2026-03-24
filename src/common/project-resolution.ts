@@ -1,9 +1,9 @@
 import type { OrchestratorApi, ProjectRecord } from "../../services/index";
 
-export function resolveProjectByChatId(api: OrchestratorApi, chatId: string): ProjectRecord | null {
-  const projectId = api.resolveProjectId(chatId);
+export async function resolveProjectByChatId(api: OrchestratorApi, chatId: string): Promise<ProjectRecord | null> {
+  const projectId = await api.resolveProjectId(chatId);
   if (!projectId) {
     return null;
   }
-  return api.getProjectRecord(projectId);
+  return await api.getProjectRecord(projectId);
 }

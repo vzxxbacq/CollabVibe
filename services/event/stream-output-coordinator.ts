@@ -4,7 +4,7 @@ import type { IMOutputMessage, IMToolOutputChunk } from "./im-output";
 
 interface StreamOutputCoordinatorCallbacks {
   syncTurnState(projectId: string, turnId: string, snapshot: TurnStateSnapshot): Promise<void>;
-  routeMessage(projectId: string, message: IMOutputMessage): Promise<void>;
+  routeMessage(projectId: string, message: IMOutputMessage, options?: { skipPersist?: boolean }): Promise<void>;
 }
 
 interface AggregatedToolOutput extends Omit<IMToolOutputChunk, "delta"> {
@@ -88,11 +88,22 @@ export class StreamOutputCoordinator {
     this.scheduleUi(projectId, threadName, turnId, state, now);
 
     if (pendingChars >= this.persistMaxChars || bufferedForMs >= this.persistMaxWaitMs) {
-      await this.flushPersist(projectId, threadName, turnId, "threshold");
+      void this.flushPersist(projectId, threadName, turnId, "threshold");
     }
     if (pendingChars >= this.uiMaxChars || bufferedForMs >= this.uiMaxWaitMs) {
-      await this.flushUi(projectId, threadName, turnId, "threshold");
+      void this.flushUi(projectId, threadName, turnId, "threshold");
     }
+  }
+
+  markSnapshotDirty(projectId: string, turnId: string, snapshot: TurnStateSnapshot): void {
+    const state = this.getOrCreateState(projectId, turnId, snapshot);
+    state.latestSnapshot = snapshot;
+    if (state.dirtyFields.size === 0) {
+      state.firstDirtyAt = Date.now();
+    }
+    state.dirtyFields.add("content");
+    state.sequence += 1;
+    this.schedulePersist(projectId, "", turnId, state, Date.now());
   }
 
   async flushForCriticalMessage(projectId: string, threadName: string, turnId: string, reason: string): Promise<void> {
@@ -322,7 +333,7 @@ export class StreamOutputCoordinator {
     state.outputInFlight = (async () => {
       const messages = this.drainMessages(state);
       for (const message of messages) {
-        await this.callbacks.routeMessage(projectId, message);
+        await this.callbacks.routeMessage(projectId, message, { skipPersist: true });
       }
 
       const flushedAt = Date.now();

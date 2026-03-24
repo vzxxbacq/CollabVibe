@@ -13,7 +13,7 @@
 import type { ProjectRecord } from "./project-types";
 
 export interface ProjectResolver {
-  findProjectByChatId(chatId: string): ProjectRecord | null;
-  findProjectById?(projectId: string): ProjectRecord | null;
-  listActiveProjects?(): ProjectRecord[];
+  findProjectByChatId(chatId: string): Promise<ProjectRecord | null>;
+  findProjectById?(projectId: string): Promise<ProjectRecord | null>;
+  listActiveProjects?(): Promise<ProjectRecord[]>;
 }

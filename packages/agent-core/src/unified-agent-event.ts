@@ -45,6 +45,7 @@ export type UnifiedAgentEvent =
     type: "approval_request";
     turnId: string;
     approvalId: string;
+    backendApprovalId?: string;
     callId: string;
     approvalType: "command_exec" | "file_change";
     description: string;

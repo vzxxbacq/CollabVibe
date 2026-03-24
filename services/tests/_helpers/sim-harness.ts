@@ -136,14 +136,14 @@ export class SimHarness {
 
   async addProjectMemberFromChat(input: { chatId: string; actorId: string; projectId: string; targetUserId: string; role: "maintainer" | "developer" | "auditor" }): Promise<void> {
     this.recordChatMessage({ chatId: input.chatId, userId: input.actorId, text: `/user add ${input.targetUserId} ${input.role}` });
-    this.api.addProjectMember({ projectId: input.projectId, userId: input.targetUserId, role: input.role, actorId: input.actorId });
+    await this.api.addProjectMember({ projectId: input.projectId, userId: input.targetUserId, role: input.role, actorId: input.actorId });
     this.notify(input.projectId, input.chatId, `member added: ${input.targetUserId}:${input.role}`);
   }
 
   async addAdminFromChat(input: { chatId: string; actorId: string; targetUserId: string }): Promise<void> {
     this.recordChatMessage({ chatId: input.chatId, userId: input.actorId, text: `/admin add ${input.targetUserId}` });
-    this.api.addAdmin(input.targetUserId);
-    const projectId = this.api.resolveProjectId(input.chatId) ?? input.chatId;
+    await this.api.addAdmin(input.targetUserId);
+    const projectId = (await this.api.resolveProjectId(input.chatId)) ?? input.chatId;
     this.notify(projectId, input.chatId, `admin added: ${input.targetUserId}`);
   }
 
@@ -186,7 +186,7 @@ export class SimHarness {
 
     // 2. Ensure user is a project member — use the layer's sysAdmin as actorId
     try {
-      this.api.addProjectMember({ projectId: input.projectId, userId: input.userId, role: "developer", actorId: this.sysAdmins[0] });
+      await this.api.addProjectMember({ projectId: input.projectId, userId: input.userId, role: "developer", actorId: this.sysAdmins[0] });
     } catch { /* already a member */ }
 
     // 3. Create thread via real L2 path

@@ -39,7 +39,7 @@ export interface ThreadLayer {
   threadUseCaseService: ThreadUseCaseService;
 }
 
-export function createThreadLayer(deps: ThreadLayerDeps): ThreadLayer {
+export async function createThreadLayer(deps: ThreadLayerDeps): Promise<ThreadLayer> {
   const nowIso = () => new Date().toISOString();
 
   const threadService = new ThreadService(
@@ -47,7 +47,7 @@ export function createThreadLayer(deps: ThreadLayerDeps): ThreadLayer {
     deps.userThreadBindingService,
     deps.threadTurnStateRepository,
     nowIso,
-    (projectId, turnId) => deps.turnRepository.getByTurnIdSync(projectId, turnId)?.status,
+    async (projectId, turnId) => (await deps.turnRepository.getByTurnId(projectId, turnId))?.status,
   );
 
   const threadRuntimeService = new ThreadRuntimeService({

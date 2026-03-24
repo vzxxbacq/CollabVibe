@@ -21,8 +21,10 @@ status: active
 | `services/index.ts` | L2 public API barrel |
 | `services/thread/*`, `services/turn/*`, `services/event/*`, `services/backend/*` | Thread, backend, turn, event pipeline |
 | `services/persistence/*` | SQLite, repositories, stores |
+| `services/merge/*` | Merge review sessions, conflict resolution, ancestry checks |
+| `services/snapshot/*` | Turn-level git snapshot management |
 | `services/iam/*` | Roles and authorization |
-| `services/approval/*` | Approval cards and callback bridging |
+| `services/approval/*` | Approval runtime state, display snapshot capture, and callback bridging |
 | `services/audit/*` | Audit capabilities |
 | `services/project/*` | Project aggregate and resolution |
 | `services/plugin/*` | Plugin directories and bindings |

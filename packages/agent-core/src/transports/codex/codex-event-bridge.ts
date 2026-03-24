@@ -520,7 +520,7 @@ export const codexEventToUnifiedAgentEvent = codexNotificationToUnifiedEvent;
 
 /**
  * Convert a server-initiated JSON-RPC request (approval) to UnifiedAgentEvent.
- * The JSON-RPC `id` is stored as `approvalId` for responding later.
+ * The JSON-RPC `id` is preserved as `backendApprovalId` for later transport response.
  */
 export function codexServerRequestToUnifiedEvent(request: {
   id: string | number;
@@ -529,14 +529,15 @@ export function codexServerRequestToUnifiedEvent(request: {
 }): UnifiedAgentEvent | null {
   if (request.method === "item/commandExecution/requestApproval") {
     const p = request.params;
-    const approvalId = String(request.id);
+    const backendApprovalId = String(request.id);
     const callId = String(p.itemId ?? "");
-    const display = extractCodexApprovalDisplay(approvalId, callId, "command_exec", p);
+    const display = extractCodexApprovalDisplay(backendApprovalId, callId, "command_exec", p);
 
     return {
       type: "approval_request",
       turnId: String(p.turnId ?? ""),
-      approvalId,
+      approvalId: backendApprovalId,
+      backendApprovalId,
       callId,
       approvalType: "command_exec",
       description: display.description,
@@ -552,13 +553,14 @@ export function codexServerRequestToUnifiedEvent(request: {
   }
   if (request.method === "item/fileChange/requestApproval") {
     const p = request.params;
-    const approvalId = String(request.id);
+    const backendApprovalId = String(request.id);
     const callId = String(p.itemId ?? "");
-    const display = extractCodexApprovalDisplay(approvalId, callId, "file_change", p);
+    const display = extractCodexApprovalDisplay(backendApprovalId, callId, "file_change", p);
     return {
       type: "approval_request",
       turnId: String(p.turnId ?? ""),
-      approvalId,
+      approvalId: backendApprovalId,
+      backendApprovalId,
       callId,
       approvalType: "file_change",
       description: display.description,

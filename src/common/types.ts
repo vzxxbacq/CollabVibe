@@ -20,7 +20,7 @@ export interface CoreDeps {
 export type CardActionResponse = { card: { type: "raw"; data: Record<string, unknown> } } | void;
 
 export interface TurnCardReader {
-  resolveProjectId(chatId: string): string | null;
+  resolveProjectId(chatId: string): Promise<string | null>;
   getTurnCardData(input: { projectId: string; turnId: string }): Promise<TurnCardData | null>;
 }
 

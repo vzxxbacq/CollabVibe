@@ -12,7 +12,7 @@ describe("recovery state", () => {
     sim = await SimHarness.create();
     const projectId = await sim.createProjectFromChat({ chatId: "c-recov", userId: "admin-user", name: "p-recov" });
 
-    const record = sim.api.getProjectRecord(projectId);
+    const record = await sim.api.getProjectRecord(projectId);
     expect(record).toBeDefined();
     expect(record?.name).toBe("p-recov");
     expect(record?.status).toBe("active");
@@ -20,9 +20,9 @@ describe("recovery state", () => {
 
   it("admin list persists across operations", async () => {
     sim = await SimHarness.create(["root-admin"]);
-    sim.api.addAdmin("second-admin");
+    await sim.api.addAdmin("second-admin");
 
-    const admins = sim.api.listAdmins();
+    const admins = await sim.api.listAdmins();
     const ids = admins.map((a: any) => a.userId);
     expect(ids).toContain("root-admin");
     expect(ids).toContain("second-admin");

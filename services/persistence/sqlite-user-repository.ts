@@ -8,7 +8,7 @@
  * ✅ May import: packages/*
  * ❌ Must NOT import: src/, other services/*
  */
-import type { DatabaseSync } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 import type { UserRecord, UserRepository } from "../iam/user-repository";
 
 interface UserRow {
@@ -18,8 +18,11 @@ interface UserRow {
 }
 
 export class SqliteUserRepository implements UserRepository {
-  constructor(private readonly db: DatabaseSync) {
-    this.db.exec(
+  constructor(private readonly db: AsyncDatabaseProxy) {}
+
+  /** Must be called after construction to create table schema. */
+  async init(): Promise<void> {
+    await this.db.exec(
       `CREATE TABLE IF NOT EXISTS users (
         user_id    TEXT PRIMARY KEY,
         sys_role   INTEGER NOT NULL DEFAULT 0,
@@ -34,29 +37,30 @@ export class SqliteUserRepository implements UserRepository {
    * Idempotent upsert — existing env admins are left unchanged,
    * runtime admins whose id matches an env id are upgraded to source='env'.
    */
-  seedEnvAdmins(envIds: string[]): void {
-    const stmt = this.db.prepare(
-      `INSERT INTO users (user_id, sys_role, source)
-       VALUES (?, 1, 'env')
-       ON CONFLICT(user_id)
-       DO UPDATE SET sys_role = 1, source = 'env'`
-    );
+  async seedEnvAdmins(envIds: string[]): Promise<void> {
     for (const id of envIds) {
-      stmt.run(id);
+      await this.db.run(
+        `INSERT INTO users (user_id, sys_role, source)
+         VALUES (?, 1, 'env')
+         ON CONFLICT(user_id)
+         DO UPDATE SET sys_role = 1, source = 'env'`,
+        id,
+      );
     }
   }
 
-  isAdmin(userId: string): boolean {
-    const row = this.db
-      .prepare("SELECT sys_role FROM users WHERE user_id = ?")
-      .get(userId) as { sys_role: number } | undefined;
+  async isAdmin(userId: string): Promise<boolean> {
+    const row = await this.db.get(
+      "SELECT sys_role FROM users WHERE user_id = ?",
+      userId,
+    ) as { sys_role: number } | undefined;
     return row?.sys_role === 1;
   }
 
-  listAdmins(): UserRecord[] {
-    const rows = this.db
-      .prepare("SELECT user_id, sys_role, source FROM users WHERE sys_role = 1 ORDER BY source, user_id")
-      .all() as unknown as UserRow[];
+  async listAdmins(): Promise<UserRecord[]> {
+    const rows = await this.db.all(
+      "SELECT user_id, sys_role, source FROM users WHERE sys_role = 1 ORDER BY source, user_id",
+    ) as UserRow[];
     return rows.map(r => ({
       userId: r.user_id,
       sysRole: 1 as const,
@@ -64,22 +68,21 @@ export class SqliteUserRepository implements UserRepository {
     }));
   }
 
-  setAdmin(userId: string, source: "env" | "im"): void {
-    this.db
-      .prepare(
-        `INSERT INTO users (user_id, sys_role, source)
-         VALUES (?, 1, ?)
-         ON CONFLICT(user_id)
-         DO UPDATE SET sys_role = 1, source = ?`
-      )
-      .run(userId, source, source);
+  async setAdmin(userId: string, source: "env" | "im"): Promise<void> {
+    await this.db.run(
+      `INSERT INTO users (user_id, sys_role, source)
+       VALUES (?, 1, ?)
+       ON CONFLICT(user_id)
+       DO UPDATE SET sys_role = 1, source = ?`,
+      userId, source, source,
+    );
   }
 
-  removeAdmin(userId: string): { ok: boolean; reason?: string } {
-    // Check current record
-    const row = this.db
-      .prepare("SELECT source FROM users WHERE user_id = ? AND sys_role = 1")
-      .get(userId) as { source: string } | undefined;
+  async removeAdmin(userId: string): Promise<{ ok: boolean; reason?: string }> {
+    const row = await this.db.get(
+      "SELECT source FROM users WHERE user_id = ? AND sys_role = 1",
+      userId,
+    ) as { source: string } | undefined;
 
     if (!row) {
       return { ok: false, reason: "用户不是管理员" };
@@ -89,46 +92,48 @@ export class SqliteUserRepository implements UserRepository {
       return { ok: false, reason: "env 种子管理员不可删除" };
     }
 
-    this.db
-      .prepare("UPDATE users SET sys_role = 0 WHERE user_id = ?")
-      .run(userId);
+    await this.db.run(
+      "UPDATE users SET sys_role = 0 WHERE user_id = ?",
+      userId,
+    );
     return { ok: true };
   }
 
-  ensureUser(userId: string): void {
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO users (user_id, sys_role, source)
-         VALUES (?, 0, 'im')`
-      )
-      .run(userId);
+  async ensureUser(userId: string): Promise<void> {
+    await this.db.run(
+      `INSERT OR IGNORE INTO users (user_id, sys_role, source)
+       VALUES (?, 0, 'im')`,
+      userId,
+    );
   }
 
-  listAll(opts?: { offset?: number; limit?: number; userIds?: string[] }): { users: UserRecord[]; total: number } {
+  async listAll(opts?: { offset?: number; limit?: number; userIds?: string[] }): Promise<{ users: UserRecord[]; total: number }> {
     const limit = opts?.limit ?? 20;
     const offset = opts?.offset ?? 0;
     const userIds = opts?.userIds;
 
     let whereClause = "";
-    const params: string[] = [];
+    const params: (string | number)[] = [];
     if (userIds && userIds.length > 0) {
       whereClause = `WHERE user_id IN (${userIds.map(() => "?").join(", ")})`;
       params.push(...userIds);
     }
 
-    const rows = this.db
-      .prepare(`SELECT user_id, sys_role, source FROM users ${whereClause} ORDER BY sys_role DESC, user_id LIMIT ? OFFSET ?`)
-      .all(...params, limit, offset) as unknown as UserRow[];
-    const countRow = this.db
-      .prepare(`SELECT COUNT(*) as total FROM users ${whereClause}`)
-      .all(...params) as unknown as Array<{ total: number }>;
+    const rows = await this.db.all(
+      `SELECT user_id, sys_role, source FROM users ${whereClause} ORDER BY sys_role DESC, user_id LIMIT ? OFFSET ?`,
+      ...params, limit, offset,
+    ) as UserRow[];
+    const countRows = await this.db.all(
+      `SELECT COUNT(*) as total FROM users ${whereClause}`,
+      ...params,
+    ) as Array<{ total: number }>;
     return {
       users: rows.map(r => ({
         userId: r.user_id,
         sysRole: r.sys_role as 0 | 1,
         source: r.source as "env" | "im",
       })),
-      total: countRow[0]?.total ?? 0,
+      total: countRows[0]?.total ?? 0,
     };
   }
 }

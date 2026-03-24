@@ -16,6 +16,9 @@ export interface AppConfig extends OrchestratorConfig {
     signingSecret?: string;
     encryptKey?: string;
     apiBaseUrl: string;
+    httpTimeoutMs: number;
+    cardDeliveryMode: "static" | "stream";
+    cardUpdateIntervalMs: number;
   };
   slack: {
     botToken: string;

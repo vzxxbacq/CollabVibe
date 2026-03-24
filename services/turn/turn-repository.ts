@@ -3,9 +3,7 @@ import type { TurnRecord, TurnStatus } from "./types";
 export interface TurnRepository {
   create(record: TurnRecord): Promise<void>;
   update(record: TurnRecord): Promise<void>;
-  getByTurnIdSync(projectId: string, turnId: string): TurnRecord | null;
   getByTurnId(projectId: string, turnId: string): Promise<TurnRecord | null>;
-  getByCallIdSync(projectId: string, callId: string): TurnRecord | null;
   getByCallId(projectId: string, callId: string): Promise<TurnRecord | null>;
   listByThread(projectId: string, threadName: string, limit?: number): Promise<TurnRecord[]>;
   listByProject(projectId: string, limit?: number): Promise<TurnRecord[]>;
@@ -26,20 +24,12 @@ export class InMemoryTurnRepository implements TurnRepository {
   }
 
   async getByTurnId(projectId: string, turnId: string): Promise<TurnRecord | null> {
-    return this.getByTurnIdSync(projectId, turnId);
-  }
-
-  async getByCallId(projectId: string, callId: string): Promise<TurnRecord | null> {
-    return this.getByCallIdSync(projectId, callId);
-  }
-
-  getByTurnIdSync(projectId: string, turnId: string): TurnRecord | null {
     return [...this.byKey.values()].find((item) =>
       item.turnId === turnId && item.projectId === projectId
     ) ?? null;
   }
 
-  getByCallIdSync(projectId: string, callId: string): TurnRecord | null {
+  async getByCallId(projectId: string, callId: string): Promise<TurnRecord | null> {
     return [...this.byKey.values()].find((item) =>
       item.callId === callId && item.projectId === projectId
     ) ?? null;

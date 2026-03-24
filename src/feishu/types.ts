@@ -13,7 +13,7 @@ import type { FeishuAdapter, FeishuOutputAdapter } from "./channel/index";
 
 export type FeishuAdapterPort = Pick<
   FeishuAdapter,
-  "sendMessage" | "sendInteractiveCard" | "updateInteractiveCard" | "getUserDisplayName" | "pinMessage" | "listChatMembers" | "leaveChat" | "downloadMessageFile"
+  "sendMessage" | "sendInteractiveCard" | "updateInteractiveCard" | "getUserDisplayName" | "getCachedUserDisplayName" | "pinMessage" | "listChatMembers" | "leaveChat" | "downloadMessageFile"
 >;
 
 

@@ -133,6 +133,17 @@ export interface AdminPanelOutput {
   panel: unknown;
 }
 
+export interface AsyncPlatformMutationOutput {
+  kind: "platform_mutation";
+  data: {
+    mutationType: import("./output-priority").AsyncPlatformMutationType;
+    platform: "feishu" | "slack";
+    chatId: string;
+    messageId?: string;
+    payload: unknown;
+  };
+}
+
 export type PlatformOutput =
   | ContentOutput
   | ReasoningOutput
@@ -153,8 +164,12 @@ export type PlatformOutput =
   | TurnSummaryOutput
   | HelpPanelOutput
   | TurnDetailOutput
-  | AdminPanelOutput;
+  | AdminPanelOutput
+  | AsyncPlatformMutationOutput;
 
 export interface OutputGateway {
+  /** Promise resolves when the output has been accepted by L1 delivery queue; it does not imply network delivery completed. */
   dispatch(projectId: string, output: PlatformOutput): Promise<void>;
+  /** Optional graceful-shutdown hook for waiting on queued L1 deliveries. */
+  flushAll?(): Promise<void>;
 }

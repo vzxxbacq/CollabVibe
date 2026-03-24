@@ -20,7 +20,7 @@ export interface AdminPersistedState {
 }
 
 export interface AdminStateStore {
-  read(): AdminPersistedState;
-  write(state: AdminPersistedState): void;
+  read(): Promise<AdminPersistedState>;
+  write(state: AdminPersistedState): Promise<void>;
 }
 

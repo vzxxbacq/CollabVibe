@@ -23,6 +23,7 @@ import type { TurnRecord, TurnStatus, TurnDetailRecord } from "./turn/types";
 import type { TurnSnapshotRecord } from "./snapshot/types";
 import type { IMFileMergeReview, IMMergeSummary, IMThreadMergeOperation } from "./event/im-output";
 import type { OutputGateway } from "./event/output-contracts";
+import type { AsyncPlatformMutationType } from "./event/output-priority";
 import type { TurnCardData } from "./turn/turn-card-data-provider";
 import type { BackendCatalogView, BackendModelProfile } from "./backend/backend-service";
 
@@ -81,6 +82,7 @@ export type IMMergeEvent =
 /** L0/L1 拿到的唯一入口。 */
 export interface OrchestratorLayer {
   api: OrchestratorApi;
+  /** 注入 L1 交付入口。gateway.dispatch 只表示已进入 L1 队列，不表示平台网络发送完成。 */
   runStartup(gateway: OutputGateway): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -113,10 +115,10 @@ export interface OrchestratorApi {
   // ── §0 项目与绑定 (12 methods) ──
 
   /** 将平台 chatId 解析为 projectId。L1 入口必调。 */
-  resolveProjectId(chatId: string): string | null;
+  resolveProjectId(chatId: string): Promise<string | null>;
 
   /** 通过 projectId 获取项目完整元数据。 */
-  getProjectRecord(projectId: string): ProjectRecord | null;
+  getProjectRecord(projectId: string): Promise<ProjectRecord | null>;
 
   /** 创建新项目并绑定到当前群聊。 */
   createProject(input: {
@@ -170,10 +172,10 @@ export interface OrchestratorApi {
   deleteProject(input: { projectId: string; actorId: string }): Promise<void>;
 
   /** 列出所有项目。 */
-  listProjects(): ProjectRecord[];
+  listProjects(): Promise<ProjectRecord[]>;
 
   /** 列出未绑定的项目。 */
-  listUnboundProjects(): Array<{ id: string; name: string; cwd: string; gitUrl?: string }>;
+  listUnboundProjects(): Promise<Array<{ id: string; name: string; cwd: string; gitUrl?: string }>>;
 
   /** 更新项目 Git 远程地址。 */
   updateGitRemote(input: { projectId: string; gitUrl: string; actorId: string }): Promise<void>;
@@ -189,10 +191,10 @@ export interface OrchestratorApi {
   }): Promise<void>;
 
   /** 切换项目状态（active ↔ disabled）。 */
-  toggleProjectStatus(input: { projectId: string; actorId: string }): {
+  toggleProjectStatus(input: { projectId: string; actorId: string }): Promise<{
     project: ProjectRecord;
     wasActive: boolean;
-  } | null;
+  } | null>;
 
   // ── §1 Thread 管理 (8 methods) ──
 
@@ -268,7 +270,7 @@ export interface OrchestratorApi {
   isPendingApproval(input: {
     projectId: string;
     threadName: string;
-  }): boolean;
+  }): Promise<boolean>;
 
   // ── §2 Turn 生命周期 (5 methods) ──
 
@@ -673,19 +675,19 @@ export interface OrchestratorApi {
   resolveRole(input: {
     userId: string;
     projectId?: string;
-  }): "admin" | "maintainer" | "developer" | "auditor" | null;
+  }): Promise<"admin" | "maintainer" | "developer" | "auditor" | null>;
 
   /** 判断用户是否为系统管理员。 */
-  isAdmin(userId: string): boolean;
+  isAdmin(userId: string): Promise<boolean>;
 
   /** [Admin] 添加系统管理员。 */
-  addAdmin(targetUserId: string): void;
+  addAdmin(targetUserId: string): Promise<void>;
 
   /** [Admin] 移除系统管理员。 */
-  removeAdmin(targetUserId: string): { ok: boolean; reason?: string };
+  removeAdmin(targetUserId: string): Promise<{ ok: boolean; reason?: string }>;
 
   /** 列出所有系统管理员。 */
-  listAdmins(): Array<{ userId: string; source: "env" | "im" }>;
+  listAdmins(): Promise<Array<{ userId: string; source: "env" | "im" }>>;
 
   /** 添加项目成员（自动 upsert 用户记录）。 */
   addProjectMember(input: {
@@ -693,10 +695,10 @@ export interface OrchestratorApi {
     userId: string;
     role: "maintainer" | "developer" | "auditor";
     actorId: string;
-  }): void;
+  }): Promise<void>;
 
   /** 移除项目成员。 */
-  removeProjectMember(input: { projectId: string; userId: string; actorId: string }): void;
+  removeProjectMember(input: { projectId: string; userId: string; actorId: string }): Promise<void>;
 
   /** 更新项目成员角色。 */
   updateProjectMemberRole(input: {
@@ -704,20 +706,20 @@ export interface OrchestratorApi {
     userId: string;
     role: "maintainer" | "developer" | "auditor";
     actorId: string;
-  }): void;
+  }): Promise<void>;
 
   /** 列出项目成员。 */
-  listProjectMembers(projectId: string): Array<{
+  listProjectMembers(projectId: string): Promise<Array<{
     userId: string;
     role: "maintainer" | "developer" | "auditor";
-  }>;
+  }>>;
 
   /** [Admin] 分页列出系统所有用户。 */
   listUsers(input?: {
     offset?: number;
     limit?: number;
     userIds?: string[];
-  }): { users: Array<{ userId: string; sysRole: string; source: string }>; total: number };
+  }): Promise<{ users: Array<{ userId: string; sysRole: string; source: string }>; total: number }>;
 
   // ── §8 Skill 管理 (10 methods) ──
 
@@ -776,23 +778,59 @@ export interface OrchestratorApi {
   allocateStagingDir(scope: string, userId: string): Promise<string>;
 
   /** 校验技能名称是否合法。 */
-  validateSkillNameCandidate(name: string): { ok: boolean; normalizedName?: string; reason?: string };
+  validateSkillNameCandidate(name: string): Promise<{ ok: boolean; normalizedName?: string; reason?: string }>;
 
   /** 列出技能完整目录（含元数据）。 */
-  listSkillCatalog(): Array<{
+  listSkillCatalog(): Promise<Array<{
     pluginName: string;
     sourceType?: string;
     downloadedBy?: string;
     downloadedAt?: string;
-  }>;
+  }>>;
 
   // ── §9 审批回调 (1 method) ──
+
+  /** 提交平台异步终态更新（优先级由 L2 内部决定）。 */
+  enqueueAsyncPlatformMutation(input: {
+    mutationType: AsyncPlatformMutationType;
+    platform: "feishu" | "slack";
+    chatId: string;
+    messageId?: string;
+    payload: unknown;
+  }): Promise<void>;
 
   /** 处理审批回调。 */
   handleApprovalCallback(input: {
     approvalId: string;
     decision: "accept" | "decline" | "approve_always";
     actorId?: string;
-  }): Promise<"resolved" | "duplicate">;
+    includeDisplay?: boolean;
+  }): Promise<
+    "resolved"
+    | "duplicate"
+    | "expired"
+    | "invalid"
+    | {
+      status: "resolved" | "duplicate" | "expired" | "invalid";
+      approval?: {
+        threadName: string;
+        threadId: string;
+        backendApprovalId?: string;
+        approvalType: "command_exec" | "file_change";
+        displayName?: string;
+        summary?: string;
+        reason?: string;
+        cwd?: string;
+        description: string;
+        files?: string[];
+        createdAt: string;
+        decision: "approve" | "deny" | "approve_always";
+        actorId: string;
+        resolvedAt: string;
+        expiredAt?: string;
+        statusReason?: string;
+      };
+    }
+  >;
 
 }

@@ -68,6 +68,17 @@ async function sendProjectHelpCard(deps: FeishuHandlerDeps, chatId: string, user
   await dispatcher.dispatch(chatId, { kind: "help_panel", panel: card });
 }
 
+function warmTurnCard(
+  deps: FeishuHandlerDeps,
+  chatId: string,
+  turnId: string,
+  requestLog: ReturnType<typeof log.child>
+): void {
+  void deps.platformOutput.initializeTurnCard(chatId, turnId).catch((error) => {
+    requestLog.warn({ turnId, err: error instanceof Error ? error.message : String(error) }, "initializeTurnCard failed");
+  });
+}
+
 interface InboundMessageData {
   message?: {
     chat_id?: string;
@@ -99,23 +110,23 @@ function parseFileContent(rawContent: string): { fileKey?: string; fileName?: st
   }
 }
 
-function requireBoundProject(
+async function requireBoundProject(
   deps: FeishuHandlerDeps,
   chatId: string
 ){
-  const project = resolveProjectByChatId(deps.api, chatId);
+  const project = await resolveProjectByChatId(deps.api, chatId);
   if (!project) {
     throw new Error(`project binding not found for chatId=${chatId}`);
   }
   return project;
 }
 
-function resolveRequiredRole(
+async function resolveRequiredRole(
   deps: FeishuHandlerDeps,
   userId: string,
   projectId?: string
-): EffectiveRole {
-  const role = deps.api.resolveRole({ userId, projectId });
+): Promise<EffectiveRole> {
+  const role = await deps.api.resolveRole({ userId, projectId });
   if (!role) {
     throw new Error(`role resolution failed for userId=${userId} projectId=${projectId ?? "global"}`);
   }
@@ -185,7 +196,7 @@ async function handlePendingSkillFileUpload(
       preferredPluginName: pending.pluginName,
       extractionDir: join(tempDir, "resolved-skill"),
     });
-    const project = resolveProjectByChatId(deps.api, input.chatId);
+    const project = await resolveProjectByChatId(deps.api, input.chatId);
     stageFeishuSkillInstall({
       chatId: input.chatId,
       userId: input.userId,
@@ -287,7 +298,7 @@ async function handleSkillIntent(
         return;
       }
       try {
-        const project = resolveProjectByChatId(deps.api, chatId);
+        const project = await resolveProjectByChatId(deps.api, chatId);
         const def = await deps.api.installSkill({ source, projectId: project?.id, userId, actorId: userId });
         await deps.platformOutput.sendSkillOperation(chatId, {
           kind: "skill_operation",
@@ -310,7 +321,7 @@ async function handleSkillIntent(
         return;
       }
       try {
-        const project = resolveProjectByChatId(deps.api, chatId);
+        const project = await resolveProjectByChatId(deps.api, chatId);
         const removed = project?.id
           ? await deps.api.unbindSkillFromProject({ projectId: project.id, skillName: name, actorId: userId })
           : await deps.api.removeSkill({ name, actorId: userId });
@@ -400,15 +411,15 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
 
     // @bot 空消息 → 显示 help card
     if (!text) {
-      const project = resolveProjectByChatId(deps.api, chatId);
-      deps.api.resolveRole({ userId, projectId: project?.id });
+      const project = await resolveProjectByChatId(deps.api, chatId);
+      await deps.api.resolveRole({ userId, projectId: project?.id });
       const card = await resolveHelpCard(deps, chatId, userId);
       const dispatcher = new FeishuOutputGateway(deps);
       await dispatcher.dispatch(chatId, { kind: "help_panel", panel: card });
       return;
     }
 
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     if (project?.status === "disabled") {
       const s = getFeishuMessageHandlerStrings(deps.config.locale);
       const dispatcher = new FeishuOutputGateway(deps);
@@ -455,8 +466,8 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
       "USER_ADD",
       "USER_REMOVE"
     ]);
-    const boundProject = projectRequiredIntents.has(intent.intent) ? requireBoundProject(deps, chatId) : project;
-    const role = resolveRequiredRole(deps, userId, boundProject?.id);
+    const boundProject = projectRequiredIntents.has(intent.intent) ? await requireBoundProject(deps, chatId) : project;
+    const role = await resolveRequiredRole(deps, userId, boundProject?.id);
 
     // Audit: 记录用户命令/消息
     if (boundProject) {
@@ -484,7 +495,7 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
         preflightThreadId = selected.threadId;
         preflightThreadName = selected.threadName;
 
-        if (deps.api.isPendingApproval({ projectId: boundProject!.id, threadName: selected.threadName })) {
+        if (await deps.api.isPendingApproval({ projectId: boundProject!.id, threadName: selected.threadName })) {
           await dispatcher.dispatch(chatId, textNotification(GUARD.PENDING_APPROVAL(selected.threadName)));
           return;
         }
@@ -511,9 +522,9 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     if (!dispatch.routed) {
       const outputDispatcher = new FeishuOutputGateway(deps);
       if (["USER_LIST", "USER_ROLE", "USER_ADD", "USER_REMOVE"].includes(dispatch.intent.intent)) {
-        await outputDispatcher.dispatch(chatId, handleUserIntentOutput(deps, chatId, userId, dispatch.intent));
+        await outputDispatcher.dispatch(chatId, await handleUserIntentOutput(deps, chatId, userId, dispatch.intent));
       } else if (["ADMIN_ADD", "ADMIN_REMOVE", "ADMIN_LIST"].includes(dispatch.intent.intent)) {
-        await outputDispatcher.dispatch(chatId, handleAdminIntentOutput(deps, dispatch.intent));
+        await outputDispatcher.dispatch(chatId, await handleAdminIntentOutput(deps, dispatch.intent));
       } else if (["SKILL_LIST", "SKILL_INSTALL", "SKILL_REMOVE", "SKILL_ADMIN"].includes(dispatch.intent.intent)) {
         await handleSkillIntent(deps, chatId, userId, dispatch.intent);
       } else {
@@ -618,7 +629,7 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
       if (result.resolverThread) {
         const resolverThreadId = result.resolverThread.threadId;
         const resolverThreadName = result.resolverThread.threadName;
-        const projectForMerge = requireBoundProject(deps, chatId);
+        const projectForMerge = await requireBoundProject(deps, chatId);
         if (!result.resolverThread.turnId) {
           throw new Error(`resolver turnId missing for branch=${result.id}`);
         }
@@ -691,6 +702,7 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     }
     // Set prompt summary from user's text (header shows what user asked)
     deps.platformOutput.setCardPromptSummary(chatId, result.id, normalizedText);
+    warmTurnCard(deps, chatId, result.id, turnLog);
     turnLog.info("eventPipeline bound");
   } catch (error) {
     const { GUARD, ERR, ORCHESTRATOR_ERROR_MAP } = getFeishuNotifyCatalog(deps.config.locale);
@@ -736,5 +748,13 @@ export async function handleFeishuMessage(deps: FeishuHandlerDeps, data: Record<
   if (!normalized || normalized.kind !== "message") {
     return;
   }
-  await feishuInputRouter.route(deps, normalized as PlatformMessageInput);
+  void feishuInputRouter.route(deps, normalized as PlatformMessageInput).catch((error) => {
+    const chatId = String((data as InboundMessageData).message?.chat_id ?? "");
+    const messageId = String((data as InboundMessageData).message?.message_id ?? "");
+    log.error({
+      chatId,
+      messageId,
+      err: error instanceof Error ? error.message : String(error),
+    }, "feishu message route failed");
+  });
 }

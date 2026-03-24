@@ -34,16 +34,28 @@ export class FeishuWsApp {
 
   constructor(private readonly options: FeishuWsAppOptions) { }
 
+  private dispatchBackground(label: string, task: () => Promise<unknown>): Promise<void> {
+    void task().catch((error) => {
+      this.log.error({ err: error instanceof Error ? error.message : String(error), event: label }, "Feishu background handler failed");
+    });
+    return Promise.resolve();
+  }
+
   async start(): Promise<Lark.WSClient> {
     this.log.info({ loggerLevel: this.options.loggerLevel ?? Lark.LoggerLevel.info }, "starting Feishu WS app");
     const eventDispatcher = new Lark.EventDispatcher({});
     eventDispatcher.register({
-      "im.message.receive_v1": (data: Record<string, unknown>) => this.options.onInboundMessage(data),
+      "im.message.receive_v1": (data: Record<string, unknown>) =>
+        this.dispatchBackground("im.message.receive_v1", () => this.options.onInboundMessage(data)),
       "card.action.trigger": (data: Record<string, unknown>) => this.options.onCardAction(data),
-      "im.chat.member.bot.added_v1": (data: Record<string, unknown>) => this.options.onBotAdded(data),
-      "im.chat.member.bot.deleted_v1": (data: Record<string, unknown>) => this.options.onBotRemoved(data),
-      "im.chat.member.user.added_v1": (data: Record<string, unknown>) => this.options.onMemberJoined(data),
-      "application.bot.menu_v6": (data: Record<string, unknown>) => this.options.onBotMenuEvent(data)
+      "im.chat.member.bot.added_v1": (data: Record<string, unknown>) =>
+        this.dispatchBackground("im.chat.member.bot.added_v1", () => this.options.onBotAdded(data)),
+      "im.chat.member.bot.deleted_v1": (data: Record<string, unknown>) =>
+        this.dispatchBackground("im.chat.member.bot.deleted_v1", () => this.options.onBotRemoved(data)),
+      "im.chat.member.user.added_v1": (data: Record<string, unknown>) =>
+        this.dispatchBackground("im.chat.member.user.added_v1", () => this.options.onMemberJoined(data)),
+      "application.bot.menu_v6": (data: Record<string, unknown>) =>
+        this.dispatchBackground("application.bot.menu_v6", () => this.options.onBotMenuEvent(data))
     });
 
     const wsClient = new Lark.WSClient({

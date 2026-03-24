@@ -213,9 +213,11 @@ export function acpEventToUnifiedAgentEvent(update: AcpSessionUpdate, options: A
         .map((option) => typeof option.id === "string" ? mapper.toImAction(option.id) : null)
         .filter(Boolean) as Array<"approve" | "deny" | "approve_always">;
       const display = buildAcpApprovalDisplay(update);
+      const backendApprovalId = String(update.requestId ?? update.toolCallId ?? update.callId ?? "");
       return {
         type: "approval_request",
-        approvalId: String(update.requestId ?? update.toolCallId ?? update.callId ?? ""),
+        approvalId: backendApprovalId,
+        backendApprovalId,
         turnId: String(update.turnId ?? ""),
         callId: String(update.toolCallId ?? update.callId ?? ""),
         approvalType: normalizeApprovalType(update.permissionKind),

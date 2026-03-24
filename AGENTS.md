@@ -153,7 +153,32 @@ projectId  →  ThreadRegistry.get(projectId, threadName)    →  threadRecord.b
 
 ---
 
-## 5. 更新数据流的流程
+## 5. Merge Resolver Thread 不变式
+
+Merge resolver 线程（`threadName` 匹配 `merge-{branchName}` 模式）运行在分支 worktree 上，worktree 中存在 `MERGE_HEAD`，agent 在此 worktree 中解决冲突。以下约束保护 `MERGE_HEAD` 不被意外消耗：
+
+| 规则 | 说明 |
+|------|------|
+| **M1: 禁止 snapshot** | `createTurnStart` 中，merge resolver 线程**跳过** `snapshot.create()`。`git stash create` + `git reset HEAD` 会消耗 `MERGE_HEAD`，导致后续 `commitMergeSession` 产生单亲 commit，破坏 ancestry chain |
+| **M2: 禁止 commitAndDiff** | `finishTurn` 中，merge resolver 线程**跳过** `commitAndDiff()`。普通 commit 会消耗 `MERGE_HEAD` 并产生非 merge commit |
+| **M3: MERGE_HEAD 检测兜底** | `finishTurn` 额外检测 worktree 是否存在 `MERGE_HEAD` 文件，即使 thread name 不匹配也跳过 commit |
+| **M4: Merge session 自管理** | Merge 的 commit / rollback 由 `MergeService.commitMergeReview()` / `abortMergeSession()` 管理，不走 turn 级 snapshot/commit 流程 |
+| **M5: 单一 commit 点** | `MERGE_HEAD` 只允许被 `commitMergeSession()` 的 `git commit --allow-empty` 消耗，该 commit 必须产生双亲 merge commit |
+
+**数据流向：**
+```
+MergeService.startMergeReview()
+  → git merge --no-commit          → 写入 MERGE_HEAD
+  → agent resolves conflicts        → 修改 worktree 文件
+  → MergeService.commitMergeReview()
+    → commitMergeSession()          → git commit --allow-empty（消耗 MERGE_HEAD，双亲）
+    → isAncestor check              → 验证 merge commit 包含 baseBranch ancestry
+    → fastForwardMainBranch()       → git merge --ff-only
+```
+
+---
+
+## 6. 更新数据流的流程
 
 1. 提出修改理由和影响范围
 2. 获得人工审批
@@ -161,7 +186,7 @@ projectId  →  ThreadRegistry.get(projectId, threadName)    →  threadRecord.b
 
 ---
 
-## 6. 测试文件变更保护
+## 7. 测试文件变更保护
 
 - 默认情况下，禁止修改测试用例文件（`*.test.*`, `*.spec.*`）。
 - 若任务明确授权测试改造、测试迁移或测试重构，则该任务内允许修改测试文件。
@@ -171,7 +196,7 @@ projectId  →  ThreadRegistry.get(projectId, threadName)    →  threadRecord.b
 
 ---
 
-## 7. Fallback 治理约束
+## 8. Fallback 治理约束
 
 - **默认禁止**为主流程、身份解析、路径解析、项目/线程定位、审批/回调路由、持久化主键、后端会话恢复等关键链路**随意添加 fallback 逻辑**。
 - 关键链路出现前置条件不满足、主键缺失、状态缺失、路径无法确定、上下文不一致时，**优先显式报错**，禁止用默认值、空字符串、`chatId` 兜底、全局配置兜底、静默跳过等方式继续执行。

@@ -235,7 +235,7 @@ export class ThreadRuntimeService {
     threadRecord: ThreadRecord;
   }): Promise<{ config: RuntimeConfig; api: AgentApi }> {
     try {
-      await this.deps.pluginService?.ensureProjectThreadSkills?.(params.projectId, params.threadName);
+      await this.deps.pluginService?.ensureProjectThreadSkills?.(params.projectId, params.threadName, params.threadRecord.worktreePath);
     } catch (error) {
       throw new Error(`SKILL_SYNC_FAILED: ensure project thread skills failed for ${params.projectId}/${params.threadName}: ${toErrorMessage(error)}`);
     }
@@ -305,11 +305,12 @@ export class ThreadRuntimeService {
   async resolveRequiredApi(projectId: string, threadName: string): Promise<AgentApi> {
     const cached = this.getApi(projectId, threadName);
     if (cached) {
-      await this.deps.pluginService?.ensureProjectThreadSkills?.(projectId, threadName);
+      const record = await this.deps.threadService?.getRecord(projectId, threadName);
+      await this.deps.pluginService?.ensureProjectThreadSkills?.(projectId, threadName, record?.worktreePath);
       return cached;
     }
-    const record = this.deps.threadService?.getRecord(projectId, threadName)
-      ?? this.deps.threadRegistry?.get(projectId, threadName)
+    const record = (await this.deps.threadService?.getRecord(projectId, threadName))
+      ?? (await this.deps.threadRegistry?.get(projectId, threadName))
       ?? null;
     if (!record) {
       throw new OrchestratorError(
@@ -379,13 +380,13 @@ export class ThreadRuntimeService {
   }
 
   async deleteThread(projectId: string, threadName: string): Promise<void> {
-    const project = this.deps.projectResolver?.findProjectById?.(projectId);
+    const project = await this.deps.projectResolver?.findProjectById?.(projectId);
     if (!project?.cwd) {
       throw new OrchestratorError(ErrorCode.PROJECT_NOT_FOUND, `project cwd not found for projectId: ${projectId}`);
     }
 
     // Guard: thread must exist in registry before attempting deletion
-    const record = this.deps.threadService?.getRecord(projectId, threadName);
+    const record = await this.deps.threadService?.getRecord(projectId, threadName);
     if (!record) {
       throw new OrchestratorError(ErrorCode.THREAD_NOT_FOUND, `thread not found: ${projectId}/${threadName}`);
     }
@@ -397,11 +398,11 @@ export class ThreadRuntimeService {
     if (parseMergeResolverName(threadName) === null) {
       await this.deps.gitOps.worktree.remove(project.cwd, worktreePath, threadName);
     }
-    this.deps.threadService?.markMerged(projectId, threadName);
+    await this.deps.threadService?.markMerged(projectId, threadName);
   }
 
   async detectStaleThreads(projectId: string, mergedThreadName: string): Promise<StaleThreadReport> {
-    const project = this.deps.projectResolver?.findProjectById?.(projectId);
+    const project = await this.deps.projectResolver?.findProjectById?.(projectId);
     if (!project?.cwd) {
       throw new OrchestratorError(ErrorCode.PROJECT_NOT_FOUND, `project cwd not found for projectId: ${projectId}`);
     }
@@ -412,7 +413,7 @@ export class ThreadRuntimeService {
     const workBranchHead = await this.deps.gitOps.worktree.getHeadSha(project.cwd);
     const report: StaleThreadReport = { updated: [], stale: [], errors: [] };
 
-    for (const thread of this.deps.threadRegistry.list(projectId)) {
+    for (const thread of await this.deps.threadRegistry.list(projectId)) {
       if (thread.threadName === mergedThreadName || !thread.baseSha || thread.baseSha === workBranchHead) {
         continue;
       }

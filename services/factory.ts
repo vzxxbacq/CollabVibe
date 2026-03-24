@@ -28,6 +28,7 @@ import { BackendConfigService } from "./backend/config-service";
 import { UserThreadBindingService } from "./thread/user-thread-binding-service";
 import { EventPipeline } from "./event/pipeline";
 import { AgentEventRouter } from "./event/router";
+import { OutputIntentBuffer } from "./event/output-intent-buffer";
 import { SessionRecoveryService } from "./session/session-recovery-service";
 import { SessionStateService } from "./session/session-state-service";
 import { PluginService } from "./plugin/plugin-service";
@@ -86,23 +87,23 @@ export async function createOrchestratorLayer(
   // ── Database + Persistence (L2 owns lifecycle) ──
   const dbPath = process.env.VITEST ? ":memory:" : join(config.dataDir, "collabvibe.db");
   const db = await createDatabase(dbPath);
-  const persistence = createPersistenceLayer(db);
+  const persistence = await createPersistenceLayer(db);
   const adminStateStore = persistence.adminStateStore;
 
   // ── Project resolver ──
-  const resolveProjectByChatId = (chatId: string) => {
-    const state = adminStateStore.read();
+  const resolveProjectByChatId = async (chatId: string) => {
+    const state = await adminStateStore.read();
     return state.projects.find((item) => item.chatId === chatId) ?? null;
   };
-  const findProjectById = (projectId: string) => {
-    const state = adminStateStore.read();
+  const findProjectById = async (projectId: string) => {
+    const state = await adminStateStore.read();
     return state.projects.find((item) => item.id === projectId) ?? null;
   };
   const projectResolver = {
     findProjectByChatId: resolveProjectByChatId,
     findProjectById,
-    listActiveProjects: () => {
-      const state = adminStateStore.read();
+    listActiveProjects: async () => {
+      const state = await adminStateStore.read();
       return state.projects.filter((item) => item.status === "active" && item.chatId);
     }
   };
@@ -165,7 +166,7 @@ export async function createOrchestratorLayer(
   const threadRegistry = persistence.threadRegistry;
   const userThreadBindingService = new UserThreadBindingService(persistence.userThreadBindingRepo);
   const backendSessionResolver = new DefaultBackendSessionResolver(
-    backendRegistry, backendConfigService, (projectId, threadName) => {
+    backendRegistry, backendConfigService, async (projectId, threadName) => {
       return threadRegistry.get(projectId, threadName);
     }
   );
@@ -213,7 +214,7 @@ export async function createOrchestratorLayer(
 
 
   // ── Domain sub-factories (C0a: extracted from orchestrator constructor) ──
-  const { threadService, threadRuntimeService, threadUseCaseService } = createThreadLayer({
+  const { threadService, threadRuntimeService, threadUseCaseService } = await createThreadLayer({
     threadRegistry,
     userThreadBindingService,
     threadTurnStateRepository: persistence.threadTurnStateRepo,
@@ -227,7 +228,7 @@ export async function createOrchestratorLayer(
     gitOps,
   });
 
-  const { turnQueryService, turnCommandService } = createTurnLayer({
+  const { turnQueryService, turnCommandService } = await createTurnLayer({
     turnRepository: persistence.turnRepo,
     turnDetailRepository: persistence.turnDetailRepo,
     threadService,
@@ -259,20 +260,23 @@ export async function createOrchestratorLayer(
     projectResolver,
     threadRegistry,
     gitOps,
+    approvalStore: persistence.approvalStore,
   });
   let eventPipeline: EventPipeline | undefined;
+  let outputIntentBuffer: OutputIntentBuffer | undefined;
+  let activeGateway: OutputGateway | undefined;
   let healthCheckTimer: ReturnType<typeof setInterval> | undefined;
 
-  const getPluginSyncRoots = (projectId?: string): string[] => {
+  const getPluginSyncRoots = async (projectId?: string): Promise<string[]> => {
     const roots = new Set<string>();
     if (projectId) {
-      const project = projectResolver.findProjectById?.(projectId);
+      const project = await projectResolver.findProjectById?.(projectId);
       if (project?.cwd) {
         roots.add(project.cwd);
       }
     }
     if (roots.size === 0) {
-      for (const project of projectResolver.listActiveProjects?.() ?? []) {
+      for (const project of await projectResolver.listActiveProjects?.() ?? []) {
         if (project.cwd) {
           roots.add(project.cwd);
         }
@@ -289,7 +293,7 @@ export async function createOrchestratorLayer(
       const activeTurnId = options?.turnId ?? await threadService.getActiveTurnId(projectId, threadName);
       if (!activeTurnId) return { interrupted: false };
       const api = await threadRuntimeService.resolveRequiredApi(projectId, threadName);
-      const record = threadService.getRecord(projectId, threadName);
+      const record = await threadService.getRecord(projectId, threadName);
       const threadId = options?.threadId ?? record?.threadId;
       if (threadId && api.turnInterrupt) {
         await api.turnInterrupt(threadId, activeTurnId);
@@ -339,6 +343,8 @@ export async function createOrchestratorLayer(
     threadRuntimeService,
     threadService: {
       getRecord: threadService.getRecord.bind(threadService),
+      listRecords: threadService.listRecords.bind(threadService),
+      getRuntimeState: threadService.getRuntimeState.bind(threadService),
       register: threadService.register.bind(threadService),
       updateRecordRuntime: threadService.updateRecordRuntime.bind(threadService),
       markMerged: threadService.markMerged.bind(threadService)
@@ -353,12 +359,13 @@ export async function createOrchestratorLayer(
   let approvalUseCase: ApprovalUseCase;
   approvalUseCase = new ApprovalUseCase(
     sessionStateService,
+    persistence.approvalStore,
     (projectId, threadName) => threadRuntimeService.resolveRequiredApi(projectId, threadName),
   );
 
   if (pluginService) {
     pluginService.setOnPluginChange(async (event) => {
-      const roots = getPluginSyncRoots(event.projectId);
+      const roots = await getPluginSyncRoots(event.projectId);
       if (roots.length === 0) return;
       try {
         for (const cwd of roots) {
@@ -385,6 +392,7 @@ export async function createOrchestratorLayer(
     threadRuntimeService,
     threadService,
     mergeUseCase,
+    approvalStore: persistence.approvalStore,
     releaseSessionStateByPrefix: (projectId) => sessionStateService.releaseByPrefix(projectId),
   });
 
@@ -394,7 +402,7 @@ export async function createOrchestratorLayer(
     { applyDecision: approvalUseCase.resume.bind(approvalUseCase) }
   );
   const userRepo = persistence.userRepo;
-  userRepo.seedEnvAdmins(config.server.sysAdminUserIds);
+  await userRepo.seedEnvAdmins(config.server.sysAdminUserIds);
   const roleResolver = new RoleResolver(userRepo, adminStateStore);
   const auditService = new AuditService(persistence.auditStore);
   const projectSetupService = new ProjectSetupService(adminStateStore, config, gitOps);
@@ -452,7 +460,7 @@ export async function createOrchestratorLayer(
       async deleteThread(input: { projectId: string; threadName: string }) {
         return threadRuntimeService.deleteThread(input.projectId, input.threadName);
       },
-      isPendingApproval(input: { projectId: string; threadName: string }) {
+      async isPendingApproval(input: { projectId: string; threadName: string }): Promise<boolean> {
         return sessionStateService.hasPendingApproval(projectThreadKey(input.projectId, input.threadName));
       },
       async acceptTurn(input: { projectId: string; turnId: string }) {
@@ -487,7 +495,11 @@ export async function createOrchestratorLayer(
         return turnLifecycleService.handleTurnInterrupt(input.projectId, input.userId);
       },
       async respondUserInput(input: { projectId: string; threadName: string; callId: string; answers: Record<string, string[]> }) {
-        return threadRuntimeService.respondUserInput(input.projectId, input.threadName, input.callId, input.answers);
+        const result = await threadRuntimeService.respondUserInput(input.projectId, input.threadName, input.callId, input.answers);
+        if (process.env.VITEST) {
+          await eventPipeline?.waitForIdle();
+        }
+        return result;
       },
       async getTurnDetail(input: { projectId: string; turnId: string }) {
         return turnQueryService.getTurnDetail(input.projectId, input.turnId);
@@ -660,11 +672,11 @@ export async function createOrchestratorLayer(
       async allocateStagingDir(scope: string, userId: string) {
         return pluginService.allocateStagingDir?.(scope as never, userId) ?? "";
       },
-      validateSkillNameCandidate(name: string) {
+      async validateSkillNameCandidate(name: string) {
         return pluginService.validateSkillNameCandidate(name);
       },
-      listSkillCatalog() {
-        return pluginService.listCatalog().map(entry => ({
+      async listSkillCatalog() {
+        return (await pluginService.listCatalog()).map((entry: any) => ({
           pluginName: entry.pluginName,
           sourceType: entry.sourceType,
           downloadedBy: entry.downloadedBy,
@@ -776,26 +788,74 @@ export async function createOrchestratorLayer(
         approvalId: string;
         decision: "accept" | "decline" | "approve_always";
         actorId?: string;
+        includeDisplay?: boolean;
       }) {
         // Route through ApprovalCallbackHandler for audit persistence + dedup
         const context = sessionStateService.turnState.getPendingApproval(input.approvalId);
-        if (!context) {
-          throw new Error(`invalid approval id: ${input.approvalId}`);
-        }
         const mappedAction = input.decision === "accept" ? "approve" as const
           : input.decision === "decline" ? "deny" as const
           : "approve_always" as const;
+        const persisted = await persistence.approvalStore.getById(input.approvalId);
+        const actorId = input.actorId ?? context?.userId ?? persisted?.actorId ?? "system";
+        log.info({
+          approvalId: input.approvalId,
+          backendApprovalId: context?.backendApprovalId ?? persisted?.backendApprovalId,
+          threadId: context?.threadId ?? persisted?.threadId,
+          turnId: context?.turnId ?? persisted?.turnId,
+          decision: input.decision,
+          actorId,
+        }, "approval callback received");
         const result = await approvalHandler.handle({
           approvalId: input.approvalId,
-          approverId: input.actorId ?? context?.userId ?? "system",
+          approverId: actorId,
           action: mappedAction,
-          projectId: context?.projectId,
-          threadId: context?.threadId,
-          turnId: context?.turnId,
-          approvalType: context?.approvalType,
+          projectId: context?.projectId ?? persisted?.projectId,
+          threadId: context?.threadId ?? persisted?.threadId,
+          turnId: context?.turnId ?? persisted?.turnId,
+          approvalType: context?.approvalType ?? persisted?.approvalType,
         }, true);
+        if (process.env.VITEST && result === "applied") {
+          await eventPipeline?.waitForIdle();
+        }
+        log.info({
+          approvalId: input.approvalId,
+          backendApprovalId: context?.backendApprovalId ?? persisted?.backendApprovalId,
+          threadId: context?.threadId ?? persisted?.threadId,
+          turnId: context?.turnId ?? persisted?.turnId,
+          decision: input.decision,
+          actorId,
+          callbackResult: result,
+        }, "approval callback handled");
         if (result === "rejected") throw new Error("approval signature invalid");
-        return result === "duplicate" || result === "bridge_duplicate" ? "duplicate" as const : "resolved" as const;
+        const status = result === "duplicate" || result === "bridge_duplicate"
+          ? "duplicate" as const
+          : result === "expired"
+            ? "expired" as const
+            : result === "missing"
+              ? "invalid" as const
+              : "resolved" as const;
+        if (!input.includeDisplay) {
+          if (status !== "resolved") {
+            throw new Error(`invalid approval id: ${input.approvalId}`);
+          }
+          return status;
+        }
+        const latest = await persistence.approvalStore.getById(input.approvalId);
+        const displaySource = latest?.display ?? context?.display;
+        return {
+          status,
+          approval: displaySource && (latest ?? context) ? {
+            ...displaySource,
+            threadId: latest?.threadId ?? context!.threadId,
+            backendApprovalId: latest?.backendApprovalId ?? context?.backendApprovalId,
+            approvalType: latest?.approvalType ?? context!.approvalType,
+            decision: latest?.decision ?? mappedAction,
+            actorId: latest?.actorId ?? actorId,
+            resolvedAt: latest?.resolvedAt ?? context?.resolvedAt ?? new Date().toISOString(),
+            expiredAt: latest?.expiredAt ?? context?.expiredAt,
+            statusReason: latest?.statusReason ?? context?.statusReason,
+          } : undefined
+        };
       },
       detectStaleThreads(input: { projectId: string; mergedThreadName: string }) {
         return threadRuntimeService.detectStaleThreads(input.projectId, input.mergedThreadName);
@@ -818,6 +878,28 @@ export async function createOrchestratorLayer(
           installFromGithub?: (params: typeof input) => Promise<{ name: string; description?: string }>;
         };
         return githubInstaller.installFromGithub?.(input) ?? { name: input.pluginName ?? input.repoUrl };
+      },
+      async enqueueAsyncPlatformMutation(input: {
+        mutationType: import("./event/output-priority").AsyncPlatformMutationType;
+        platform: "feishu" | "slack";
+        chatId: string;
+        messageId?: string;
+        payload: unknown;
+      }) {
+        if (!outputIntentBuffer) {
+          throw new OrchestratorError(ErrorCode.AGENT_API_UNAVAILABLE, "output intent buffer is not configured");
+        }
+        const projectId = (await resolveProjectByChatId(input.chatId))?.id ?? input.chatId;
+        await outputIntentBuffer.enqueuePlatformOutput(projectId, {
+          kind: "platform_mutation",
+          data: {
+            mutationType: input.mutationType,
+            platform: input.platform,
+            chatId: input.chatId,
+            messageId: input.messageId,
+            payload: input.payload,
+          },
+        });
       },
     };
   const api = withApiGuards(rawApi, roleResolver, auditService);
@@ -853,9 +935,15 @@ export async function createOrchestratorLayer(
 
   // ── runStartup (deferred — called after platform bootstrap) ──
   async function runStartup(gateway: OutputGateway): Promise<void> {
+    activeGateway = gateway;
+    outputIntentBuffer = new OutputIntentBuffer({
+      enqueue: async (projectId, output) => gateway.dispatch(projectId, output),
+    });
     // 1. Wire output: event pipeline
     eventPipeline = new EventPipeline(
-      new AgentEventRouter((projectId, output) => gateway.dispatch(projectId, output)),
+      new AgentEventRouter((projectId, output) => gateway.dispatch(projectId, output), {
+        intentBuffer: outputIntentBuffer,
+      }),
       {
         registerApprovalRequest: approvalUseCase.registerApprovalRequest.bind(approvalUseCase),
         finishTurn: turnLifecycleService.finishTurn.bind(turnLifecycleService),
@@ -877,12 +965,14 @@ export async function createOrchestratorLayer(
       }
     );
     turnLifecycleService.setEventPipeline(eventPipeline);
-    startHealthCheck();
-    runStartupValidation();
+    if (!process.env.VITEST) {
+      startHealthCheck();
+      runStartupValidation();
+    }
 
     // 2. Backfill missing project metadata
     try {
-      const state = adminStateStore.read();
+      const state = await adminStateStore.read();
       let dirty = false;
       for (const p of state.projects) {
         if (!p.gitUrl && p.cwd) {
@@ -911,7 +1001,7 @@ export async function createOrchestratorLayer(
         if (!p.updatedAt) { p.updatedAt = p.createdAt ?? new Date().toISOString(); dirty = true; }
       }
       if (dirty) {
-        adminStateStore.write(state);
+        await adminStateStore.write(state);
         log.info("startup: backfilled project gitUrl/defaultBranch/workBranch/timestamps");
       }
     } catch (err) {
@@ -919,7 +1009,7 @@ export async function createOrchestratorLayer(
     }
 
     // 3. Recover sessions for active projects
-    const state = adminStateStore.read();
+    const state = await adminStateStore.read();
     const activeProjectIds = state.projects
       .filter((p) => p.status === "active" && p.chatId)
       .map((p) => p.id);
@@ -957,6 +1047,9 @@ export async function createOrchestratorLayer(
     runStartup,
     shutdown: async () => {
       stopHealthCheck();
+      await eventPipeline?.waitForIdle();
+      await outputIntentBuffer?.flushAll();
+      await activeGateway?.flushAll?.();
       if (typeof apiPool.releaseAll === "function") {
         await apiPool.releaseAll();
       }

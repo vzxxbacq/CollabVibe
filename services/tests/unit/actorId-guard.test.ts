@@ -74,7 +74,7 @@ describe("actorId guard enforcement", () => {
   it("removeProjectMember with non-admin actorId is denied", async () => {
     sim = await SimHarness.create(["admin"]);
     const projectId = await sim.createProjectFromChat({ chatId: "c-guard9", userId: "admin", name: "p-guard9" });
-    sim.api.addProjectMember({ projectId, userId: "member", role: "developer", actorId: "admin" });
+    await sim.api.addProjectMember({ projectId, userId: "member", role: "developer", actorId: "admin" });
     expect(() => {
       sim!.api.removeProjectMember({ projectId, userId: "member", actorId: "nobody" });
     }).toThrow();
@@ -83,7 +83,7 @@ describe("actorId guard enforcement", () => {
   it("updateProjectMemberRole with non-admin actorId is denied", async () => {
     sim = await SimHarness.create(["admin"]);
     const projectId = await sim.createProjectFromChat({ chatId: "c-guard10", userId: "admin", name: "p-guard10" });
-    sim.api.addProjectMember({ projectId, userId: "target", role: "developer", actorId: "admin" });
+    await sim.api.addProjectMember({ projectId, userId: "target", role: "developer", actorId: "admin" });
     expect(() => {
       sim!.api.updateProjectMemberRole({ projectId, userId: "target", role: "maintainer", actorId: "nobody" });
     }).toThrow();
@@ -94,7 +94,7 @@ describe("actorId guard enforcement", () => {
   it("admin actorId can create project", async () => {
     sim = await SimHarness.create(["admin"]);
     const projectId = await sim.createProjectFromChat({ chatId: "c-guard-ok1", userId: "admin", name: "p-ok1" });
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.status).toBe("active");
   });
 
@@ -102,14 +102,14 @@ describe("actorId guard enforcement", () => {
     sim = await SimHarness.create(["admin"]);
     const projectId = await sim.createProjectFromChat({ chatId: "c-guard-ok2", userId: "admin", name: "p-ok2" });
     await sim.api.disableProject({ projectId, actorId: "admin" });
-    expect(sim.api.getProjectRecord(projectId)?.status).toBe("disabled");
+    expect((await sim.api.getProjectRecord(projectId))?.status).toBe("disabled");
   });
 
   it("admin actorId can addProjectMember", async () => {
     sim = await SimHarness.create(["admin"]);
     const projectId = await sim.createProjectFromChat({ chatId: "c-guard-ok3", userId: "admin", name: "p-ok3" });
-    sim.api.addProjectMember({ projectId, userId: "new-dev", role: "developer", actorId: "admin" });
-    const members = sim.api.listProjectMembers(projectId);
+    await sim.api.addProjectMember({ projectId, userId: "new-dev", role: "developer", actorId: "admin" });
+    const members = await sim.api.listProjectMembers(projectId);
     expect(members.some((m) => m.userId === "new-dev")).toBe(true);
   });
 
@@ -117,14 +117,14 @@ describe("actorId guard enforcement", () => {
     sim = await SimHarness.create(["admin"]);
     const projectId = await sim.createProjectFromChat({ chatId: "c-guard-ok4", userId: "admin", name: "p-ok4" });
     await sim.api.updateProjectConfig({ projectId, actorId: "admin", workBranch: "feature/ok4" });
-    expect(sim.api.getProjectRecord(projectId)?.workBranch).toBe("feature/ok4");
+    expect((await sim.api.getProjectRecord(projectId))?.workBranch).toBe("feature/ok4");
   });
 
   it("admin actorId can deleteProject", async () => {
     sim = await SimHarness.create(["admin"]);
     const projectId = await sim.createProjectFromChat({ chatId: "c-guard-ok5", userId: "admin", name: "p-ok5" });
     await sim.api.deleteProject({ projectId, actorId: "admin" });
-    expect(sim.api.getProjectRecord(projectId)).toBeNull();
+    expect(await sim.api.getProjectRecord(projectId)).toBeNull();
   });
 
   it("admin actorId can install skill", async () => {

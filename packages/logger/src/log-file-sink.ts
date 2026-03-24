@@ -77,17 +77,59 @@ export function createFileLogSink(options: FileLogSinkOptions): (entry: LogEntry
         }
     }
 
+    const pendingChunks: string[] = [];
+    let pendingBytes = 0;
+    let flushScheduled = false;
+    let flushInFlight = false;
+
+    const scheduleFlush = (): void => {
+        if (flushScheduled || flushInFlight) return;
+        flushScheduled = true;
+        setImmediate(() => {
+            flushScheduled = false;
+            void flushPending();
+        });
+    };
+
+    const flushPending = async (): Promise<void> => {
+        if (flushInFlight || pendingChunks.length === 0) return;
+        flushInFlight = true;
+        try {
+            while (pendingChunks.length > 0) {
+                const batch = pendingChunks.splice(0, pendingChunks.length).join("");
+                const batchBytes = Buffer.byteLength(batch, "utf-8");
+                pendingBytes -= batchBytes;
+
+                if (currentSize + batchBytes > maxSize) {
+                    rotate();
+                }
+
+                await fs.promises.appendFile(currentPath, batch, "utf-8");
+                currentSize += batchBytes;
+            }
+        } catch {
+            // 文件写入失败不应阻塞应用
+        } finally {
+            flushInFlight = false;
+            if (pendingChunks.length > 0) {
+                scheduleFlush();
+            }
+        }
+    };
+
     return (entry: LogEntry) => {
         try {
             const line = JSON.stringify(entry) + "\n";
-            const bytes = Buffer.byteLength(line, "utf-8");
+            pendingChunks.push(line);
+            pendingBytes += Buffer.byteLength(line, "utf-8");
 
-            if (currentSize + bytes > maxSize) {
-                rotate();
+            // 高水位时立即安排 flush，避免内存无限增长。
+            if (pendingBytes >= 64 * 1024) {
+                void flushPending();
+                return;
             }
 
-            fs.appendFileSync(currentPath, line, "utf-8");
-            currentSize += bytes;
+            scheduleFlush();
         } catch {
             // 文件写入失败不应阻塞应用
         }

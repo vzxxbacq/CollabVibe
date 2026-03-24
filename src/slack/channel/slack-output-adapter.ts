@@ -679,15 +679,19 @@ export class SlackOutputAdapter {
         const queues = [
             review.queues.conflictPaths.length ? `Conflicts: ${review.queues.conflictPaths.join(", ")}` : "",
             review.queues.directPaths.length ? `Direct: ${review.queues.directPaths.join(", ")}` : "",
-            review.queues.agentPendingPaths.length ? `Agent pending: ${review.queues.agentPendingPaths.join(", ")}` : ""
+            review.queues.agentPendingPaths.length ? `Agent pending: ${review.queues.agentPendingPaths.join(", ")}` : "",
+            review.queues.agentResolvedPaths.length ? `Agent-ready results: ${review.queues.agentResolvedPaths.join(", ")}` : ""
         ].filter(Boolean).join("\n");
+        const batchRetryHint = review.queues.agentResolvedPaths.length
+            ? "\nNext step: continue in batch.\n1. Pick only the files to revise\n2. Send one shared instruction block\n3. Unselected files stay unchanged."
+            : "";
         await this.postBlocks(
             chatId,
             [
                 section(`🧾 *Merge Review ${review.fileIndex + 1}/${review.totalFiles}*\nFile: \`${review.file.path}\`\nStatus: *${review.file.status}*`),
                 codeBlock(review.file.diff.slice(0, 2500)),
                 divider(),
-                section(`Available decisions: ${available}\nAccepted: ${review.progress.accepted} · Rejected: ${review.progress.rejected} · Remaining: ${review.progress.remaining}`),
+                section(`Available decisions: ${available}\nAccepted: ${review.progress.accepted} · Rejected: ${review.progress.rejected} · Remaining: ${review.progress.remaining}${batchRetryHint}`),
                 ...(queues ? [context(queues)] : []),
                 actions(`merge_review_${review.branchName}_${review.fileIndex}`, [
                     ...(review.availableDecisions.includes("accept") ? [{
@@ -720,7 +724,7 @@ export class SlackOutputAdapter {
                         style: "primary"
                     },
                     {
-                        text: "🤖 Agent Assist",
+                        text: review.queues.agentResolvedPaths.length ? "🤖 Continue with Agent" : "🤖 Agent Assist",
                         actionId: "codex_merge_agent",
                         value: JSON.stringify({ action: "merge_agent_assist_submit", branchName: review.branchName })
                     },

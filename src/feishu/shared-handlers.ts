@@ -39,7 +39,7 @@ const log = createLogger("handler");
 export async function sendProjectList(deps: FeishuHandlerDeps, chatId: string): Promise<void> {
     const dispatcher = new FeishuOutputGateway(deps);
     const { OP } = getFeishuNotifyCatalog(deps.config.locale);
-    const projects = listProjects(deps);
+    const projects = await listProjects(deps);
     if (projects.length === 0) {
         await dispatcher.dispatch(chatId, textNotification(OP.NO_PROJECTS));
         return;
@@ -53,7 +53,7 @@ export async function sendProjectList(deps: FeishuHandlerDeps, chatId: string): 
 export async function sendSnapshotList(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<void> {
     const dispatcher = new FeishuOutputGateway(deps);
     const { OP } = getFeishuNotifyCatalog(deps.config.locale);
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     if (!project) {
         await dispatcher.dispatch(chatId, textNotification(OP.SNAPSHOT_EMPTY_MERGE));
         return;
@@ -91,7 +91,7 @@ export async function sendSnapshotList(deps: FeishuHandlerDeps, chatId: string, 
 
 export async function sendModelList(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<void> {
     const dispatcher = new FeishuOutputGateway(deps);
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     if (!project) {
         throw new Error("No project bound to this chat");
     }
@@ -113,7 +113,7 @@ export async function sendModelList(deps: FeishuHandlerDeps, chatId: string, use
 
 export async function sendThreadNewForm(deps: FeishuHandlerDeps, chatId: string, userId?: string): Promise<void> {
     const dispatcher = new FeishuOutputGateway(deps);
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     if (!project) {
         throw new Error("No project bound to this chat");
     }
@@ -130,16 +130,16 @@ export async function sendThreadNewForm(deps: FeishuHandlerDeps, chatId: string,
 // ── Resolve functions (return card JSON, do NOT send) ───────────────────────
 
 export async function resolveHelpCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const project = resolveProjectByChatId(deps.api, chatId);
-    const isAdmin = deps.api.resolveRole({ userId, projectId: project?.id }) === "admin";
+    const project = await resolveProjectByChatId(deps.api, chatId);
+    const isAdmin = await deps.api.resolveRole({ userId, projectId: project?.id }) === "admin";
     let members: Array<{ userId: string; displayName?: string; role: string }> | undefined;
     if (isAdmin && project) {
-        const rawMembers = deps.api.listProjectMembers(project.id);
-        members = await Promise.all(rawMembers.map(async (m) => ({
+        const rawMembers = await deps.api.listProjectMembers(project.id);
+        members = rawMembers.map((m) => ({
             userId: m.userId,
-            displayName: await deps.feishuAdapter.getUserDisplayName?.(m.userId),
+            displayName: deps.feishuAdapter.getCachedUserDisplayName?.(m.userId) ?? m.userId,
             role: m.role
-        })));
+        }));
     }
     return deps.platformOutput.buildHelpCard(userId, {
         isAdmin,
@@ -150,13 +150,11 @@ export async function resolveHelpCard(deps: FeishuHandlerDeps, chatId: string, u
 }
 
 export async function resolveHelpThreadCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     const threads = await deps.api.listThreads({ projectId: project!.id, actorId: userId });
     const activeThread = await deps.api.getUserActiveThread({ projectId: project!.id, userId });
     const isOnMain = !activeThread;
-    const displayName = deps.feishuAdapter.getUserDisplayName
-        ? await deps.feishuAdapter.getUserDisplayName(userId)
-        : userId;
+    const displayName = deps.feishuAdapter.getCachedUserDisplayName?.(userId) ?? userId;
     return deps.platformOutput.buildHelpThreadCard(
         threads.map(t => ({
             threadName: t.threadName,
@@ -171,7 +169,7 @@ export async function resolveHelpThreadCard(deps: FeishuHandlerDeps, chatId: str
 }
 
 export async function resolveHelpThreadNewCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     if (!project) {
         throw new Error("No project bound to this chat");
     }
@@ -182,7 +180,7 @@ export async function resolveHelpThreadNewCard(deps: FeishuHandlerDeps, chatId: 
 }
 
 export async function resolveHelpMergeCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     const activeThread = project ? await deps.api.getUserActiveThread({ projectId: project.id, userId }) : null;
     const branchName = activeThread?.threadName;
     return deps.platformOutput.buildHelpMergeCard(userId, branchName);
@@ -191,15 +189,13 @@ export async function resolveHelpMergeCard(deps: FeishuHandlerDeps, chatId: stri
 export async function resolveSnapshotCard(
     deps: FeishuHandlerDeps, chatId: string, userId: string, fromHelp?: boolean
 ): Promise<Record<string, unknown>> {
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     if (!project) {
         throw new Error("No project bound to this chat");
     }
     const { snapshots, threadId, threadName } = await coreListSnapshots(deps, project.id, userId);
     const latestIndex = snapshots.length > 0 ? snapshots[snapshots.length - 1]!.turnIndex : -1;
-    const displayName = deps.feishuAdapter.getUserDisplayName
-        ? await deps.feishuAdapter.getUserDisplayName(userId)
-        : userId;
+    const displayName = deps.feishuAdapter.getCachedUserDisplayName?.(userId) ?? userId;
     return deps.platformOutput.buildSnapshotHistoryCard(
         snapshots.map(s => ({
             turnId: s.turnId,
@@ -214,7 +210,7 @@ export async function resolveSnapshotCard(
 }
 
 export async function resolveHelpSkillCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     const skills = await deps.api.listSkills(project?.id);
     return deps.platformOutput.buildHelpSkillCard(
         skills.map(s => ({
@@ -232,7 +228,7 @@ export async function resolveHelpBackendCard(deps: FeishuHandlerDeps, userId: st
 }
 
 export async function resolveHelpTurnCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     if (!project) {
         throw new Error("No project bound to this chat");
     }
@@ -262,7 +258,7 @@ export async function resolveHelpTurnCard(deps: FeishuHandlerDeps, chatId: strin
 export async function resolveHelpProjectCard(deps: FeishuHandlerDeps, chatId: string, userId: string): Promise<Record<string, unknown>> {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
-    const project = resolveProjectByChatId(deps.api, chatId);
+    const project = await resolveProjectByChatId(deps.api, chatId);
     if (!project) {
         throw new Error("No project bound to this chat");
     }

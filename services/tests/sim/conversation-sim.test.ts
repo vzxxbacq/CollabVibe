@@ -105,9 +105,9 @@ describe("platform-agnostic conversation simulation", () => {
     await sim.addAdminFromChat({ chatId: "chat-users", actorId: "owner-1", targetUserId: "ops-1" });
 
     expect(sim.api.isAdmin("ops-1")).toBe(true);
-    expect(sim.api.listAdmins().map((item) => item.userId)).toContain("ops-1");
-    expect(sim.api.listUsers().users.map((item) => item.userId)).toEqual(expect.arrayContaining(["ops-1", "owner-1"]));
-    expect(sim.api.listProjectMembers(projectId)).toEqual(expect.arrayContaining([
+    expect((await sim.api.listAdmins())?.map((item) => item.userId)).toContain("ops-1");
+    expect((await sim.api.listUsers())?.users.map((item) => item.userId)).toEqual(expect.arrayContaining(["ops-1", "owner-1"]));
+    expect(await sim.api.listProjectMembers(projectId)).toEqual(expect.arrayContaining([
       expect.objectContaining({ userId: "owner-1", role: "maintainer" }),
     ]));
     expect(sim.platform.listOutputs("chat-users").map((item) => item.output.kind)).toEqual(expect.arrayContaining(["notification"]));

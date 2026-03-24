@@ -153,3 +153,16 @@ export async function ensureWorkBranch(cwd: string, branchName: string, fromBran
 export async function pushBranch(cwd: string, branchName: string, remote = "origin"): Promise<void> {
     await git(["push", remote, branchName], cwd);
 }
+
+/**
+ * Check whether `ancestor` is an ancestor of `descendant`.
+ * Uses `git merge-base --is-ancestor` (exit 0 = true, exit 1 = false).
+ */
+export async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+    try {
+        await git(["merge-base", "--is-ancestor", ancestor, descendant], cwd);
+        return true;
+    } catch {
+        return false;
+    }
+}

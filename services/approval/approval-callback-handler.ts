@@ -23,9 +23,19 @@ export class ApprovalCallbackHandler {
   async handle(
     decision: ApprovalDecision,
     signatureValid: boolean
-  ): Promise<"applied" | "duplicate" | "rejected" | "bridge_duplicate"> {
+  ): Promise<"applied" | "duplicate" | "expired" | "missing" | "rejected" | "bridge_duplicate"> {
     if (!signatureValid) {
       return "rejected";
+    }
+    const existing = await this.store.getById(decision.approvalId);
+    if (!existing) {
+      return "missing";
+    }
+    if (existing.status === "expired") {
+      return "expired";
+    }
+    if (existing.status !== "pending") {
+      return "duplicate";
     }
     const dedupKey = buildApprovalDedupKey(decision);
     if (isDuplicateApproval(this.seenApprovalIds.has(dedupKey), this.inFlightApprovalIds.has(dedupKey))) {
@@ -33,9 +43,11 @@ export class ApprovalCallbackHandler {
     }
     this.inFlightApprovalIds.add(dedupKey);
     try {
-      await this.store.save(decision);
-      // Pass raw approvalId to backend — the backend expects the original id, not the composite key
+      // Pass the stable system approvalId into the bridge; the bridge resolves the backend handle.
       const bridgeResult = await this.bridge.applyDecision(decision.approvalId, decision.action);
+      if (bridgeResult !== "duplicate") {
+        await this.store.markResolved(decision);
+      }
       this.seenApprovalIds.add(dedupKey);
       return mapBridgeDecisionResult(bridgeResult);
     } finally {

@@ -1,4 +1,4 @@
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 
 import type { TurnRecord, TurnStatus } from "../turn/types";
 import type { TurnRepository } from "../turn/turn-repository";
@@ -31,18 +31,10 @@ interface TurnRow {
 }
 
 export class SqliteTurnRepository implements TurnRepository {
-  constructor(private readonly db: DatabaseSync) { }
-
-  private getOneByProject(sql: string, ...params: SQLInputValue[]): TurnRow | undefined {
-    return this.db.prepare(sql).get(...params) as TurnRow | undefined;
-  }
-
-  private getManyByProject(sql: string, ...params: SQLInputValue[]): TurnRow[] {
-    return this.db.prepare(sql).all(...params) as unknown as TurnRow[];
-  }
+  constructor(private readonly db: AsyncDatabaseProxy) { }
 
   async create(record: TurnRecord): Promise<void> {
-    this.db.prepare(
+    await this.db.prepare(
       `INSERT INTO turn_records (
         project_id, chat_id, thread_name, thread_id, turn_id, call_id, platform, source_message_id, user_id, trace_id, status,
         cwd, snapshot_sha, files_changed, diff_summary, stats_json, approval_required,
@@ -104,77 +96,70 @@ export class SqliteTurnRepository implements TurnRepository {
   }
 
   async getByTurnId(projectId: string, turnId: string): Promise<TurnRecord | null> {
-    return this.getByTurnIdSync(projectId, turnId);
-  }
-
-  async getByCallId(projectId: string, callId: string): Promise<TurnRecord | null> {
-    return this.getByCallIdSync(projectId, callId);
-  }
-
-  getByTurnIdSync(projectId: string, turnId: string): TurnRecord | null {
-    const row = this.getOneByProject(
+    const row = await this.db.get(
       `SELECT * FROM turn_records WHERE project_id = ? AND turn_id = ?`,
       projectId, turnId
-    );
+    ) as TurnRow | undefined;
     return row ? this.toRecord(row) : null;
   }
 
-  getByCallIdSync(projectId: string, callId: string): TurnRecord | null {
-    const row = this.getOneByProject(
+  async getByCallId(projectId: string, callId: string): Promise<TurnRecord | null> {
+    const row = await this.db.get(
       `SELECT * FROM turn_records WHERE project_id = ? AND call_id = ?`,
       projectId, callId
-    );
+    ) as TurnRow | undefined;
     return row ? this.toRecord(row) : null;
   }
 
   async listByThread(projectId: string, threadName: string, limit = 20): Promise<TurnRecord[]> {
-    const rows = this.getManyByProject(
+    const rows = await this.db.all(
       `SELECT * FROM turn_records
        WHERE project_id = ? AND thread_name = ?
        ORDER BY created_at DESC
        LIMIT ?`,
       projectId, threadName, limit
-    );
+    ) as TurnRow[];
     return rows.map((row) => this.toRecord(row));
   }
 
   async listByProject(projectId: string, limit = 20): Promise<TurnRecord[]> {
-    const rows = this.getManyByProject(
+    const rows = await this.db.all(
       `SELECT * FROM turn_records
        WHERE project_id = ?
        ORDER BY created_at DESC
        LIMIT ?`,
       projectId, limit
-    );
+    ) as TurnRow[];
     return rows.map((row) => this.toRecord(row));
   }
 
   async findBlockingTurn(projectId: string, threadName: string): Promise<TurnRecord | null> {
-    const row = this.getOneByProject(
+    const row = await this.db.get(
       `SELECT * FROM turn_records
        WHERE project_id = ? AND thread_name = ? AND status IN ('running', 'awaiting_approval')
        ORDER BY updated_at DESC
        LIMIT 1`,
       projectId, threadName
-    );
+    ) as TurnRow | undefined;
     return row ? this.toRecord(row) : null;
   }
 
   async getLastCompletedTurn(projectId: string, threadName: string): Promise<TurnRecord | null> {
-    const row = this.getOneByProject(
+    const row = await this.db.get(
       `SELECT * FROM turn_records
        WHERE project_id = ? AND thread_name = ? AND status IN ('completed', 'awaiting_approval', 'accepted')
        ORDER BY COALESCE(completed_at, updated_at) DESC
        LIMIT 1`,
       projectId, threadName
-    );
+    ) as TurnRow | undefined;
     return row ? this.toRecord(row) : null;
   }
 
   async getMaxTurnNumber(projectId: string, threadName: string): Promise<number> {
-    const row = this.db.prepare(
-      `SELECT MAX(turn_number) as max_num FROM turn_records WHERE project_id = ? AND thread_name = ?`
-    ).get(projectId, threadName) as { max_num: number | null } | undefined;
+    const row = await this.db.get(
+      `SELECT MAX(turn_number) as max_num FROM turn_records WHERE project_id = ? AND thread_name = ?`,
+      projectId, threadName
+    ) as { max_num: number | null } | undefined;
     return row?.max_num ?? 0;
   }
 

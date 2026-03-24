@@ -99,9 +99,9 @@ Backend (Codex stdio / ACP SSE)
   → onNotification
   → agent-core/transports/ eventBridge (L3)
   → UnifiedAgentEvent
-  → orchestrator/event/EventPipeline (L2)
-  → AgentEventRouter → transformEvent
-  → AgentStreamOutput interface
+  → orchestrator/event/EventPipeline facade (L2)
+  → ThreadEventRuntime / AgentEventRouter
+  → L1 delivery queue / AgentStreamOutput interface
   → FeishuOutputAdapter / SlackOutputAdapter (L1)
 ```
 
@@ -124,7 +124,7 @@ Backend (Codex stdio / ACP SSE)
 ### Turn lifecycle semantics
 
 - After `turn/start` succeeds and returns a `turnId`, L2 `TurnLifecycleService` must immediately establish the turn baseline: create the turn record, persist the initial snapshot, and mark the active turn.
-- `EventPipeline` is the Path B streaming/synchronization layer. It owns live event convergence, state sync, and completion handling; it is not the sole source of turn-start persistence.
+- `EventPipeline` is the Path B facade; per-thread live event convergence, state sync, and completion handling are owned by `ThreadEventRuntime`. It is not the sole source of turn-start persistence.
 - To tolerate early backend notifications, `EventPipeline` may defensively call idempotent `ensureTurnStarted()` and buffer notifications before activation. This does not change the authoritative start point, which remains `TurnLifecycleService`.
 - `finishTurn()` may compute commit/diff only from an already-established active turn. Missing turn-start persistence is therefore a lifecycle error, not something UI fallback should mask.
 
@@ -169,6 +169,18 @@ Backend (Codex stdio / ACP SSE)
 | **U1** | Admin merged from `env` (non-deletable) and `im` (mutable) |
 | **U2** | `users` table is the single source of truth for roles |
 | **U3** | Admin has all permissions |
+
+### 3.5 Merge Resolver Thread
+
+Merge resolver threads (`threadName` matching `merge-{branchName}`) run on a branch worktree with an active `MERGE_HEAD`. These constraints protect the merge state:
+
+| Rule | Description |
+|------|------------|
+| **M1: No snapshot** | `createTurnStart` skips `snapshot.create()` for merge resolver threads. `git stash create` + `git reset HEAD` consumes `MERGE_HEAD`, producing a single-parent commit that breaks the ancestry chain |
+| **M2: No commitAndDiff** | `finishTurn` skips `commitAndDiff()` for merge resolver threads. A normal commit would consume `MERGE_HEAD` |
+| **M3: MERGE_HEAD guard** | `finishTurn` additionally checks for a `MERGE_HEAD` file in the worktree, skipping commit even if the thread name doesn't match |
+| **M4: Self-managed session** | Merge commit/rollback is managed by `MergeService.commitMergeReview()` / `abortMergeSession()`, not the turn-level snapshot/commit flow |
+| **M5: Single commit point** | `MERGE_HEAD` may only be consumed by `commitMergeSession()` via `git commit --allow-empty`, which must produce a two-parent merge commit |
 
 ---
 

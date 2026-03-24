@@ -1,4 +1,5 @@
 import type { HttpClient, HttpResponse } from "./http-client";
+import { createLogger } from "../../logging";
 
 export class FeishuHttpError extends Error {
   readonly status: number;
@@ -20,6 +21,7 @@ export interface FetchHttpClientOptions {
   appId: string;
   appSecret: string;
   apiBaseUrl?: string;
+  timeoutMs?: number;
   fetcher?: typeof fetch;
   now?: () => number;
 }
@@ -32,11 +34,15 @@ interface TokenResponse {
 }
 
 export class FetchHttpClient implements HttpClient {
+  private readonly log = createLogger("feishu-http");
+
   private readonly appId: string;
 
   private readonly appSecret: string;
 
   private readonly apiBaseUrl: string;
+
+  private readonly timeoutMs: number;
 
   private readonly fetcher: typeof fetch;
 
@@ -52,6 +58,7 @@ export class FetchHttpClient implements HttpClient {
     this.appId = options.appId;
     this.appSecret = options.appSecret;
     this.apiBaseUrl = options.apiBaseUrl ?? "https://open.feishu.cn/open-apis";
+    this.timeoutMs = options.timeoutMs ?? 15_000;
     this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? (() => Date.now());
   }
@@ -62,13 +69,13 @@ export class FetchHttpClient implements HttpClient {
 
   async getBinary(url: string, headers: Record<string, string> = {}): Promise<HttpResponse<Uint8Array>> {
     await this.ensureToken();
-    const response = await this.fetcher(url, {
+    const response = await this.fetchWithTimeout(url, {
       method: "GET",
       headers: {
         ...headers,
         Authorization: `Bearer ${this.token}`
       }
-    });
+    }, "GET", url);
     const arrayBuffer = await response.arrayBuffer();
     if (!response.ok) {
       throw new FeishuHttpError(`feishu request failed (${response.status})`, response.status);
@@ -113,7 +120,7 @@ export class FetchHttpClient implements HttpClient {
     if (body !== null && body !== undefined) {
       fetchInit.body = JSON.stringify(body);
     }
-    const response = await this.fetcher(url, fetchInit);
+    const response = await this.fetchWithTimeout(url, fetchInit, method, url);
     const data = (await response.json()) as Record<string, unknown>;
 
     if (!response.ok) {
@@ -153,7 +160,8 @@ export class FetchHttpClient implements HttpClient {
   }
 
   private async refreshToken(): Promise<void> {
-    const response = await this.fetcher(`${this.apiBaseUrl}/auth/v3/tenant_access_token/internal`, {
+    const tokenUrl = `${this.apiBaseUrl}/auth/v3/tenant_access_token/internal`;
+    const response = await this.fetchWithTimeout(tokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -162,7 +170,7 @@ export class FetchHttpClient implements HttpClient {
         app_id: this.appId,
         app_secret: this.appSecret
       })
-    });
+    }, "POST", "auth/v3/tenant_access_token/internal");
     const payload = (await response.json()) as TokenResponse;
     if (!response.ok || payload.code !== 0 || !payload.tenant_access_token || !payload.expire) {
       throw new FeishuHttpError(
@@ -175,5 +183,33 @@ export class FetchHttpClient implements HttpClient {
 
     this.token = payload.tenant_access_token;
     this.tokenExpiresAt = this.now() + payload.expire * 1000;
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit, method: string, requestName: string): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error(`timeout after ${this.timeoutMs}ms`)), this.timeoutMs);
+    try {
+      return await this.fetcher(url, {
+        ...init,
+        signal: controller.signal
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const timedOut = controller.signal.aborted;
+      this.log.warn({
+        method,
+        requestName,
+        timeoutMs: this.timeoutMs,
+        err: message
+      }, timedOut ? "feishu request timed out" : "feishu request failed");
+      throw new FeishuHttpError(
+        timedOut
+          ? `feishu request timeout after ${this.timeoutMs}ms for ${method} ${requestName}`
+          : `feishu request failed for ${method} ${requestName}: ${message}`,
+        408
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }

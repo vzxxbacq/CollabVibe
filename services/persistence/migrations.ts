@@ -13,13 +13,21 @@ const CURRENT_SCHEMA_SQL: string[] = [
 
   `CREATE TABLE IF NOT EXISTS approvals (
     id TEXT PRIMARY KEY,
+    backend_approval_id TEXT NOT NULL DEFAULT '',
     project_id TEXT NOT NULL,
     thread_id TEXT NOT NULL,
+    thread_name TEXT NOT NULL DEFAULT '',
     turn_id TEXT NOT NULL,
+    call_id TEXT NOT NULL DEFAULT '',
     approval_type TEXT NOT NULL,
-    decision TEXT NOT NULL,
-    actor_id TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    status TEXT NOT NULL DEFAULT 'pending',
+    decision TEXT NOT NULL DEFAULT '',
+    actor_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    expired_at TEXT,
+    status_reason TEXT NOT NULL DEFAULT '',
+    display_json TEXT NOT NULL DEFAULT '{}'
   );`,
 
   `CREATE TABLE IF NOT EXISTS audit_logs (
@@ -259,4 +267,33 @@ export async function runMigrations(executor: MigrationExecutor): Promise<void> 
      ON turn_records(project_id, call_id)
      WHERE call_id IS NOT NULL;`
   );
+
+  const approvalTableInfo = executor.query
+    ? await executor.query<{ name: string }>("PRAGMA table_info(approvals)")
+    : [];
+  const approvalColumns = new Set(approvalTableInfo.map((row) => row.name));
+  if (!approvalColumns.has("backend_approval_id")) {
+    await executor.execute("ALTER TABLE approvals ADD COLUMN backend_approval_id TEXT NOT NULL DEFAULT ''");
+  }
+  if (!approvalColumns.has("thread_name")) {
+    await executor.execute("ALTER TABLE approvals ADD COLUMN thread_name TEXT NOT NULL DEFAULT ''");
+  }
+  if (!approvalColumns.has("call_id")) {
+    await executor.execute("ALTER TABLE approvals ADD COLUMN call_id TEXT NOT NULL DEFAULT ''");
+  }
+  if (!approvalColumns.has("status")) {
+    await executor.execute("ALTER TABLE approvals ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'");
+  }
+  if (!approvalColumns.has("resolved_at")) {
+    await executor.execute("ALTER TABLE approvals ADD COLUMN resolved_at TEXT");
+  }
+  if (!approvalColumns.has("expired_at")) {
+    await executor.execute("ALTER TABLE approvals ADD COLUMN expired_at TEXT");
+  }
+  if (!approvalColumns.has("status_reason")) {
+    await executor.execute("ALTER TABLE approvals ADD COLUMN status_reason TEXT NOT NULL DEFAULT ''");
+  }
+  if (!approvalColumns.has("display_json")) {
+    await executor.execute("ALTER TABLE approvals ADD COLUMN display_json TEXT NOT NULL DEFAULT '{}'");
+  }
 }

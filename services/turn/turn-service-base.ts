@@ -15,8 +15,8 @@ export interface TurnServiceBaseDeps {
 export abstract class TurnServiceBase {
   protected constructor(protected readonly deps: TurnServiceBaseDeps) {}
 
-  protected requireProjectId(projectId: string): string {
-    const resolvedProjectId = this.deps.projectResolver.findProjectById?.(projectId)?.id ?? null;
+  protected async requireProjectId(projectId: string): Promise<string> {
+    const resolvedProjectId = (await this.deps.projectResolver.findProjectById?.(projectId))?.id ?? null;
     if (!resolvedProjectId) {
       throw new OrchestratorError(ErrorCode.PROJECT_NOT_FOUND, `project not found: ${projectId}`);
     }
@@ -24,6 +24,6 @@ export abstract class TurnServiceBase {
   }
 
   protected async getThreadTurnState(projectId: string, threadName: string) {
-    return this.deps.threadService.getRuntimeState(this.requireProjectId(projectId), threadName);
+    return this.deps.threadService.getRuntimeState(await this.requireProjectId(projectId), threadName);
   }
 }

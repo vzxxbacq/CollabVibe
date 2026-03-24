@@ -13,7 +13,7 @@ describe("project config", () => {
     sim = await SimHarness.create();
     const projectId = await sim.createProjectFromChat({ chatId: "c-cfg1", userId: "admin-user", name: "p-cfg1" });
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", workBranch: "feature/new-branch" });
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.workBranch).toBe("feature/new-branch");
   });
 
@@ -21,7 +21,7 @@ describe("project config", () => {
     sim = await SimHarness.create();
     const projectId = await sim.createProjectFromChat({ chatId: "c-cfg2", userId: "admin-user", name: "p-cfg2" });
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", gitUrl: "https://github.com/test/repo.git" });
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.gitUrl).toBe("https://github.com/test/repo.git");
   });
 
@@ -33,7 +33,7 @@ describe("project config", () => {
       workBranch: "feature/multi",
       gitUrl: "https://github.com/test/multi.git",
     });
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.workBranch).toBe("feature/multi");
     expect(rec?.gitUrl).toBe("https://github.com/test/multi.git");
   });
@@ -41,9 +41,9 @@ describe("project config", () => {
   it("updateProjectConfig leaves unchanged fields intact", async () => {
     sim = await SimHarness.create();
     const projectId = await sim.createProjectFromChat({ chatId: "c-cfg4", userId: "admin-user", name: "p-cfg4" });
-    const before = sim.api.getProjectRecord(projectId);
+    const before = await sim.api.getProjectRecord(projectId);
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", workBranch: "feature/partial" });
-    const after = sim.api.getProjectRecord(projectId);
+    const after = await sim.api.getProjectRecord(projectId);
     expect(after?.workBranch).toBe("feature/partial");
     expect(after?.name).toBe(before?.name);
   });
@@ -69,7 +69,7 @@ describe("project config", () => {
     // updateGitRemote sets the git remote on the repository, not stored on ProjectRecord
     await sim.api.updateGitRemote({ projectId, gitUrl: "https://github.com/org/repo.git", actorId: "admin-user" });
     // Should not throw
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.status).toBe("active");
   });
 
@@ -79,7 +79,7 @@ describe("project config", () => {
     await sim.api.updateGitRemote({ projectId, gitUrl: "https://github.com/org/old.git", actorId: "admin-user" });
     await sim.api.updateGitRemote({ projectId, gitUrl: "https://github.com/org/new.git", actorId: "admin-user" });
     // Should not throw
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.status).toBe("active");
   });
 
@@ -96,8 +96,8 @@ describe("project config", () => {
     const projectId = await sim.createProjectFromChat({ chatId: "c-persist", userId: "admin-user", name: "p-persist" });
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", workBranch: "feature/persist" });
     // Read twice — should be the same
-    const rec1 = sim.api.getProjectRecord(projectId);
-    const rec2 = sim.api.getProjectRecord(projectId);
+    const rec1 = await sim.api.getProjectRecord(projectId);
+    const rec2 = await sim.api.getProjectRecord(projectId);
     expect(rec1?.workBranch).toBe("feature/persist");
     expect(rec2?.workBranch).toBe("feature/persist");
   });
@@ -108,7 +108,7 @@ describe("project config", () => {
     // agentsMdContent is written to AGENTS.md file, not stored in ProjectRecord
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", agentsMdContent: "# Custom AGENTS.md\nRules here." });
     // Should not throw — success is sufficient proof
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.status).toBe("active");
   });
 
@@ -118,7 +118,7 @@ describe("project config", () => {
     // gitignoreContent is written to .gitignore file, not stored in ProjectRecord
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", gitignoreContent: "node_modules/\n.env" });
     // Should not throw — success is sufficient proof
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.status).toBe("active");
   });
 
@@ -142,7 +142,7 @@ describe("project config", () => {
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", workBranch: "feature/v1" });
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", gitUrl: "https://url.git" });
     await sim.api.updateProjectConfig({ projectId, actorId: "admin-user", workBranch: "feature/v2" });
-    const rec = sim.api.getProjectRecord(projectId);
+    const rec = await sim.api.getProjectRecord(projectId);
     expect(rec?.workBranch).toBe("feature/v2");
     expect(rec?.gitUrl).toBe("https://url.git");
   });

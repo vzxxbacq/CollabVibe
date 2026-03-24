@@ -221,7 +221,7 @@ async function handleSlackCommand(
       await dispatcher.dispatch(input.chatId, textNotification("Reply format: `/reply <callId> <answer>`"));
       return true;
     }
-    const project = resolveProjectByChatId(deps.api, input.chatId);
+    const project = await resolveProjectByChatId(deps.api, input.chatId);
     if (!project) {
       await dispatcher.dispatch(input.chatId, textNotification("No active thread. Join or create a thread before replying."));
       return true;
@@ -237,7 +237,7 @@ async function handleSlackCommand(
   }
 
   if (command.kind === "merge") {
-    const project = resolveProjectByChatId(deps.api, input.chatId);
+    const project = await resolveProjectByChatId(deps.api, input.chatId);
     if (!project) {
       await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return true;
@@ -273,7 +273,7 @@ async function handleSlackCommand(
         await dispatcher.dispatch(input.chatId, textNotification("Turn view requires a turnId."));
         return true;
       }
-      const project = resolveProjectByChatId(deps.api, input.chatId);
+      const project = await resolveProjectByChatId(deps.api, input.chatId);
       if (!project) {
         await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
         return true;
@@ -318,7 +318,7 @@ async function handleSlackCommand(
     return true;
   }
 
-  const project = resolveProjectByChatId(deps.api, input.chatId);
+  const project = await resolveProjectByChatId(deps.api, input.chatId);
   if (!project) {
     await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
     return true;
@@ -435,12 +435,12 @@ async function handleSlackCommand(
   }
 
   if (["USER_LIST", "USER_ROLE", "USER_ADD", "USER_REMOVE"].includes(parsedIntent.intent)) {
-    await dispatcher.dispatch(input.chatId, handleUserIntentOutput(deps, input.chatId, input.userId, parsedIntent));
+    await dispatcher.dispatch(input.chatId, await handleUserIntentOutput(deps, input.chatId, input.userId, parsedIntent));
     return true;
   }
 
   if (["ADMIN_ADD", "ADMIN_REMOVE", "ADMIN_LIST"].includes(parsedIntent.intent)) {
-    await dispatcher.dispatch(input.chatId, handleAdminIntentOutput(deps, parsedIntent));
+    await dispatcher.dispatch(input.chatId, await handleAdminIntentOutput(deps, parsedIntent));
     return true;
   }
 
@@ -544,7 +544,7 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       return;
     }
 
-    const project = resolveProjectByChatId(deps.api, input.chatId);
+    const project = await resolveProjectByChatId(deps.api, input.chatId);
     if (!project) {
       await dispatcher.dispatch(input.chatId, textNotification("This Slack channel is not bound to a project yet."));
       return;
@@ -563,7 +563,7 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
       return;
     }
 
-    const role = deps.api.resolveRole({ userId: input.userId, projectId: project.id }) as EffectiveRole | null;
+    const role = await deps.api.resolveRole({ userId: input.userId, projectId: project.id }) as EffectiveRole | null;
     if (!role) {
       throw new Error(`role resolution failed for userId=${input.userId} projectId=${project.id}`);
     }
@@ -593,7 +593,7 @@ async function handleSlackMessageLegacy(deps: SlackHandlerDeps, input: SlackInbo
         preflightThreadId = selected.threadId;
         preflightThreadName = selected.threadName;
 
-        if (deps.api.isPendingApproval({ projectId: project.id, threadName: selected.threadName })) {
+        if (await deps.api.isPendingApproval({ projectId: project.id, threadName: selected.threadName })) {
           await dispatcher.dispatch(input.chatId, textNotification(`Thread *${selected.threadName}* is waiting for approval.`));
           return;
         }

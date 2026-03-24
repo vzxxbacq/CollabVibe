@@ -15,15 +15,15 @@ export class TurnQueryService extends TurnServiceBase {
   }
 
   async getTurnRecord(projectId: string, turnId: string): Promise<TurnRecord | null> {
-    return this.deps.turnRepository.getByTurnId(this.requireProjectId(projectId), turnId);
+    return this.deps.turnRepository.getByTurnId(await this.requireProjectId(projectId), turnId);
   }
 
   async getTurnRecordByCallId(projectId: string, callId: string): Promise<TurnRecord | null> {
-    return this.deps.turnRepository.getByCallId(this.requireProjectId(projectId), callId);
+    return this.deps.turnRepository.getByCallId(await this.requireProjectId(projectId), callId);
   }
 
   async getTurnRecordStrict(projectId: string, turnId: string): Promise<TurnRecord> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const record = await this.deps.turnRepository.getByTurnId(resolvedProjectId, turnId);
     if (!record) {
       throw new OrchestratorError(ErrorCode.TURN_RECORD_MISSING, "turn record not found", { projectId: resolvedProjectId, turnId });
@@ -32,14 +32,14 @@ export class TurnQueryService extends TurnServiceBase {
   }
 
   async getActiveTurnRecord(projectId: string, threadName: string): Promise<TurnRecord | null> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const turnId = await this.deps.threadService.getActiveTurnId(resolvedProjectId, threadName);
     if (!turnId) return null;
     return this.deps.turnRepository.getByTurnId(resolvedProjectId, turnId);
   }
 
   async getLatestRelevantTurnRecord(projectId: string, threadName: string): Promise<TurnRecord | null> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const turnId = await this.deps.threadService.getLatestRelevantTurnId(resolvedProjectId, threadName);
     if (!turnId) return null;
     return this.deps.turnRepository.getByTurnId(resolvedProjectId, turnId);
@@ -47,7 +47,7 @@ export class TurnQueryService extends TurnServiceBase {
 
   async getTurnDetail(projectId: string, turnId: string): Promise<TurnDetailAggregate> {
     const record = await this.getTurnRecordStrict(projectId, turnId);
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const detail = await this.deps.turnDetailRepository.getByTurnId(resolvedProjectId, turnId);
     if (!detail) {
       throw new OrchestratorError(ErrorCode.TURN_DETAIL_MISSING, "turn detail not found", { projectId: resolvedProjectId, turnId });
@@ -96,11 +96,11 @@ export class TurnQueryService extends TurnServiceBase {
   }
 
   async listTurns(projectId: string, limit = 20): Promise<TurnListItem[]> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const turns = await this.deps.turnRepository.listByProject(resolvedProjectId, limit);
     return Promise.all(turns.map(async (turn, index) => {
       const detail = await this.deps.turnDetailRepository.getByTurnId(resolvedProjectId, turn.turnId);
-      const threadRecord = this.deps.threadService.getRecord(resolvedProjectId, turn.threadName);
+      const threadRecord = await this.deps.threadService.getRecord(resolvedProjectId, turn.threadName);
       return {
         projectId: resolvedProjectId,
         turnId: turn.turnId,

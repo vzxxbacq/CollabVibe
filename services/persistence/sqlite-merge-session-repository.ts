@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 
 import type {
   MergeSessionRepository,
@@ -31,8 +31,10 @@ interface MergeSessionRow {
 }
 
 export class SqliteMergeSessionRepository implements MergeSessionRepository {
-  constructor(private readonly db: DatabaseSync) {
-    this.db.exec(
+  constructor(private readonly db: AsyncDatabaseProxy) {}
+
+  async init(): Promise<void> {
+    await this.db.exec(
       `CREATE TABLE IF NOT EXISTS merge_sessions (
         project_id TEXT NOT NULL,
         chat_id TEXT NOT NULL,
@@ -59,21 +61,22 @@ export class SqliteMergeSessionRepository implements MergeSessionRepository {
         PRIMARY KEY(project_id, branch_name)
       );`
     );
-    this.db.exec(
+    await this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_merge_sessions_project_state
        ON merge_sessions(project_id, state);`
     );
   }
 
   async get(projectId: string, branchName: string): Promise<PersistedMergeSessionRecord | null> {
-    const row = this.db.prepare(
-      `SELECT * FROM merge_sessions WHERE project_id = ? AND branch_name = ?`
-    ).get(projectId, branchName) as MergeSessionRow | undefined;
+    const row = await this.db.get(
+      `SELECT * FROM merge_sessions WHERE project_id = ? AND branch_name = ?`,
+      projectId, branchName,
+    ) as MergeSessionRow | undefined;
     return row ? this.toRecord(row) : null;
   }
 
   async upsert(record: PersistedMergeSessionRecord): Promise<void> {
-    this.db.prepare(
+    await this.db.prepare(
       `INSERT OR REPLACE INTO merge_sessions (
         project_id, chat_id, branch_name, base_branch, main_cwd, worktree_cwd,
         pre_merge_sha, files_json, current_index, state, created_at, updated_at,
@@ -107,17 +110,19 @@ export class SqliteMergeSessionRepository implements MergeSessionRepository {
   }
 
   async delete(projectId: string, branchName: string): Promise<void> {
-    this.db.prepare(
-      `DELETE FROM merge_sessions WHERE project_id = ? AND branch_name = ?`
-    ).run(projectId, branchName);
+    await this.db.run(
+      `DELETE FROM merge_sessions WHERE project_id = ? AND branch_name = ?`,
+      projectId, branchName,
+    );
   }
 
   async listActive(projectIds: string[]): Promise<PersistedMergeSessionRecord[]> {
     if (projectIds.length === 0) return [];
     const placeholders = projectIds.map(() => "?").join(", ");
-    const rows = this.db.prepare(
-      `SELECT * FROM merge_sessions WHERE project_id IN (${placeholders})`
-    ).all(...projectIds) as unknown as MergeSessionRow[];
+    const rows = await this.db.all(
+      `SELECT * FROM merge_sessions WHERE project_id IN (${placeholders})`,
+      ...projectIds,
+    ) as MergeSessionRow[];
     return rows.map((row) => this.toRecord(row));
   }
 

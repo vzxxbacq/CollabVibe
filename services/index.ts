@@ -98,8 +98,10 @@ export type {
   HelpPanelOutput,
   TurnDetailOutput,
   AdminPanelOutput,
+  AsyncPlatformMutationOutput,
   OutputGateway,
 } from "./event/output-contracts";
+export type { AsyncPlatformMutationType } from "./event/output-priority";
 
 export type {
   IMContentChunk,

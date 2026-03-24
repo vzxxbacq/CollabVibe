@@ -170,6 +170,18 @@ Backend (Codex stdio / ACP SSE)
 | **U2** | `users` 表是角色唯一持久源 |
 | **U3** | admin 拥有全部权限 |
 
+### 3.5 Merge Resolver Thread 不变式
+
+Merge resolver 线程（`threadName` 匹配 `merge-{branchName}` 模式）运行在分支 worktree 上，worktree 中存在 `MERGE_HEAD`。以下约束保护 MERGE_HEAD 不被意外消耗：
+
+| 规则 | 说明 |
+|------|------|
+| **M1: 禁止 snapshot** | `createTurnStart` 中，merge resolver 线程跳过 `snapshot.create()`。`git stash create` + `git reset HEAD` 会消耗 `MERGE_HEAD`，导致单亲 commit，破坏 ancestry chain |
+| **M2: 禁止 commitAndDiff** | `finishTurn` 中，merge resolver 线程跳过 `commitAndDiff()`。普通 commit 会消耗 `MERGE_HEAD` |
+| **M3: MERGE_HEAD 检测兜底** | `finishTurn` 额外检测 worktree 是否存在 `MERGE_HEAD` 文件，即使 thread name 不匹配也跳过 commit |
+| **M4: Merge session 自管理** | Merge 的 commit / rollback 由 `MergeService.commitMergeReview()` / `abortMergeSession()` 管理，不走 turn 级 snapshot/commit |
+| **M5: 单一 commit 点** | `MERGE_HEAD` 只允许被 `commitMergeSession()` 的 `git commit --allow-empty` 消耗，必须产生双亲 merge commit |
+
 ---
 
 ## 4. 平台扩展规则

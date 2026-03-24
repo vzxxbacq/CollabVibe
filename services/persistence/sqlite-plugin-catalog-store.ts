@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 
 import type {
   PluginCatalogEntry,
@@ -20,8 +20,10 @@ interface PluginCatalogRow {
 }
 
 export class SqlitePluginCatalogStore implements PluginCatalogStore {
-  constructor(private readonly db: DatabaseSync) {
-    this.db.exec(
+  constructor(private readonly db: AsyncDatabaseProxy) {}
+
+  async init(): Promise<void> {
+    await this.db.exec(
       `CREATE TABLE IF NOT EXISTS plugin_catalog (
         plugin_name TEXT PRIMARY KEY,
         source_type TEXT NOT NULL,
@@ -37,8 +39,8 @@ export class SqlitePluginCatalogStore implements PluginCatalogStore {
     );
   }
 
-  upsert(entry: PluginCatalogEntry): void {
-    this.db.prepare(
+  async upsert(entry: PluginCatalogEntry): Promise<void> {
+    await this.db.prepare(
       `INSERT INTO plugin_catalog (
         plugin_name, source_type, skill_subpath, display_name, description,
         content_path, manifest_hash, download_status, downloaded_at, downloaded_by
@@ -67,28 +69,29 @@ export class SqlitePluginCatalogStore implements PluginCatalogStore {
     );
   }
 
-  get(pluginName: string): PluginCatalogEntry | null {
-    const row = this.db.prepare(
+  async get(pluginName: string): Promise<PluginCatalogEntry | null> {
+    const row = await this.db.get(
       `SELECT plugin_name, source_type, skill_subpath, display_name, description,
               content_path, manifest_hash, download_status, downloaded_at, downloaded_by
-       FROM plugin_catalog WHERE plugin_name = ?`
-    ).get(pluginName) as PluginCatalogRow | undefined;
+       FROM plugin_catalog WHERE plugin_name = ?`,
+      pluginName,
+    ) as PluginCatalogRow | undefined;
     return row ? mapCatalogRow(row) : null;
   }
 
-  list(): PluginCatalogEntry[] {
-    const rows = this.db.prepare(
+  async list(): Promise<PluginCatalogEntry[]> {
+    const rows = await this.db.all(
       `SELECT plugin_name, source_type, skill_subpath, display_name, description,
               content_path, manifest_hash, download_status, downloaded_at, downloaded_by
        FROM plugin_catalog
-       ORDER BY downloaded_at DESC`
-    ).all() as unknown as PluginCatalogRow[];
+       ORDER BY downloaded_at DESC`,
+    ) as PluginCatalogRow[];
     return rows.map(mapCatalogRow);
   }
 
-  remove(pluginName: string): boolean {
-    const result = this.db.prepare("DELETE FROM plugin_catalog WHERE plugin_name = ?").run(pluginName);
-    return (result as { changes: number }).changes > 0;
+  async remove(pluginName: string): Promise<boolean> {
+    const result = await this.db.run("DELETE FROM plugin_catalog WHERE plugin_name = ?", pluginName);
+    return result.changes > 0;
   }
 }
 

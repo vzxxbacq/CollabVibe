@@ -88,7 +88,7 @@ export async function buildSlackHelpPanelPayload(
   panel: SlackHelpPanel,
   messageTs?: string
 ): Promise<SlackHelpPanelPayload | null> {
-  const project = resolveProjectByChatId(deps.api, chatId);
+  const project = await resolveProjectByChatId(deps.api, chatId);
   if (!project) {
     return null;
   }
@@ -137,7 +137,7 @@ async function buildThreadPanel(
   userId: string,
   currentThread: string
 ) {
-  const project = resolveProjectByChatId(deps.api, chatId);
+  const project = await resolveProjectByChatId(deps.api, chatId);
   const threads = await deps.api.listThreads({ projectId: project!.id, actorId: userId });
   const activeBinding = await deps.api.getUserActiveThread({ projectId: project!.id, userId });
   const lines = threads.length > 0
@@ -166,7 +166,7 @@ async function buildHistoryPanel(
   userId: string,
   currentThread: string
 ) {
-  const project = resolveProjectByChatId(deps.api, chatId);
+  const project = await resolveProjectByChatId(deps.api, chatId);
   if (!project) {
     return [
       header("Snapshot History"),
@@ -230,7 +230,7 @@ async function buildBackendsPanel(deps: SlackHandlerDeps) {
 }
 
 async function buildTurnsPanel(deps: SlackHandlerDeps, chatId: string) {
-  const project = resolveProjectByChatId(deps.api, chatId);
+  const project = await resolveProjectByChatId(deps.api, chatId);
   const turns = project ? await deps.api.listTurns({ projectId: project.id, limit: 10 }) : [];
   const lines = turns.length > 0
     ? turns.map((turn) =>
@@ -249,7 +249,7 @@ async function buildTurnsPanel(deps: SlackHandlerDeps, chatId: string) {
 
 export async function sendProjectList(deps: SlackHandlerDeps, chatId: string): Promise<void> {
   const dispatcher = new SlackOutputGateway(deps);
-  const projects = listProjects(deps);
+  const projects = await listProjects(deps);
   if (projects.length === 0) {
     await dispatcher.dispatch(chatId, textNotification("No projects are bound yet."));
     return;
@@ -260,7 +260,7 @@ export async function sendProjectList(deps: SlackHandlerDeps, chatId: string): P
 
 export async function sendSnapshotList(deps: SlackHandlerDeps, chatId: string, userId: string): Promise<void> {
   const dispatcher = new SlackOutputGateway(deps);
-  const project = resolveProjectByChatId(deps.api, chatId);
+  const project = await resolveProjectByChatId(deps.api, chatId);
   if (!project) {
     await dispatcher.dispatch(chatId, {
       ...textNotification("This Slack channel is not bound to a project yet.")
@@ -297,7 +297,7 @@ export async function sendSnapshotList(deps: SlackHandlerDeps, chatId: string, u
 
 export async function sendModelList(deps: SlackHandlerDeps, chatId: string, userId: string): Promise<void> {
   const dispatcher = new SlackOutputGateway(deps);
-  const project = resolveProjectByChatId(deps.api, chatId);
+  const project = await resolveProjectByChatId(deps.api, chatId);
   if (!project) {
     throw new Error("This Slack channel is not bound to a project yet.");
   }
@@ -317,7 +317,7 @@ export async function sendModelList(deps: SlackHandlerDeps, chatId: string, user
 
 export async function sendThreadNewForm(deps: SlackHandlerDeps, chatId: string, userId?: string): Promise<void> {
   const dispatcher = new SlackOutputGateway(deps);
-  const project = resolveProjectByChatId(deps.api, chatId);
+  const project = await resolveProjectByChatId(deps.api, chatId);
   if (!project) {
     throw new Error("This Slack channel is not bound to a project yet.");
   }

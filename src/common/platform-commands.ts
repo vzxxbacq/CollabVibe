@@ -50,9 +50,9 @@ export async function createProject(
   deps: CommandDeps, chatId: string, userId: string, args: { name?: string; cwd?: string; workBranch?: string }
 ): Promise<ProjectCreateResult> {
   const s = getPlatformCommandStrings(deps.config.locale);
-  const existingProjectId = deps.api.resolveProjectId(chatId);
+  const existingProjectId = await deps.api.resolveProjectId(chatId);
   if (existingProjectId) {
-    const existingProject = deps.api.getProjectRecord(existingProjectId);
+    const existingProject = await deps.api.getProjectRecord(existingProjectId);
     log.warn({ chatId, userId, projectId: existingProjectId }, "createProject rejected: chat already bound");
     return { success: false, message: s.projectAlreadyBound(existingProject?.name ?? existingProjectId) };
   }
@@ -73,8 +73,8 @@ export async function createProject(
 
 // ── PROJECT_LIST ────────────────────────────────────────────────────────────
 
-export function listProjects(deps: CommandDeps): ProjectRecord[] {
-  return deps.api.listProjects();
+export async function listProjects(deps: CommandDeps): Promise<ProjectRecord[]> {
+  return await deps.api.listProjects();
 }
 
 // ── SKILL_LIST ──────────────────────────────────────────────────────────────
@@ -160,14 +160,14 @@ export interface AdminCommandResult {
   text: string;
 }
 
-export function handleAdminIntent(
+export async function handleAdminIntent(
   deps: CommandDeps,
   intent: ParsedIntent
-): AdminCommandResult {
+): Promise<AdminCommandResult> {
   const s = getPlatformCommandStrings(deps.config.locale);
 
   if (intent.intent === "ADMIN_LIST") {
-    const admins = deps.api.listAdmins();
+    const admins = await deps.api.listAdmins();
     if (admins.length === 0) {
       return { text: s.adminListEmpty };
     }
@@ -184,13 +184,13 @@ export function handleAdminIntent(
   }
 
   if (intent.intent === "ADMIN_ADD") {
-    deps.api.addAdmin(target);
+    await deps.api.addAdmin(target);
     log.info({ target }, "admin added");
     return { text: s.adminAdded(target.slice(-8)) };
   }
 
   if (intent.intent === "ADMIN_REMOVE") {
-    const result = deps.api.removeAdmin(target);
+    const result = await deps.api.removeAdmin(target);
     if (!result.ok) {
       log.warn({ target, reason: result.reason }, "admin remove rejected");
       return { text: s.adminRemoveRejected(result.reason ?? "") };
@@ -202,11 +202,11 @@ export function handleAdminIntent(
   return { text: s.adminUnknownSubcommand };
 }
 
-export function handleAdminIntentOutput(
+export async function handleAdminIntentOutput(
   deps: CommandDeps,
   intent: ParsedIntent
-): PlatformOutput {
-  return toNotificationOutput(handleAdminIntent(deps, intent).text);
+): Promise<PlatformOutput> {
+  return toNotificationOutput((await handleAdminIntent(deps, intent)).text);
 }
 
 // ── USER_LIST / USER_ADD / USER_ROLE / USER_REMOVE ──────────────────────
@@ -215,23 +215,23 @@ export interface UserCommandResult {
   text: string;
 }
 
-export function handleUserIntent(
+export async function handleUserIntent(
   deps: CommandDeps,
   projectId: string,
   _userId: string,
   intent: ParsedIntent
-): UserCommandResult {
+): Promise<UserCommandResult> {
   const s = getPlatformCommandStrings(deps.config.locale);
-  const project = deps.api.getProjectRecord(projectId);
+  const project = await deps.api.getProjectRecord(projectId);
   if (!project) {
     return { text: s.userProjectMissing };
   }
 
-  const members = deps.api.listProjectMembers(projectId);
+  const members = await deps.api.listProjectMembers(projectId);
 
   if (intent.intent === "USER_LIST") {
     const lines = members.map(m => `• ${m.userId.slice(-8)} — ${m.role}`);
-    const admins = deps.api.listAdmins();
+    const admins = await deps.api.listAdmins();
     const adminLines = admins.map(a => {
       const tag = a.source === "env" ? "🔒" : "🌐";
       return `• ${a.userId.slice(-8)} — 🛡️ admin ${tag}`;
@@ -256,11 +256,11 @@ export function handleUserIntent(
     if (!["maintainer", "developer", "auditor"].includes(newRole)) {
       return { text: s.userInvalidRole };
     }
-    if (members.some(m => m.userId === target)) {
+    if (members.some(async m => m.userId === target)) {
       log.warn({ projectId, target }, "user add rejected: already exists");
       return { text: s.userAlreadyExists };
     }
-    deps.api.addProjectMember({ projectId, userId: target, role: newRole as "maintainer" | "developer" | "auditor", actorId: _userId });
+    await deps.api.addProjectMember({ projectId, userId: target, role: newRole as "maintainer" | "developer" | "auditor", actorId: _userId });
     log.info({ projectId, target, role: newRole }, "user added to project");
     return { text: s.userAdded(target.slice(-8), newRole) };
   }
@@ -274,7 +274,7 @@ export function handleUserIntent(
     if (!existing) {
       return { text: s.userNotMember(target.slice(-8)) };
     }
-    deps.api.updateProjectMemberRole({ projectId, userId: target, role: newRole as "maintainer" | "developer" | "auditor", actorId: _userId });
+    await deps.api.updateProjectMemberRole({ projectId, userId: target, role: newRole as "maintainer" | "developer" | "auditor", actorId: _userId });
     log.info({ projectId, target, role: newRole }, "user role updated");
     return { text: s.userRoleUpdated(target.slice(-8), newRole) };
   }
@@ -284,7 +284,7 @@ export function handleUserIntent(
     if (!existing) {
       return { text: s.userNotMember(target.slice(-8)) };
     }
-    deps.api.removeProjectMember({ projectId, userId: target, actorId: _userId });
+    await deps.api.removeProjectMember({ projectId, userId: target, actorId: _userId });
     log.info({ projectId, target }, "user removed from project");
     return { text: s.userRemoved(target.slice(-8)) };
   }
@@ -292,11 +292,11 @@ export function handleUserIntent(
   return { text: s.userUnknownSubcommand };
 }
 
-export function handleUserIntentOutput(
+export async function handleUserIntentOutput(
   deps: CommandDeps,
   projectId: string,
   userId: string,
   intent: ParsedIntent
-): PlatformOutput {
-  return toNotificationOutput(handleUserIntent(deps, projectId, userId, intent).text);
+): Promise<PlatformOutput> {
+  return toNotificationOutput((await handleUserIntent(deps, projectId, userId, intent)).text);
 }

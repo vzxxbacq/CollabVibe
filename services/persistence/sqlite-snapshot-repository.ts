@@ -1,4 +1,4 @@
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 
 import type { SnapshotRepository } from "../snapshot/contracts";
 import type { TurnSnapshotRecord } from "../snapshot/types";
@@ -19,29 +19,14 @@ interface SqliteSnapshotRow {
 }
 
 export class SqliteSnapshotRepository implements SnapshotRepository {
-    private readonly db: DatabaseSync;
+    private readonly db: AsyncDatabaseProxy;
 
-    constructor(db: DatabaseSync) {
+    constructor(db: AsyncDatabaseProxy) {
         this.db = db;
     }
 
-    private getOne(sql: string, ...params: SQLInputValue[]): SqliteSnapshotRow | undefined {
-        return this.db.prepare(sql).get(...params) as SqliteSnapshotRow | undefined;
-    }
-
-    private getMany(sql: string, ...params: SQLInputValue[]): SqliteSnapshotRow[] {
-        return this.db.prepare(sql).all(...params) as unknown as SqliteSnapshotRow[];
-    }
-
-    private requireProjectId(projectId?: string): string {
-        if (!projectId) {
-            throw new Error("TurnSnapshotRecord.projectId is required");
-        }
-        return projectId;
-    }
-
     async save(record: TurnSnapshotRecord): Promise<void> {
-        this.db
+        await this.db
             .prepare(
                 `INSERT OR IGNORE INTO turn_snapshots
          (project_id, chat_id, thread_id, turn_id, turn_index, user_id, cwd, git_ref, agent_summary, files_changed, created_at)
@@ -63,7 +48,7 @@ export class SqliteSnapshotRepository implements SnapshotRepository {
     }
 
     async updateSummary(projectId: string, threadId: string, turnId: string, summary: string, files: string[]): Promise<void> {
-        this.db
+        await this.db
             .prepare(
                 `UPDATE turn_snapshots
          SET agent_summary = ?, files_changed = ?
@@ -73,31 +58,37 @@ export class SqliteSnapshotRepository implements SnapshotRepository {
     }
 
     async listByThread(projectId: string, threadId: string): Promise<TurnSnapshotRecord[]> {
-        const rows = this.getMany(
+        const rows = await this.db.all(
             `SELECT * FROM turn_snapshots
              WHERE project_id = ? AND thread_id = ?
              ORDER BY turn_index ASC`,
             projectId, threadId
-        );
+        ) as SqliteSnapshotRow[];
         return rows.map((r) => this.toRecord(r));
     }
 
     async getByTurnId(projectId: string, turnId: string): Promise<TurnSnapshotRecord | null> {
-        const row = this.getOne(
+        const row = await this.db.get(
             `SELECT * FROM turn_snapshots WHERE project_id = ? AND turn_id = ?`,
             projectId, turnId
-        );
+        ) as SqliteSnapshotRow | undefined;
         return row ? this.toRecord(row) : null;
     }
 
     async getLatestIndex(projectId: string, threadId: string): Promise<number> {
-        const row = this.db
-            .prepare(
-                `SELECT MAX(turn_index) as max_index FROM turn_snapshots
-                 WHERE project_id = ? AND thread_id = ?`
-            )
-            .get(projectId, threadId) as { max_index: number | null } | undefined;
+        const row = await this.db.get(
+            `SELECT MAX(turn_index) as max_index FROM turn_snapshots
+             WHERE project_id = ? AND thread_id = ?`,
+            projectId, threadId
+        ) as { max_index: number | null } | undefined;
         return row?.max_index ?? -1;
+    }
+
+    private requireProjectId(projectId?: string): string {
+        if (!projectId) {
+            throw new Error("TurnSnapshotRecord.projectId is required");
+        }
+        return projectId;
     }
 
     private toRecord(row: SqliteSnapshotRow): TurnSnapshotRecord {

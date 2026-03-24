@@ -25,6 +25,8 @@ import type {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+const FEISHU_FORM_INPUT_MAX_LENGTH = 1000;
+
 /**
  * 飞书 element_id 规范: 仅允许 [a-zA-Z0-9_]，必须字母开头，最长 20 字符。
  * 此函数仅做字符清洗；调用方应确保传入的 raw 值自身足够短（≤20）。
@@ -3906,13 +3908,19 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
 
   // ── Batch retry form (agent_resolved files) ──
   if (queues.agentResolvedPaths.length > 0 && sessionState === "reviewing") {
+    const unchangedPaths = queues.agentResolvedPaths;
     const retryOptions = queues.agentResolvedPaths.map(p => ({
       text: { tag: "plain_text" as const, content: p },
       value: p
     }));
+    elements.push({ tag: "markdown", content: s.mergeReviewContinueWithAgentTitle(queues.agentResolvedPaths.length) });
+    elements.push(greyText(s.mergeReviewContinueWithAgentHint));
+    elements.push(greyText(s.mergeReviewContinueWithAgentSteps));
+    elements.push(greyText(s.mergeReviewBatchRetrySelectionSummary(0, unchangedPaths.length)));
+    elements.push({ tag: "markdown", content: s.mergeReviewBatchRetryUnchanged(unchangedPaths.length, formatPathList(unchangedPaths)) });
     elements.push({
       tag: "collapsible_panel",
-      expanded: false,
+      expanded: true,
       header: {
         title: { tag: "markdown", content: `${s.mergeBatchRetrySelectLabel} (${queues.agentResolvedPaths.length})` },
         icon: { tag: "standard_icon", token: "robot_outlined", color: "orange", size: "16px 16px" },
@@ -3921,33 +3929,43 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
       border: { color: "grey", corner_radius: "5px" },
       vertical_spacing: "4px",
       padding: "8px 8px 8px 8px",
-      elements: [{
-        tag: "form",
-        name: "merge_batch_retry_form",
-        elements: [
-          {
-            tag: "multi_select_static",
-            placeholder: { tag: "plain_text", content: s.mergeBatchRetrySelectLabel },
-            options: retryOptions,
-            name: "batch_retry_files"
-          },
-          {
-            tag: "multi_line_text",
-            placeholder: { tag: "plain_text", content: s.mergeBatchRetryFeedbackPlaceholder },
-            max_length: 2000,
-            name: "batch_retry_feedback"
-          },
-          {
-            tag: "button",
-            text: { tag: "plain_text", content: s.mergeBatchRetrySubmit },
-            type: "primary",
-            icon: { tag: "standard_icon", token: "robot_outlined" },
-            action_type: "form_submit",
-            name: "merge_batch_retry",
-            behaviors: [{ type: "callback", value: { action: "merge_batch_retry", branchName } }]
-          }
-        ]
-      }]
+      elements: [
+        greyText(s.mergeReviewBatchRetryOnlySelectedHint),
+        greyText(s.mergeReviewBatchRetrySubmitHint)
+      ]
+    });
+    elements.push({
+      tag: "form",
+      name: "merge_batch_retry_form",
+      element_id: "merge_batch_retry_form",
+      elements: [
+        {
+          tag: "multi_select_static",
+          placeholder: { tag: "plain_text", content: s.mergeBatchRetrySelectLabel },
+          options: retryOptions,
+          name: "batch_retry_files"
+        },
+        { tag: "markdown", content: s.mergeBatchRetryFeedbackLabel },
+        {
+          tag: "input",
+          width: "fill",
+          placeholder: { tag: "plain_text", content: s.mergeBatchRetryFeedbackPlaceholder },
+          default_value: "",
+          input_type: "multiline_text",
+          rows: 4,
+          max_length: FEISHU_FORM_INPUT_MAX_LENGTH,
+          name: "batch_retry_feedback"
+        },
+        {
+          tag: "button",
+          text: { tag: "plain_text", content: s.mergeBatchRetrySubmit },
+          type: "primary",
+          icon: { tag: "standard_icon", token: "robot_outlined" },
+          form_action_type: "submit",
+          name: "merge_batch_retry",
+          behaviors: [{ type: "callback", value: { action: "merge_batch_retry", branchName } }]
+        }
+      ]
     });
   }
 
@@ -3970,6 +3988,24 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
         }]
       }]
     });
+    sessionColumns.push({
+      tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+      elements: [{
+        tag: "interactive_container",
+        width: "fill", height: "auto",
+        has_border: true, border_color: "turquoise", corner_radius: "8px",
+        padding: "8px 12px 8px 12px",
+        confirm: {
+          title: { tag: "plain_text", content: s.mergeReviewAcceptAllConfirmTitle },
+          text: { tag: "plain_text", content: s.mergeReviewAcceptAllConfirmText }
+        },
+        behaviors: [{ type: "callback", value: { action: "merge_accept_all", branchName } }],
+        elements: [{
+          tag: "markdown", content: s.mergeReviewAcceptAll(overview.pending),
+          icon: { tag: "standard_icon", token: "check_outlined", color: "turquoise" }
+        }]
+      }]
+    });
   } else if (overview.pending === 0) {
     elements.push(greyText(s.mergeReviewNoPendingFiles));
   }
@@ -3989,24 +4025,6 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
       }]
     });
   }
-  sessionColumns.push({
-    tag: "column", width: "weighted", weight: 1, vertical_align: "center",
-    elements: [{
-      tag: "interactive_container",
-      width: "fill", height: "auto",
-      has_border: true, border_color: "grey", corner_radius: "8px",
-      padding: "8px 12px 8px 12px",
-      confirm: {
-        title: { tag: "plain_text", content: s.mergeReviewCancelConfirmTitle },
-        text: { tag: "plain_text", content: s.mergeReviewCancelConfirmText }
-      },
-      behaviors: [{ type: "callback", value: { action: "merge_cancel", branchName, baseBranch } }],
-      elements: [{
-        tag: "markdown", content: s.mergeSummaryCancel,
-        icon: { tag: "standard_icon", token: "close_outlined", color: "red" }
-      }]
-    }]
-  });
   elements.push({ tag: "column_set", flex_mode: "bisect", columns: sessionColumns });
 
   // Progress bar
@@ -4109,22 +4127,24 @@ export function buildMergeFileDetailCard(review: IMFileMergeReview, locale: AppL
       const sections = parseConflictDiffSections(file.diff);
       if (sections.kind) elements.push(greyText(`冲突类型: ${sections.kind}`));
       if (sections.merged) {
-        const mergedPreview = sections.merged.length > 3000 ? sections.merged.slice(0, 3000) + s.mergeDiffTruncated : sections.merged;
+        const mergedPreview = sections.merged.length > 8000 ? sections.merged.slice(0, 8000) + s.mergeDiffTruncated : sections.merged;
         elements.push(buildCodePanel(s.mergeReviewViewDiff, mergedPreview, "diff", totalFiles <= 3));
       }
       if (sections.ours) {
-        const oursPreview = sections.ours.length > 3000 ? sections.ours.slice(0, 3000) + s.mergeDiffTruncated : sections.ours;
+        const oursPreview = sections.ours.length > 8000 ? sections.ours.slice(0, 8000) + s.mergeDiffTruncated : sections.ours;
         elements.push(buildCodePanel("分支版本 (ours)", oursPreview, "python"));
       }
       if (sections.theirs) {
-        const theirsPreview = sections.theirs.length > 3000 ? sections.theirs.slice(0, 3000) + s.mergeDiffTruncated : sections.theirs;
+        const theirsPreview = sections.theirs.length > 8000 ? sections.theirs.slice(0, 8000) + s.mergeDiffTruncated : sections.theirs;
         elements.push(buildCodePanel("基线版本 (theirs)", theirsPreview, "python"));
       }
     } else {
-      const diffPreview = file.diff.length > 3000 ? file.diff.slice(0, 3000) + s.mergeDiffTruncated : file.diff;
+      const diffPreview = file.diff.length > 8000 ? file.diff.slice(0, 8000) + s.mergeDiffTruncated : file.diff;
       elements.push(buildCodePanel(s.mergeReviewViewDiff, diffPreview, "diff", totalFiles <= 3));
     }
     elements.push(greyText(s.mergeDiffBaseline(baseBranch)));
+  } else {
+    elements.push(greyText(s.mergeDiffUnavailable));
   }
 
   elements.push({ tag: "hr" });
@@ -4148,32 +4168,8 @@ export function buildMergeFileDetailCard(review: IMFileMergeReview, locale: AppL
   if (buttonCols.length > 0) elements.push({ tag: "column_set", flex_mode: "bisect", columns: buttonCols });
 
   if (file.status === "agent_resolved") {
-    elements.push(greyText(s.mergeReviewRejectHint));
-    const formId = sanitizeElementId(`mrf_${fileIndex}`);
-    elements.push({
-      tag: "form",
-      name: formId,
-      element_id: formId,
-      elements: [
-        {
-          tag: "input",
-          label: { tag: "plain_text", content: s.mergeReviewFeedbackLabel },
-          placeholder: { tag: "plain_text", content: s.mergeReviewFeedbackPlaceholder },
-          max_length: 500,
-          name: "merge_feedback"
-        },
-        {
-          tag: "button",
-          text: { tag: "plain_text", content: s.mergeReviewRejectAction },
-          type: "danger",
-          size: "small",
-          icon: { tag: "standard_icon", token: "close_outlined" },
-          form_action_type: "submit",
-          name: "merge_reject_submit",
-          behaviors: [{ type: "callback", value: { action: "merge_reject", branchName, filePath: file.path } }]
-        }
-      ]
-    });
+    elements.push(greyText(s.mergeReviewContinueWithAgentHint));
+    elements.push(greyText(s.mergeReviewBackToBatchSelectionHint));
   }
 
   elements.push({ tag: "hr" });
@@ -4243,7 +4239,7 @@ export function buildMergeAgentAssistCard(
               tag: "input",
               label: { tag: "plain_text", content: s.mergeReviewAgentAssistPromptLabel },
               placeholder: { tag: "plain_text", content: s.mergeReviewAgentAssistPromptPlaceholder },
-              max_length: 1000,
+              max_length: FEISHU_FORM_INPUT_MAX_LENGTH,
               default_value: "",
               name: "merge_agent_prompt"
             },

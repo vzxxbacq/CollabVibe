@@ -1,18 +1,55 @@
 import type { PlatformOutput, OutputGateway } from "../common/platform-output";
 import { FeishuRenderer } from "./channel/index";
 import type { FeishuHandlerDeps } from "./types";
+import { CardDispatchCoordinator } from "../common/card-dispatch-coordinator";
 
 export class FeishuOutputGateway implements OutputGateway {
   private readonly renderer = new FeishuRenderer();
+  private readonly coordinator = new CardDispatchCoordinator();
 
   constructor(private readonly deps: FeishuHandlerDeps) {}
 
-  private resolveChatId(targetId: string): string {
-    return this.deps.api.getProjectRecord(targetId)?.chatId || targetId;
+  private async resolveChatId(targetId: string): Promise<string> {
+    return (await this.deps.api.getProjectRecord(targetId))?.chatId || targetId;
   }
 
   async dispatch(targetId: string, output: PlatformOutput): Promise<void> {
-    const chatId = this.resolveChatId(targetId);
+    const chatId = await this.resolveChatId(targetId);
+    this.coordinator.enqueue(this.cardKey(chatId, output), async () => {
+      await this.dispatchNetwork(chatId, output);
+    });
+  }
+
+  async flushAll(): Promise<void> {
+    await this.coordinator.flushAll();
+  }
+
+  private cardKey(chatId: string, output: PlatformOutput): string {
+    switch (output.kind) {
+      case "content":
+      case "reasoning":
+      case "plan":
+      case "plan_update":
+      case "tool_output":
+      case "progress":
+      case "turn_summary":
+        return `feishu:turn:${chatId}:${output.data.turnId}`;
+      case "notification":
+        return output.data.turnId ? `feishu:turn:${chatId}:${output.data.turnId}` : `feishu:notify:${chatId}:${Date.now()}:${Math.random()}`;
+      case "approval_request":
+        return `feishu:approval:${chatId}:${output.data.approvalId}`;
+      case "user_input_request":
+        return `feishu:user-input:${chatId}:${output.data.turnId}:${output.data.callId}`;
+      case "platform_mutation":
+        return output.data.messageId
+          ? `feishu:message:${output.data.messageId}`
+          : `feishu:chat:${output.data.chatId || chatId}:raw-card`;
+      default:
+        return `feishu:${output.kind}:${chatId}:${Date.now()}:${Math.random()}`;
+    }
+  }
+
+  private async dispatchNetwork(chatId: string, output: PlatformOutput): Promise<void> {
     switch (output.kind) {
       case "content":
         await this.deps.platformOutput.appendContent(chatId, output.data.turnId, output.data.delta);
@@ -111,6 +148,18 @@ export class FeishuOutputGateway implements OutputGateway {
           await this.deps.platformOutput.sendRawCard(chatId, output.panel as Record<string, unknown>);
         }
         return;
+      case "platform_mutation": {
+        const payload = output.data.payload;
+        if (!payload || typeof payload !== "object") {
+          return;
+        }
+        if (output.data.messageId) {
+          await this.deps.feishuAdapter.updateInteractiveCard(output.data.messageId, payload as Record<string, unknown>);
+          return;
+        }
+        await this.deps.platformOutput.sendRawCard(output.data.chatId || chatId, payload as Record<string, unknown>);
+        return;
+      }
     }
   }
 }

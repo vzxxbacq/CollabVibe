@@ -36,6 +36,7 @@ export interface RuntimeServices {
 
 export async function createServer(config = loadConfig()): Promise<RuntimeServices> {
   if (!process.env.VITEST) {
+    const backendRpcDebugEnabled = String(process.env.LOG_BACKEND_RPC_DEBUG ?? "").trim().toLowerCase() === "true";
     const moduleLevels = String(process.env.LOG_MODULE_LEVELS ?? "")
       .split(",")
       .map((part) => part.trim())
@@ -64,21 +65,27 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
 
     const logDir = process.env.LOG_DIR ?? path.join(config.dataDir, "logs");
     const mainFileSink = createFileLogSink({ dir: logDir });
-    const stdioFileSink = createFileLogSink({
-      dir: logDir,
-      baseName: process.env.LOG_STDIO_BASE_NAME ?? "agent-stdio"
-    });
-    const backendRpcFileSink = createFileLogSink({
-      dir: logDir,
-      baseName: process.env.LOG_BACKEND_RPC_BASE_NAME ?? "backend-rpc"
-    });
-
-    setLogSink(multiSink(
+    const sinks = [
       createFilteredSink(consoleSink, (entry) => !isNoisyDebugEntry(entry) && !isBackendRpcEntry(entry)),
-      createFilteredSink(mainFileSink, (entry) => !isNoisyDebugEntry(entry)),
-      createFilteredSink(stdioFileSink, isNoisyDebugEntry),
-      createFilteredSink(backendRpcFileSink, isBackendRpcEntry)
-    ));
+      createFilteredSink(mainFileSink, (entry) => !isNoisyDebugEntry(entry) && !isBackendRpcEntry(entry)),
+    ];
+
+    if (backendRpcDebugEnabled) {
+      const stdioFileSink = createFileLogSink({
+        dir: logDir,
+        baseName: process.env.LOG_STDIO_BASE_NAME ?? "agent-stdio"
+      });
+      const backendRpcFileSink = createFileLogSink({
+        dir: logDir,
+        baseName: process.env.LOG_BACKEND_RPC_BASE_NAME ?? "backend-rpc"
+      });
+      sinks.push(
+        createFilteredSink(stdioFileSink, isNoisyDebugEntry),
+        createFilteredSink(backendRpcFileSink, isBackendRpcEntry)
+      );
+    }
+
+    setLogSink(multiSink(...sinks));
   }
   const log = createLogger("server");
 
@@ -95,7 +102,7 @@ export async function createServer(config = loadConfig()): Promise<RuntimeServic
     layer,
     api,
     turnCardReader: {
-      resolveProjectId: (chatId) => api.resolveProjectId(chatId),
+      resolveProjectId: async (chatId) => (await api.resolveProjectId(chatId)) ?? chatId,
       getTurnCardData: (input) => api.getTurnCardData(input),
     },
   });

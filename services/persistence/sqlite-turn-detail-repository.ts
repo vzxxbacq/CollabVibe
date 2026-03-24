@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 
 import type { TurnDetailRecord } from "../turn/types";
 import type { TurnDetailRepository } from "../turn/turn-detail-repository";
@@ -21,10 +21,10 @@ interface TurnDetailRow {
 }
 
 export class SqliteTurnDetailRepository implements TurnDetailRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: AsyncDatabaseProxy) {}
 
   async create(record: TurnDetailRecord): Promise<void> {
-    this.db.prepare(
+    await this.db.prepare(
       `INSERT OR REPLACE INTO turn_details (
         project_id, turn_id, prompt_summary, backend_name, model_name, turn_mode,
         message, reasoning, tools_json, tool_outputs_json, plan_state_json, agent_note,
@@ -53,9 +53,10 @@ export class SqliteTurnDetailRepository implements TurnDetailRepository {
   }
 
   async getByTurnId(projectId: string, turnId: string): Promise<TurnDetailRecord | null> {
-    const row = this.db.prepare(
-      `SELECT * FROM turn_details WHERE project_id = ? AND turn_id = ?`
-    ).get(projectId, turnId) as TurnDetailRow | undefined;
+    const row = await this.db.get(
+      `SELECT * FROM turn_details WHERE project_id = ? AND turn_id = ?`,
+      projectId, turnId,
+    ) as TurnDetailRow | undefined;
     if (!row) return null;
     return {
       projectId: row.project_id,

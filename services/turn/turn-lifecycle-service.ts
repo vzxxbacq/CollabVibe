@@ -1,4 +1,6 @@
 import { createLogger } from "../../packages/logger/src/index";
+import { access, readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import type { AgentApi, RuntimeConfigProvider, AgentTurnInputItem } from "../../packages/agent-core/src/index";
 import type { ThreadRegistry } from "../thread/contracts";
@@ -18,6 +20,7 @@ import type { ProjectResolver } from "../project/project-resolver";
 import { ThreadRuntimeService } from "../thread/thread-runtime-service";
 import { SessionStateService } from "../session/session-state-service";
 import { buildTurnCallId } from "./call-id";
+import type { ApprovalDecisionStore } from "../approval/contracts";
 
 const log = createLogger("turn-lifecycle");
 
@@ -33,6 +36,7 @@ export interface TurnLifecycleDeps {
   projectResolver: ProjectResolver;
   threadRegistry: ThreadRegistry;
   gitOps: GitOps;
+  approvalStore: ApprovalDecisionStore;
 }
 
 interface TurnStartPersistenceInput {
@@ -69,6 +73,7 @@ export class TurnLifecycleService {
   private readonly projectResolver: ProjectResolver;
   private readonly threadRegistry: ThreadRegistry;
   private readonly gitOps: GitOps;
+  private readonly approvalStore: ApprovalDecisionStore;
   private eventPipeline?: EventPipeline;
   private readonly callStartInflight = new Map<string, Promise<{ threadId: string; turnId: string; status: "started" }>>();
 
@@ -83,6 +88,7 @@ export class TurnLifecycleService {
     this.projectResolver = deps.projectResolver;
     this.threadRegistry = deps.threadRegistry;
     this.gitOps = deps.gitOps;
+    this.approvalStore = deps.approvalStore;
   }
 
   /** Late injection to break circular dep: pipeline needs orchestrator callbacks. */
@@ -96,7 +102,7 @@ export class TurnLifecycleService {
     projectId: string, userId: string, text: string, traceId?: string,
     options?: { mode?: "plan"; platform?: string; messageId?: string }
   ): Promise<{ threadId: string; turnId: string; status: "started" | "duplicate" }> {
-    const projectIdResolved = this.requireProjectId(projectId);
+    const projectIdResolved = await this.requireProjectId(projectId);
     const binding = await this.threadService.getUserBinding(projectIdResolved, userId);
     if (!binding) {
       throw new OrchestratorError(ErrorCode.NO_ACTIVE_THREAD, "请先 /thread new 或 /thread join");
@@ -168,7 +174,8 @@ export class TurnLifecycleService {
     const key = projectThreadKey(projectIdResolved, threadName);
     try {
       this.sessionStateService.ensureCanStartTurn(key);
-      await this.pluginService?.ensureProjectThreadSkills?.(projectIdResolved, threadName);
+      const threadRecord = await this.threadService.getRecord(projectIdResolved, threadName);
+      await this.pluginService?.ensureProjectThreadSkills?.(projectIdResolved, threadName, threadRecord?.worktreePath);
 
       const api = await this.resolveAgentApi(projectIdResolved, threadName);
 
@@ -226,7 +233,7 @@ export class TurnLifecycleService {
             if (resumeMsg.includes("no rollout found for thread id")) {
               const runtimeState = await this.threadService.getRuntimeState(projectIdResolved, threadName);
               if (!runtimeState?.lastCompletedTurnId) {
-                const record = this.threadService.getRecord(projectIdResolved, threadName);
+                const record = await this.threadService.getRecord(projectIdResolved, threadName);
                 if (record?.backend.backendId === "codex") {
                   const recreated = await this.reinitializeEmptyCodexThread({
                     projectId: projectIdResolved,
@@ -286,6 +293,9 @@ export class TurnLifecycleService {
           throw error;
         }
       }
+      if (process.env.VITEST) {
+        await this.eventPipeline?.waitForIdle();
+      }
       return { threadId: activeThreadId, turnId: turn.turn.id, status: "started" };
     } catch (error) {
       this.sessionStateService.releaseFailedStartTurn(key);
@@ -297,7 +307,7 @@ export class TurnLifecycleService {
     if (!options?.threadName) {
       throw new Error(`finishTurn requires threadName: projectId=${projectId} threadId=${_threadId}`);
     }
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const key = projectThreadKey(resolvedProjectId, options.threadName);
     this.sessionStateService.finishSessionTurn(key);
     const turn = await this.turnQueryService.getActiveTurnRecord(resolvedProjectId, options.threadName);
@@ -314,6 +324,35 @@ export class TurnLifecycleService {
     const turnId = turn.turnId;
     const worktreePath = turn.cwd;
     const traceId = turn.traceId;
+
+    // Merge resolver threads operate on a shared merge worktree with an active
+    // MERGE_HEAD. A premature commitAndDiff here would consume the MERGE_HEAD,
+    // produce a single-parent commit, and break the eventual merge commit's
+    // ancestry (causing --ff-only to fail). Skip commit; the merge session's
+    // commitMergeSession() handles the final merge commit.
+    const isMergeResolver = parseMergeResolverName(options.threadName) !== null;
+    if (isMergeResolver) {
+      log.info({
+        projectId: resolvedProjectId, threadId: _threadId,
+        threadName: options.threadName, turnId, traceId,
+      }, "finishTurn: skipping commitAndDiff for merge resolver thread");
+      await this.turnCommandService.completeActiveTurn(resolvedProjectId, options.threadName, null);
+      return null;
+    }
+
+    // Guard: if the worktree has an active MERGE_HEAD (merge session in progress on
+    // the branch worktree), committing here would consume it and produce a single-parent
+    // commit, breaking the merge ancestry. This protects against regular turns that
+    // share the same branch worktree as an active merge session.
+    if (await this.hasMergeHead(worktreePath)) {
+      log.warn({
+        projectId: resolvedProjectId, threadId: _threadId,
+        threadName: options.threadName, turnId, worktreePath,
+      }, "finishTurn: skipping commitAndDiff — worktree has active MERGE_HEAD");
+      await this.turnCommandService.completeActiveTurn(resolvedProjectId, options.threadName, null);
+      return null;
+    }
+
     const diff = await this.gitOps.commit.commitAndDiff(
       worktreePath,
       `[codex] turn ${turnId} changes`,
@@ -341,7 +380,7 @@ export class TurnLifecycleService {
   async handleTurnInterrupt(projectId: string, userId?: string): Promise<{ interrupted: boolean }> {
     const threadName = await this.resolveThreadName(projectId, userId);
     if (!threadName) return { interrupted: false };
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const key = projectThreadKey(resolvedProjectId, threadName);
     const activeTurnId = await this.threadService.getActiveTurnId(resolvedProjectId, threadName);
     const result = await this.turnCommandService.interruptTurn(resolvedProjectId, userId);
@@ -352,8 +391,9 @@ export class TurnLifecycleService {
       const waitManager = this.sessionStateService.getApprovalWaitManager(key);
       for (const approvalId of approvalIds) {
         waitManager.clear(approvalId);
+        void this.approvalStore.markExpired(approvalId, undefined, "turn interrupted before approval decision");
       }
-      const threadRecord = this.threadService.getRecord(resolvedProjectId, threadName);
+      const threadRecord = await this.threadService.getRecord(resolvedProjectId, threadName);
       if (threadRecord?.threadId) {
         this.eventPipeline?.markTurnInterrupting({
           projectId: resolvedProjectId,
@@ -369,19 +409,20 @@ export class TurnLifecycleService {
   async handleRollback(projectId: string, userId?: string, options?: { threadName?: string }): Promise<{ rolledBack: boolean }> {
     const threadName = options?.threadName ?? await this.resolveThreadName(projectId, userId);
     if (!threadName) return { rolledBack: false };
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const turnId = await this.threadService.getLastCompletedTurnId(resolvedProjectId, threadName);
     if (!turnId) return { rolledBack: false };
     return this.turnCommandService.revertTurn(resolvedProjectId, turnId);
   }
 
   async handleTurnAborted(projectId: string, threadName: string, turnId: string): Promise<void> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const key = projectThreadKey(resolvedProjectId, threadName);
     const approvalIds = this.sessionStateService.turnState.clearPendingApprovalsForTurn(key, turnId);
     const waitManager = this.sessionStateService.getApprovalWaitManager(key);
     for (const approvalId of approvalIds) {
       waitManager.clear(approvalId);
+      void this.approvalStore.markExpired(approvalId, undefined, "turn aborted before approval decision");
     }
     this.sessionStateService.completeInterrupt(key, turnId);
   }
@@ -454,8 +495,8 @@ export class TurnLifecycleService {
   }
 
   async ensureTurnStarted(input: TurnStartPersistenceInput): Promise<{ turnNumber: number }> {
-    const resolvedProjectId = this.requireProjectId(input.projectId);
-    const threadRecord = this.threadService.getRecord(resolvedProjectId, input.threadName);
+    const resolvedProjectId = await this.requireProjectId(input.projectId);
+    const threadRecord = await this.threadService.getRecord(resolvedProjectId, input.threadName);
     if (!threadRecord) {
       throw new OrchestratorError(
         ErrorCode.THREAD_NOT_FOUND,
@@ -503,8 +544,8 @@ export class TurnLifecycleService {
     });
   }
 
-  private requireProjectId(projectId: string): string {
-    const resolvedProjectId = this.projectResolver.findProjectById?.(projectId)?.id ?? null;
+  private async requireProjectId(projectId: string): Promise<string> {
+    const resolvedProjectId = (await this.projectResolver.findProjectById?.(projectId))?.id ?? null;
     if (!resolvedProjectId) {
       throw new OrchestratorError(ErrorCode.PROJECT_NOT_FOUND, `project not found: ${projectId}`);
     }
@@ -513,18 +554,19 @@ export class TurnLifecycleService {
 
   private async resolveThreadName(projectId: string, userId?: string): Promise<string | null> {
     if (!userId) return null;
-    const binding = await this.threadService.getUserBinding(this.requireProjectId(projectId), userId);
+    const binding = await this.threadService.getUserBinding(await this.requireProjectId(projectId), userId);
     return binding?.threadName ?? null;
   }
 
   private async resolveAgentApi(projectId: string, threadName: string): Promise<AgentApi> {
-    const resolvedProjectId = this.requireProjectId(projectId);
+    const resolvedProjectId = await this.requireProjectId(projectId);
     const cached = this.threadRuntimeService.getApi(resolvedProjectId, threadName);
     if (cached) {
-      await this.pluginService?.ensureProjectThreadSkills?.(resolvedProjectId, threadName);
+      const record = await this.threadService.getRecord(resolvedProjectId, threadName);
+      await this.pluginService?.ensureProjectThreadSkills?.(resolvedProjectId, threadName, record?.worktreePath);
       return cached;
     }
-    const record = this.threadService.getRecord(resolvedProjectId, threadName);
+    const record = await this.threadService.getRecord(resolvedProjectId, threadName);
     if (!record) {
       throw new OrchestratorError(ErrorCode.AGENT_API_UNAVAILABLE, `agent api unavailable for project-thread ${resolvedProjectId}/${threadName}`);
     }
@@ -539,7 +581,7 @@ export class TurnLifecycleService {
     threadName: string;
     oldThreadId: string;
   }): Promise<{ threadId: string }> {
-    const record = this.threadService.getRecord(params.projectId, params.threadName);
+    const record = await this.threadService.getRecord(params.projectId, params.threadName);
     if (!record) {
       throw new OrchestratorError(
         ErrorCode.THREAD_NOT_FOUND,
@@ -575,5 +617,27 @@ export class TurnLifecycleService {
       newThreadId: created.thread.id,
     }, "reinitialized empty codex thread after missing rollout");
     return { threadId: created.thread.id };
+  }
+
+  /**
+   * Check if a worktree has an active MERGE_HEAD file, indicating a merge session
+   * is in progress. Reads the `.git` pointer file to resolve the gitdir, then checks
+   * for MERGE_HEAD existence.
+   */
+  private async hasMergeHead(worktreePath: string): Promise<boolean> {
+    try {
+      const gitPointerPath = join(worktreePath, ".git");
+      const pointerContent = await readFile(gitPointerPath, "utf-8");
+      const prefix = "gitdir:";
+      if (!pointerContent.startsWith(prefix)) {
+        return false;
+      }
+      const gitdir = pointerContent.slice(prefix.length).trim();
+      const resolvedGitdir = gitdir.startsWith("/") ? gitdir : join(worktreePath, gitdir);
+      await access(join(resolvedGitdir, "MERGE_HEAD"));
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

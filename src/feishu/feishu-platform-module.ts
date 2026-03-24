@@ -47,6 +47,8 @@ export class FeishuPlatformModule implements PlatformModule {
       httpClient,
     });
     const feishuPlatformOutput = new FeishuOutputAdapter(feishuAdapter, {
+      cardThrottleMs: ctx.config.feishu.cardUpdateIntervalMs,
+      deliveryMode: ctx.config.feishu.cardDeliveryMode,
       turnCardReader: ctx.turnCardReader,
       locale: ctx.config.locale,
     });
@@ -79,7 +81,7 @@ export class FeishuPlatformModule implements PlatformModule {
                 log.warn({ payloadKeys: Object.keys(payload) }, "bot.added missing chatId");
                 return;
               }
-              const existing = resolveProjectByChatId(ctx.api, resolvedChatId);
+              const existing = await resolveProjectByChatId(ctx.api, resolvedChatId);
               if (existing) {
                 if (existing.status === "disabled") {
                   await ctx.api.reactivateProject({ projectId: existing.id, actorId: "system" });
@@ -87,7 +89,7 @@ export class FeishuPlatformModule implements PlatformModule {
                 await feishuAdapter.sendInteractiveCard(resolvedChatId, feishuPlatformOutput.buildProjectResumedCard(existing));
                 return;
               }
-              const unbound = ctx.api.listUnboundProjects();
+              const unbound = await ctx.api.listUnboundProjects();
               await feishuAdapter.sendInteractiveCard(resolvedChatId, feishuPlatformOutput.buildInitCard(unbound.length > 0 ? unbound : undefined));
             } catch (error) {
               log.error({ err: error instanceof Error ? error.message : error }, "bot.added error");
@@ -98,7 +100,7 @@ export class FeishuPlatformModule implements PlatformModule {
               const payload = data as Record<string, unknown>;
               const resolvedChatId = extractChatId(payload);
               if (!resolvedChatId) return;
-              const project = resolveProjectByChatId(ctx.api, resolvedChatId);
+              const project = await resolveProjectByChatId(ctx.api, resolvedChatId);
               if (project) {
                 await ctx.api.disableProject({ projectId: project.id, actorId: "system" });
               }
@@ -112,12 +114,12 @@ export class FeishuPlatformModule implements PlatformModule {
               const chatId = extractChatId(event);
               const users = Array.isArray(event.users) ? event.users as Array<Record<string, unknown>> : [];
               if (!chatId || users.length === 0) return;
-              const project = resolveProjectByChatId(ctx.api, chatId);
+              const project = await resolveProjectByChatId(ctx.api, chatId);
               if (!project) return;
               for (const u of users) {
                 const userId = extractOpenId(u, "user_id") || (typeof u.open_id === "string" ? u.open_id : "");
                 if (userId) {
-                  ctx.api.resolveRole({ userId, projectId: project.id });
+                  await ctx.api.resolveRole({ userId, projectId: project.id });
                 }
               }
             } catch (error) {
@@ -129,7 +131,7 @@ export class FeishuPlatformModule implements PlatformModule {
               const event = data as Record<string, unknown>;
               const eventKey = String(event.event_key ?? "");
               const openId = extractOpenId(event, "operator");
-              if (!openId || !ctx.api.isAdmin(openId)) return;
+              if (!openId || !await ctx.api.isAdmin(openId)) return;
               if (eventKey === "admin_menu_event") {
                 const card = feishuPlatformOutput.buildAdminHelpCard();
                 await feishuAdapter.sendInteractiveCard(openId, card, "open_id");

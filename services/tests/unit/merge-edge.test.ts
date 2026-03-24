@@ -297,7 +297,7 @@ describe("merge edge cases", () => {
 
     const originalHead = simRef.gitOps.worktree.getHeadSha;
     simRef.gitOps.worktree.getHeadSha = async (cwd: string) => {
-      if (cwd === simRef.api.getProjectRecord(projectId)?.cwd) {
+      if (cwd === (await simRef.api.getProjectRecord(projectId))?.cwd) {
         return "new-work-branch-head";
       }
       return originalHead(cwd);
@@ -325,7 +325,7 @@ describe("merge edge cases", () => {
 
     const originalHead = simRef.gitOps.worktree.getHeadSha;
     simRef.gitOps.worktree.getHeadSha = async (cwd: string) => {
-      if (cwd === simRef.api.getProjectRecord(projectId)?.cwd) {
+      if (cwd === (await simRef.api.getProjectRecord(projectId))?.cwd) {
         return "new-work-branch-head";
       }
       return originalHead(cwd);

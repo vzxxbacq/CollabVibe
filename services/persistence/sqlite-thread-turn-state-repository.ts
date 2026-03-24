@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 
 import type { ThreadTurnState } from "../thread/thread-turn-state";
 import type { ThreadTurnStateRepository } from "../thread/thread-turn-state-repository";
@@ -14,7 +14,7 @@ interface ThreadTurnStateRow {
 }
 
 export class SqliteThreadTurnStateRepository implements ThreadTurnStateRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: AsyncDatabaseProxy) {}
 
   private requireProjectId(projectId?: string): string {
     if (!projectId) throw new Error("ThreadTurnState.projectId is required");
@@ -22,18 +22,15 @@ export class SqliteThreadTurnStateRepository implements ThreadTurnStateRepositor
   }
 
   async get(projectId: string, threadName: string): Promise<ThreadTurnState | null> {
-    return this.getSync(projectId, threadName);
-  }
-
-  getSync(projectId: string, threadName: string): ThreadTurnState | null {
-    const row = this.db.prepare(
-      `SELECT * FROM thread_turn_states WHERE project_id = ? AND thread_name = ?`
-    ).get(projectId, threadName) as ThreadTurnStateRow | undefined;
+    const row = await this.db.get(
+      `SELECT * FROM thread_turn_states WHERE project_id = ? AND thread_name = ?`,
+      projectId, threadName,
+    ) as ThreadTurnStateRow | undefined;
     return row ? this.toState(row) : null;
   }
 
   async upsert(state: ThreadTurnState): Promise<void> {
-    this.db.prepare(
+    await this.db.prepare(
       `INSERT OR REPLACE INTO thread_turn_states (
         project_id, chat_id, thread_name, active_turn_id, blocking_turn_id, last_completed_turn_id, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`

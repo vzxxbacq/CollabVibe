@@ -23,34 +23,34 @@ export interface ThreadReservation {
 
 export interface ThreadRegistry {
   /** Reserve a thread name before side effects. Throws if an active/creating thread already exists. */
-  reserve(record: Omit<ThreadRecord, "threadId">): ThreadReservation;
+  reserve(record: Omit<ThreadRecord, "threadId">): Promise<ThreadReservation>;
 
   /** Promote a reservation to an active thread after backend thread/session creation succeeds. */
-  activate(reservationId: string, record: ThreadRecord): void;
+  activate(reservationId: string, record: ThreadRecord): Promise<void>;
 
   /** Release a failed/incomplete reservation so the name can be reused later. */
-  release(reservationId: string): void;
+  release(reservationId: string): Promise<void>;
 
   /** Register a thread directly (testing path). Throws if already exists. */
-  register(record: ThreadRecord): void;
+  register(record: ThreadRecord): Promise<void>;
 
   /** Lookup a thread by projectId + threadName */
-  get(projectId: string, threadName: string): ThreadRecord | null;
+  get(projectId: string, threadName: string): Promise<ThreadRecord | null>;
 
   /** List all threads in a project */
-  list(projectId: string): ThreadRecord[];
+  list(projectId: string): Promise<ThreadRecord[]>;
 
   /** List visible thread rows in a project, including creating reservations. */
-  listEntries?(projectId: string): ThreadListEntry[];
+  listEntries?(projectId: string): Promise<ThreadListEntry[]>;
 
   /** List ALL active threads across all projects (for startup recovery) */
-  listAll?(): ThreadRecord[];
+  listAll?(): Promise<ThreadRecord[]>;
 
   /** Remove a thread (after merge+delete) */
-  remove(projectId: string, threadName: string): void;
+  remove(projectId: string, threadName: string): Promise<void>;
 
   /** Update mutable runtime fields (baseSha, hasDiverged, worktreePath) on an existing thread */
-  update?(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath">>): void;
+  update?(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath">>): Promise<void>;
 
   /**
    * Replace the backend-assigned thread id for an empty thread before any
@@ -63,5 +63,5 @@ export interface ThreadRegistry {
     oldThreadId: string;
     newThreadId: string;
     backend: BackendIdentity;
-  }): void;
+  }): Promise<void>;
 }

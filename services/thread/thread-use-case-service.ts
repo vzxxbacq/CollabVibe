@@ -25,13 +25,13 @@ export class ThreadUseCaseService {
     const backend = createBackendIdentity(options.backendId, options.model);
     let reservation;
     try {
-      reservation = this.threadService.reserve({ projectId, threadName, backend });
+      reservation = await this.threadService.reserve({ projectId, threadName, backend });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!message.startsWith("THREAD_ALREADY_EXISTS:")) {
         throw error;
       }
-      const existing = this.threadService.getRecord(projectId, threadName);
+      const existing = await this.threadService.getRecord(projectId, threadName);
       const suffix = existing ? ` (ID: ${existing.threadId.slice(0, 8)})` : "";
       throw new OrchestratorError(
         ErrorCode.THREAD_ALREADY_EXISTS,
@@ -78,7 +78,7 @@ export class ThreadUseCaseService {
       runtimeCreated = true;
       const created = await runtime.api.threadStart(runtime.config);
 
-      this.threadService.activate(reservation.reservationId, {
+      await this.threadService.activate(reservation.reservationId, {
         projectId,
         threadName,
         threadId: created.thread.id,
@@ -95,7 +95,7 @@ export class ThreadUseCaseService {
       }, "thread created");
       return { threadId: created.thread.id, threadName, cwd: runtime.config.cwd ?? "", api: runtime.api };
     } catch (error) {
-      this.threadService.release(reservation.reservationId);
+      await this.threadService.release(reservation.reservationId);
       if (runtimeCreated) {
         try {
           await this.threadRuntimeService.releaseThread(projectId, threadName);
@@ -112,7 +112,7 @@ export class ThreadUseCaseService {
   }
 
   async joinThread(projectId: string, userId: string, threadName: string): Promise<{ threadId: string; threadName: string }> {
-    const record = this.threadService.getRecord(projectId, threadName);
+    const record = await this.threadService.getRecord(projectId, threadName);
     if (!record) {
       throw new OrchestratorError(ErrorCode.THREAD_NOT_FOUND, `thread not found: ${threadName}`);
     }
@@ -125,14 +125,14 @@ export class ThreadUseCaseService {
   }
 
   async listThreads(projectId: string): Promise<Array<{ threadName: string; threadId: string }>> {
-    return this.threadService.listRecords(projectId).map((record) => ({
+    return await (await this.threadService.listRecords(projectId)).map((record) => ({
       threadName: record.threadName,
       threadId: record.threadId,
     }));
   }
 
   async listThreadEntries(projectId: string): Promise<ThreadListResult[]> {
-    return this.threadService.listEntries(projectId).map((entry) => ({
+    return await (await this.threadService.listEntries(projectId)).map((entry) => ({
       threadName: entry.threadName,
       threadId: entry.threadId,
       status: entry.status,

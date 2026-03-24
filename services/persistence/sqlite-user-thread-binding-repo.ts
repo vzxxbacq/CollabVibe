@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AsyncDatabaseProxy } from "./async-database-proxy";
 
 import type { UserThreadBinding, UserThreadBindingRepository } from "../thread/user-thread-binding-types";
 
@@ -10,7 +10,7 @@ interface BindingRow {
 }
 
 export class SqliteUserThreadBindingRepository implements UserThreadBindingRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: AsyncDatabaseProxy) {}
 
   private requireProjectId(projectId?: string): string {
     if (!projectId) {
@@ -20,7 +20,7 @@ export class SqliteUserThreadBindingRepository implements UserThreadBindingRepos
   }
 
   async bind(binding: UserThreadBinding): Promise<void> {
-    this.db.prepare(
+    await this.db.prepare(
       `INSERT INTO user_thread_bindings (project_id, chat_id, user_id, thread_name, thread_id, updated_at)
        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(project_id, user_id)
@@ -33,11 +33,12 @@ export class SqliteUserThreadBindingRepository implements UserThreadBindingRepos
   }
 
   async resolve(projectId: string, userId: string): Promise<UserThreadBinding | null> {
-    const row = this.db.prepare(
+    const row = await this.db.get(
       `SELECT project_id, user_id, thread_name, thread_id
        FROM user_thread_bindings
-       WHERE project_id = ? AND user_id = ?`
-    ).get(projectId, userId) as BindingRow | undefined;
+       WHERE project_id = ? AND user_id = ?`,
+      projectId, userId,
+    ) as BindingRow | undefined;
     if (!row) return null;
     if (!row.thread_id) {
       throw new Error(`UserThreadBinding is corrupted: missing thread_id for project=${projectId} user=${userId}`);
@@ -51,13 +52,13 @@ export class SqliteUserThreadBindingRepository implements UserThreadBindingRepos
   }
 
   async leave(projectId: string, userId: string): Promise<void> {
-    this.db.prepare(
+    await this.db.prepare(
       `DELETE FROM user_thread_bindings WHERE project_id = ? AND user_id = ?`
     ).run(projectId, userId);
   }
 
   async rebindThread(projectId: string, threadName: string, oldThreadId: string, newThreadId: string): Promise<void> {
-    this.db.prepare(
+    await this.db.prepare(
       `UPDATE user_thread_bindings
           SET thread_id = ?,
               updated_at = CURRENT_TIMESTAMP
