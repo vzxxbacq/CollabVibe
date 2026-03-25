@@ -199,8 +199,8 @@ export class BackendService {
       .catch(err => this.log.warn({ backendId, providerName: provider, profileName, modelName: model, ...context, err: err instanceof Error ? err.message : err }, "profile auto-validate failed"));
   }
 
-  adminDeleteProfile(backendId: string, profileName: string): void {
-    this.backendConfigService.deleteProfile(backendId, profileName);
+  adminDeleteProfile(backendId: string, profileName: string, providerName?: string): void {
+    this.backendConfigService.deleteProfile(backendId, profileName, providerName);
   }
 
   async adminTriggerRecheck(backendName: string, providerName: string, context?: Record<string, unknown>): Promise<void> {

@@ -1,7 +1,6 @@
 > This project is currently in the DEV stage. Features and documentation may change at any time, and the project remains unvalidated; use with caution.
 
 <div align="center">
-  <img src="docs/public/logo.png" alt="CollabVibe logo placeholder" width="240" />
   <h1>CollabVibe</h1>
   <p>CollabVibe: Empowering teams to co-code with multi-agent AI via IM platforms.</p>
   <p>
@@ -12,8 +11,8 @@
 
 ## Why CollabVibe
 
-- Collaboration is the real productivity multiplier — participate in and read through the Vibe Coding process together, instead of thousands of lines of code and a single-line AI-generated PR. That's not collaboration, that's bullying your teammates.
-- Multi-device support — keep agents running planned steps even from your phone.
+- Collaboration is the real productivity multiplier — participate in and read through the Vibe Coding process together, instead of thousands of lines of code and a single-line AI-generated PR.
+- Multi-device support — keep agents running planned steps even from your phone. And no need to worry about the agent getting stuck on an Approve request.
 - Unified multi-backend management — connect different API providers and let your team switch flexibly based on cost and performance.
 
 ## Supported Backends
@@ -36,9 +35,18 @@
 
 ## Documentation
 
-- Default docs: [简体中文](./docs/zh/index.md)
-- English docs: [English](./docs/index.md)
-- Architecture entry: [System Architecture](./docs/01-architecture/architecture.md)
+- 文档（中文）：https://collab.vzxxbacq.me/
+- Documentation (English): https://collab.vzxxbacq.me/en/
+
+## How It Works
+
+1. **Create & Bind** — Create an IM group, invite the Bot, and bind a Git repo + Backend via the init card
+2. **Chat to Code** — Send a task description in the group; the Bot creates an Agent Turn and starts coding
+3. **Real-time Collaboration** — Agent progress, file changes, and Plan confirmations stream into the group as interactive cards
+4. **Multi-thread** — Switch threads via commands to run multiple tasks in parallel
+5. **Review & Merge** — Inspect diffs when a Turn finishes; Accept(via Git) or Revert with one click; Branch Merge Review supported
+
+> See the [Quickstart Guide](https://collab.vzxxbacq.me/en/00-overview/quickstart) for full deployment and configuration steps.
 
 ## Showcase
 
@@ -52,19 +60,21 @@
     <td align="center"><img src="docs/public/showcase/agent-merge.png" width="400" /><br/><b>Merge Review</b></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="docs/public/showcase/merge-1.png" width="400" /><br/><b>Conflict Resolution</b></td>
+    <td align="center"><img src="docs/public/showcase/merge-1.png" width="400" /><br/><b>Conflict Resolution</b></td>
+    <td align="center"><img src="docs/public/showcase/backend-manager.png" width="400" /><br/><b>Backend Management</b></td>
   </tr>
 </table>
 
 ## Quick Start
 
-👉 [View the Quickstart Guide](https://collab.vzxxbacq.me/00-overview/quickstart)
+👉 [View the Quickstart Guide](https://collab.vzxxbacq.me/en/00-overview/quickstart)
 
 ## TODO
 
 - [ ] Feishu platform code optimization & file input support
 - [ ] Slack platform implementation and testing
 - [ ] `gemini-cli` and `trae-cli` backend support
+- [ ] Project pull feature (pull latest code from remote)
 
 ## Notes
 

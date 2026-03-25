@@ -11,7 +11,7 @@ export class IamService {
   ) {}
 
   async resolveRole(input: { userId: string; projectId?: string }): Promise<"admin" | "maintainer" | "developer" | "auditor" | null> {
-    return this.roleResolver.resolve(input.userId, input.projectId, { autoRegister: true });
+    return this.roleResolver.resolve(input.userId, input.projectId);
   }
 
   async isAdmin(userId: string): Promise<boolean> {
@@ -31,15 +31,23 @@ export class IamService {
     return admins.map((entry) => ({ userId: entry.userId, source: entry.source }));
   }
 
-  async addProjectMember(input: { projectId: string; userId: string; role: ProjectRole }): Promise<void> {
-    await this.userRepo.ensureUser(input.userId);
+  async ensureProjectMember(input: { projectId: string; userId: string; defaultRole?: ProjectRole }): Promise<void> {
     const state = await this.adminStateStore.read();
+    const projectExists = state.projects.some((project) => project.id === input.projectId);
+    if (!projectExists) {
+      throw new Error(`project not found: ${input.projectId}`);
+    }
+    await this.userRepo.ensureUser(input.userId);
     const members = state.members[input.projectId] ?? [];
     if (!members.some((member) => member.userId === input.userId)) {
-      members.push({ userId: input.userId, role: input.role });
+      members.push({ userId: input.userId, role: input.defaultRole ?? "auditor" });
       state.members[input.projectId] = members;
       await this.adminStateStore.write(state);
     }
+  }
+
+  async addProjectMember(input: { projectId: string; userId: string; role: ProjectRole }): Promise<void> {
+    await this.ensureProjectMember({ projectId: input.projectId, userId: input.userId, defaultRole: input.role });
   }
 
   async removeProjectMember(input: { projectId: string; userId: string }): Promise<void> {

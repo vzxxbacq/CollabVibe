@@ -1,75 +1,71 @@
 ---
-title: "System Architecture"
+title: "系统架构"
 layer: architecture
 source_of_truth: AGENTS.md, src/server.ts, src/common/dispatcher.ts, services/factory.ts
 status: active
 ---
 
-# System Architecture
+# 系统架构
 
-## Overview
+## 概述
 
-CollabVibe connects IM platforms to agent backends and returns both synchronous command results and streaming turn output.
+CollabVibe 遵守 `AGENTS.md` 里的系统级不变式：
 
-The system still follows the AGENTS invariants:
+- 系统只有两条数据路径
+- 依赖方向保持 L0/L1/L2/L3 单向分层
+- `projectId` 是聚合根主键
+- `BackendIdentity` 是线程后端身份的唯一真实来源
 
-- exactly two data paths
-- strict L0/L1/L2/L3 layering
-- `projectId` as the aggregate key
-- `BackendIdentity` as the thread backend source of truth
-
-The code shape, however, is the current repository layout below.
-
-## 1. Layering in the current codebase
+## 1. 当前代码中的四层
 
 ```text
 L0  src/server.ts, src/config.ts
 L1  src/common/, src/feishu/, src/slack/
-L2  services/index.ts, services/orchestrator-api.ts, services/* domain modules, services/persistence/
+L2  services/index.ts, services/orchestrator-api.ts, services/* 领域模块, services/persistence/
 L3  packages/agent-core/, packages/git-utils/, packages/logger/, packages/admin-ui/
 ```
 
-### Responsibilities
+### 各层职责
 
-| Layer | Current files | Responsibility |
+| 层 | 当前落点 | 职责 |
 | --- | --- | --- |
-| `L0` | `src/server.ts`, `src/config.ts` | process bootstrap and wiring |
-| `L1` | `src/common/`, `src/feishu/`, `src/slack/` | platform handlers, shared dispatch, platform rendering |
-| `L2` | `services/*` | business orchestration, persistence, IAM, merge, plugin, event runtime |
-| `L3` | `packages/*` | backend transport abstraction, git operations, logging |
+| `L0` | `src/server.ts`, `src/config.ts` | 进程启动与装配 |
+| `L1` | `src/common/`, `src/feishu/`, `src/slack/` | 平台接入、共享分发、平台渲染 |
+| `L2` | `services/*` | 业务编排、持久化、IAM、merge、plugin、事件运行时 |
+| `L3` | `packages/*` | backend 协议抽象、git 能力、日志 |
 
-### Import constraints
+### 依赖边界
 
-| Layer | May import | Must not import |
+| 层 | 可以依赖 | 禁止依赖 |
 | --- | --- | --- |
-| `L0/L1` | `services/index.ts`, public logger exports | `services/*` internals, `packages/agent-core` transport internals, `packages/git-utils` internals |
-| `L2` | `packages/*` public entries, peer `services/*` modules | `src/*` |
-| `L3` | same-package internals | `services/*`, `src/*` |
+| `L0/L1` | `services/index.ts`、logger 公共导出 | `services/*` 内部模块、`agent-core` transport 内部、`git-utils` 内部 |
+| `L2` | `packages/*` 公共入口、同层 `services/*` | `src/*` |
+| `L3` | 本层内部 | `services/*`, `src/*` |
 
-## 2. Path A: command response
+## 2. 路径 A：命令响应
 
-Current Path A is implemented through shared L1 dispatch plus L2 API calls:
+当前 Path A 的实现是：
 
 ```text
 IM Event
-  -> src/server.ts wiring
-  -> src/feishu/* or src/slack/*
+  -> src/server.ts 装配
+  -> src/feishu/* 或 src/slack/*
   -> src/common/dispatcher.ts
-     -> agent turn path: OrchestratorApi.createTurn(...)
-     -> command path: platform handlers + src/common/platform-commands.ts
-  -> services/index.ts facade
-  -> platform renderers in L1
+     -> agent turn 路径：OrchestratorApi.createTurn(...)
+     -> 平台命令路径：平台 handler + src/common/platform-commands.ts
+  -> services/index.ts API facade
+  -> L1 平台渲染
 ```
 
-### Notes
+### 说明
 
-- L1 does not call backend transports directly.
-- `src/common/dispatcher.ts` is the shared command split point for agent turns.
-- Project and admin workflows still call the same L2 `OrchestratorApi`; they are not a third data path.
+- L1 不直接调用 backend transport。
+- `src/common/dispatcher.ts` 是共享命令分流点。
+- 项目管理、thread 管理这类平台命令虽然不一定都走 `createTurn`，但仍然走同一个 L2 API facade，不构成第三条路径。
 
-## 3. Path B: streaming agent events
+## 3. 路径 B：Agent 流式事件
 
-Current Path B is:
+当前 Path B 是：
 
 ```text
 Backend (Codex stdio / ACP)
@@ -80,56 +76,50 @@ Backend (Codex stdio / ACP)
   -> AgentEventRouter
   -> transformUnifiedAgentEvent / toPlatformOutput
   -> OutputGateway
-  -> Feishu / Slack adapters
+  -> Feishu / Slack adapter
 ```
 
-### Key files
+### 关键文件
 
-| Stage | File |
+| 阶段 | 文件 |
 | --- | --- |
-| backend abstraction | `packages/agent-core/src/types.ts` |
-| event bridge | `packages/agent-core/src/transports/*` |
+| backend 抽象 | `packages/agent-core/src/types.ts` |
+| 事件桥接 | `packages/agent-core/src/transports/*` |
 | pipeline facade | `services/event/pipeline.ts` |
-| per-thread runtime | `services/event/thread-event-runtime.ts` |
-| event router | `services/event/router.ts` |
-| platform output contract | `services/event/output-contracts.ts` |
+| thread 级运行时 | `services/event/thread-event-runtime.ts` |
+| 事件路由 | `services/event/router.ts` |
+| 平台输出契约 | `services/event/output-contracts.ts` |
 
-## 4. Current L2 assembly
+## 4. 当前 L2 的装配方式
 
-`services/factory.ts` assembles the runtime in this order:
+`services/factory.ts` 中的 `createOrchestratorLayer(...)` 当前按下面顺序装配：
 
-1. persistence and project resolver
-2. backend registry, config service, session resolver
-3. runtime config provider and transport factory registry
+1. persistence 与 project resolver
+2. backend registry、config service、session resolver
+3. runtime config provider 与 transport factory registry
 4. API pool
-5. thread, turn, and snapshot sub-layers
-6. merge, approval, IAM, audit, plugin, and project services
-7. raw `OrchestratorApi`
+5. thread / turn / snapshot 子层
+6. merge / approval / IAM / audit / plugin / project service
+7. 原始 `OrchestratorApi`
 8. `withApiGuards(...)`
-9. deferred `runStartup(gateway)` wiring for Path B
+9. `runStartup(gateway)` 中再延迟装配 Path B
 
-## 5. State invariants that still matter
+## 5. 仍然成立的状态不变式
 
-### Project and chat
+### Project / Chat
 
-- `chatId` is only the platform binding
-- `projectId` is the real aggregate key
-- IM entry points must resolve `chatId -> projectId` before thread or turn access
+- `chatId` 只是平台绑定
+- `projectId` 才是聚合根主键
+- 平台入口先做 `chatId -> projectId` 解引用，再访问线程和 turn
 
-### Thread and backend
+### Thread / Backend
 
-- `ThreadRecord.backend` is the persisted backend identity
-- `UserThreadBinding` is only a pointer to the active thread
-- thread runtime config is built from project config plus thread backend identity
+- `ThreadRecord.backend` 是持久化的后端身份
+- `UserThreadBinding` 只负责指向当前线程
+- thread 运行时配置由 project 配置加 thread backend 身份组装
 
 ### Turn lifecycle
 
-- `TurnLifecycleService` owns authoritative turn start and finish behavior
-- `EventPipeline` may buffer or defensively ensure state, but it is not the source of truth for turn creation
-- merge resolver threads skip normal commit flow when `MERGE_HEAD` is active
-
-## 6. Why this page changed
-
-Older docs described a `services/contracts/` plus `services/orchestrator/` layout and an `orchestrator/intent/dispatcher` path that no longer matched the repository.
-
-This page now reflects the current code while preserving the architecture invariants defined in `AGENTS.md`.
+- `TurnLifecycleService` 是 turn start / finish 的权威实现
+- `EventPipeline` 可以做缓冲或幂等兜底，但不是 turn 创建的唯一事实源
+- merge resolver 线程在 `MERGE_HEAD` 存在时跳过普通 commit 流程

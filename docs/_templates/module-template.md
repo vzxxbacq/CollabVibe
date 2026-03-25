@@ -1,34 +1,34 @@
 ---
-title: "Module Documentation Template"
+title: 模块文档模板
 layer: template
 status: template
 ---
 
-# Module Name
+# 模块名称
 
-## Module information
+## 模块信息
 
-| Item | Content |
+| 项目 | 内容 |
 | --- | --- |
-| Layer | packages / services / src/core / src/feishu / wiring |
-| Responsibility | What the module owns |
-| Not responsible for | Explicit boundary |
-| Public entry | `index.ts` / main class / main interface |
+| 所属层 | packages / services / src/core / src/feishu / wiring |
+| 责任 | 模块负责的能力 |
+| 不负责 | 明确边界 |
+| 对外入口 | `index.ts` / 主类 / 主接口 |
 
-## Dependency boundaries
+## 依赖边界
 
-| Allowed dependencies | Forbidden dependencies |
+| 允许依赖 | 禁止依赖 |
 | --- | --- |
-| Allowed directory layers | Forbidden directory layers |
+| 允许的目录层级 | 禁止的目录层级 |
 
-## Data flow
+## 数据流
 
-| Input | Processing | Output |
+| 输入 | 处理 | 输出 |
 | --- | --- | --- |
-| Input object | Core logic | Output object |
+| 输入对象 | 核心逻辑 | 输出对象 |
 
-## Tests
+## 测试
 
-| Type | Location |
+| 类型 | 位置 |
 | --- | --- |
-| Unit / integration / e2e | Test directory |
+| 单元 / 集成 / e2e | 测试目录 |

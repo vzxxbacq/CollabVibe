@@ -40,6 +40,7 @@ export interface ProviderInfo {
     baseUrl?: string;
     apiKeyEnv?: string;
     apiKeySet: boolean;
+    apiKeyMasked?: string;
     /** Internal: resolved API key for deploy. NOT serialized to IM layer. */
     apiKey?: string;
     isActive: boolean;
@@ -121,7 +122,7 @@ async function checkCmd(cmd: string): Promise<boolean> {
 export class BackendConfigService {
     private readonly configDir: string;
     private modelStatuses: Map<string, Map<string, ModelInfo[]>> = new Map();
-    private dynamicProviders: Map<string, Array<{ name: string; baseUrl?: string; apiKeyEnv?: string }>> = new Map();
+    private dynamicProviders: Map<string, Array<{ name: string; baseUrl?: string; apiKeyEnv?: string; apiKey?: string }>> = new Map();
 
     constructor(configDir: string) {
         this.configDir = configDir;
@@ -163,7 +164,9 @@ export class BackendConfigService {
                     name: dp.name,
                     baseUrl: dp.baseUrl,
                     apiKeyEnv: dp.apiKeyEnv,
-                    apiKeySet: dp.apiKeyEnv ? !!process.env[dp.apiKeyEnv] : false,
+                    apiKeySet: !!(this.resolveApiKey(dp.apiKeyEnv) ?? dp.apiKey),
+                    apiKeyMasked: dp.apiKey ? this.maskApiKey(dp.apiKey) : undefined,
+                    apiKey: dp.apiKey,
                     isActive: false,
                     models: this.getModelStatuses(config.name, dp.name)
                 });
@@ -442,11 +445,13 @@ export class BackendConfigService {
 
     /** Provider add */
     addProvider(backendName: string, providerName: string, baseUrl?: string, apiKeyEnv?: string): void {
+        const envKeyName = apiKeyEnv && /^[A-Z][A-Z0-9_]*$/.test(apiKeyEnv) ? apiKeyEnv : undefined;
+        const apiKey = envKeyName ? undefined : apiKeyEnv;
         // Initialize the provider's model list so it shows up in readAllConfigs
         this.setModelStatuses(backendName, providerName, []);
         // Store provider metadata for dynamic providers
         if (!this.dynamicProviders.has(backendName)) this.dynamicProviders.set(backendName, []);
-        this.dynamicProviders.get(backendName)!.push({ name: providerName, baseUrl, apiKeyEnv });
+        this.dynamicProviders.get(backendName)!.push({ name: providerName, baseUrl, apiKeyEnv: envKeyName, apiKey });
         log.info({ backendId: backendName, providerName, baseUrl, apiKeyEnv }, "added backend source");
 
         // Persist to config file
@@ -464,6 +469,12 @@ export class BackendConfigService {
             return process.env[apiKeyEnv];
         }
         return apiKeyEnv;
+    }
+
+    private maskApiKey(apiKey?: string): string | undefined {
+        if (!apiKey) return undefined;
+        if (apiKey.length <= 8) return apiKey.slice(0, 2) + "****";
+        return apiKey.slice(0, 3) + "****" + apiKey.slice(-4);
     }
 
     /** Write provider config to the backend's config file */
@@ -831,11 +842,13 @@ export class BackendConfigService {
 
         try {
             if (backendId === "codex") {
+                this.assertProfileNameAvailableCodex(localPath, input.name);
                 this.writeProfileCodex(localPath, input);
             } else if (backendId === "opencode") {
                 // opencode: write into provider[providerName].models[modelId]
                 const config = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : {};
                 if (!config.provider) config.provider = {};
+                this.assertProfileNameAvailableOpenCode(config, input.name);
                 if (!config.provider[input.provider]) config.provider[input.provider] = { options: {}, models: {} };
                 const provider = config.provider[input.provider];
                 if (!provider.models) provider.models = {};
@@ -857,6 +870,7 @@ export class BackendConfigService {
                 // claude-code or others: write profiles section
                 const config = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : {};
                 if (!config.profiles) config.profiles = {};
+                this.assertProfileNameAvailableClaudeCode(config, input.name);
                 config.profiles[input.name] = {
                     model: input.model,
                     provider: input.provider,
@@ -867,11 +881,12 @@ export class BackendConfigService {
             log.info({ backendId, profile: input.name }, "writeProfile OK");
         } catch (err) {
             log.warn({ backendId, err: err instanceof Error ? err.message : err }, "writeProfile failed");
+            throw err;
         }
     }
 
     /** Delete a profile / model entry */
-    deleteProfile(backendId: string, profileName: string): void {
+    deleteProfile(backendId: string, profileName: string, providerName?: string): void {
         const source = CONFIG_SOURCES.find(s => s.name === backendId);
         if (!source) return;
         const localPath = join(this.configDir, source.localFile);
@@ -879,12 +894,19 @@ export class BackendConfigService {
         try {
             if (backendId === "codex") {
                 let content = existsSync(localPath) ? readFileSync(localPath, "utf-8") : "";
+                if (providerName) {
+                    const parsed = parseSimpleToml(content);
+                    const section = parsed[`profiles.${profileName}`];
+                    if (section?.model_provider && section.model_provider !== providerName) {
+                        return;
+                    }
+                }
                 content = this.removeTomlSection(content, `profiles.${profileName}`);
                 writeFileSync(localPath, content, "utf-8");
             } else if (backendId === "opencode") {
                 // opencode: delete from provider[name].models using modelId lookup
                 const config = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : {};
-                const providers = config.provider ?? {};
+                const providers = providerName ? { [providerName]: config.provider?.[providerName] } : (config.provider ?? {});
                 for (const providerDef of Object.values(providers) as any[]) {
                     const models = providerDef?.models;
                     if (!models) continue;
@@ -976,6 +998,36 @@ export class BackendConfigService {
         }
         content = content.trimEnd() + "\n" + lines.join("\n") + "\n";
         writeFileSync(localPath, content, "utf-8");
+    }
+
+    private assertProfileNameAvailableCodex(localPath: string, profileName: string): void {
+        const content = existsSync(localPath) ? readFileSync(localPath, "utf-8") : "";
+        if (!content.trim()) return;
+        const parsed = parseSimpleToml(content);
+        if (parsed[`profiles.${profileName}`]) {
+            throw new Error(`backend profile already exists: ${profileName}`);
+        }
+    }
+
+    private assertProfileNameAvailableOpenCode(config: any, profileName: string): void {
+        const providers = config?.provider;
+        if (!providers || typeof providers !== "object") return;
+        for (const providerDef of Object.values(providers) as any[]) {
+            const models = providerDef?.models;
+            if (!models || typeof models !== "object") continue;
+            for (const [modelId, modelDef] of Object.entries(models) as [string, any][]) {
+                if (modelId === profileName || modelDef?.name === profileName) {
+                    throw new Error(`backend profile already exists: ${profileName}`);
+                }
+            }
+        }
+    }
+
+    private assertProfileNameAvailableClaudeCode(config: any, profileName: string): void {
+        const profiles = config?.profiles;
+        if (profiles && typeof profiles === "object" && profiles[profileName]) {
+            throw new Error(`backend profile already exists: ${profileName}`);
+        }
     }
 
     // ── Deploy helpers (called from BackendConfigInfo closures) ──────────

@@ -20,7 +20,7 @@ import { StreamAggregator } from "../../common/stream-aggregator";
 
 import { createLogger } from "../../logging";
 import { DEFAULT_APP_LOCALE, type AppLocale } from "../../common/app-locale";
-import type { IMTurnSummary } from "../../../services/index";
+import type { IMTurnSummary, TurnStatus } from "../../../services/index";
 
 import type { TurnCardReader } from "../../common/types";
 
@@ -59,6 +59,7 @@ interface HistoricalToolState {
 interface HistoricalTurnCardInput {
   chatId: string;
   turnId: string;
+  status: TurnStatus;
   threadName?: string;
   turnNumber?: number;
   backendName?: string;
@@ -82,6 +83,7 @@ interface HistoricalTurnCardInput {
 export interface TurnCardState {
   chatId: string;
   turnId: string;
+  status: TurnStatus;
   threadName?: string;
   turnNumber?: number;
   /** Per-turn backend name (e.g. "codex", "opencode") — NOT shared across turns */
@@ -201,6 +203,14 @@ function formatEventTime(value?: string): string | undefined {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
+}
+
+function isTerminalTurnStatus(status: TurnStatus): boolean {
+  return status === "completed"
+    || status === "accepted"
+    || status === "reverted"
+    || status === "interrupted"
+    || status === "failed";
 }
 
 function truncateForStreaming(text: string, maxChars = 200): string {
@@ -355,6 +365,7 @@ export class TurnCardManager {
     if (existing) return existing;
     const initial: TurnCardState = {
       chatId, turnId,
+      status: "running",
       turnNumber: undefined,
       thinking: "",
       message: "",
@@ -736,6 +747,7 @@ export class TurnCardManager {
       return "handled";
     }
     if (notif.category === "turn_complete") {
+      state.status = "completed";
       if (notif.lastAgentMessage) {
         state.message = notif.lastAgentMessage;
       }
@@ -755,10 +767,12 @@ export class TurnCardManager {
       return "handled";
     }
     if (notif.category === "turn_started") {
+      state.status = "running";
       await this.ensureCard(chatId, notif.turnId);
       return "handled";
     }
     if (notif.category === "turn_aborted") {
+      state.status = "interrupted";
       state.actionTaken = "interrupted";
       state.interruptedAt = new Date().toISOString();
       state.footer = s.footerAborted(s.actionInterrupted, toTokenText(state.tokenUsage), computeFileStats(state.fileChanges).totalFiles);
@@ -792,6 +806,7 @@ export class TurnCardManager {
     const s = getFeishuTurnCardStrings(this.locale);
     const state = this.getOrCreateState(chatId, summary.turnId);
     const alreadyInterrupted = this.isTerminalInterrupted(state);
+    state.status = alreadyInterrupted ? "interrupted" : "completed";
     state.tokenUsage = summary.tokenUsage;
     state.threadName = summary.threadName ?? state.threadName;
     if (summary.lastAgentMessage) {
@@ -932,8 +947,17 @@ export class TurnCardManager {
         if (data) {
           this.log.info({ key }, "updateCardAction: recovered state from L2");
           const s = getFeishuTurnCardStrings(this.locale);
+          const totalFiles = data.fileChanges.reduce((sum, fc) => sum + fc.filesChanged.length, 0);
+          const footer = data.status === "interrupted"
+            ? s.footerAborted(s.actionInterrupted, toTokenText(data.tokenUsage), totalFiles)
+            : data.status === "failed"
+              ? s.footerFailed(s.statusFailedLabel, toTokenText(data.tokenUsage))
+              : isTerminalTurnStatus(data.status)
+                ? s.footerDone(toTokenText(data.tokenUsage), totalFiles)
+                : "";
           state = {
             chatId, turnId: data.turnId,
+            status: data.status,
             threadName: data.threadName,
             turnNumber: data.turnNumber,
             thinking: data.reasoning ?? "",
@@ -944,7 +968,8 @@ export class TurnCardManager {
               data.toolOutputs.map(e => [e.callId, { command: e.command, output: e.output }])
             ),
             planState: data.planState,
-            callIdToLabel: new Map(), footer: s.footerDone(toTokenText(data.tokenUsage), data.fileChanges.reduce((sum, fc) => sum + fc.filesChanged.length, 0)),
+            callIdToLabel: new Map(),
+            footer,
             tokenUsage: data.tokenUsage,
             promptSummary: data.promptSummary,
             backendName: data.backendName,
@@ -983,7 +1008,13 @@ export class TurnCardManager {
       await this.flushCardUpdate(chatId, turnId);
       return this.renderCard(state);
     }
+    if (action === "accepted") {
+      state.status = "accepted";
+    } else if (action === "reverted") {
+      state.status = "reverted";
+    }
     if (action === "interrupted") {
+      state.status = "interrupted";
       state.interruptedBy = meta?.actorName ?? state.interruptedBy;
       state.interruptRequestedAt = meta?.requestedAt ?? state.interruptRequestedAt;
       state.interruptedAt = meta?.requestedAt ?? state.interruptedAt ?? new Date().toISOString();
@@ -1010,10 +1041,12 @@ export class TurnCardManager {
   // ── Card Rendering ───────────────────────────────────────────────────────
 
   renderCard(state: TurnCardState): Record<string, unknown> {
-    const isDone = state.footer.startsWith("✅");
+    const isDone = state.status === "completed" || state.status === "accepted" || state.status === "reverted";
+    const isAwaitingApproval = state.status === "awaiting_approval";
+    const isFailed = state.status === "failed";
     const isInterrupting = this.isInterruptPending(state);
     const isInterrupted = this.isInterrupted(state);
-    const isRunning = !isDone && !isInterrupting && !isInterrupted;
+    const isRunning = state.status === "running" && !isInterrupting && !isInterrupted;
     if (isRunning) {
       const streamingSession = this.nativeStreamSessions.get(keyOf(state.chatId, state.turnId));
       if (streamingSession && streamingSession.streamingActive && !streamingSession.degraded) {
@@ -1021,10 +1054,20 @@ export class TurnCardManager {
       }
     }
     const s = getFeishuTurnCardStrings(this.locale);
-    const statusText = isDone ? s.statusDone : isInterrupting ? s.actionInterrupting : isInterrupted ? s.statusAbortedLabel : s.statusRunning;
-    const statusColor = isDone ? "green" : isInterrupting ? "blue" : isInterrupted ? "red" : "blue";
-    const headerTemplate = isDone ? "green" : isInterrupting ? "turquoise" : isInterrupted ? "red" : "turquoise";
-    const headerIcon = isDone ? "done_outlined" : isInterrupting ? "loading_outlined" : isInterrupted ? "close_outlined" : "loading_outlined";
+    const statusText = isDone
+      ? s.statusDone
+      : isInterrupting
+        ? s.actionInterrupting
+        : isInterrupted
+          ? s.statusAbortedLabel
+          : isFailed
+            ? s.statusFailedLabel
+            : isAwaitingApproval
+              ? s.statusAwaitingApprovalLabel
+              : s.statusRunning;
+    const statusColor = isDone ? "green" : isInterrupting ? "blue" : isInterrupted || isFailed ? "red" : isAwaitingApproval ? "orange" : "blue";
+    const headerTemplate = isDone ? "green" : isInterrupting ? "turquoise" : isInterrupted || isFailed ? "red" : isAwaitingApproval ? "orange" : "turquoise";
+    const headerIcon = isDone ? "done_outlined" : isInterrupting ? "loading_outlined" : isInterrupted || isFailed ? "close_outlined" : isAwaitingApproval ? "clock_outlined" : "loading_outlined";
     const tokenText = toTokenText(state.tokenUsage);
 
     // ── File change stats (for header tags + button label) ─────────────
@@ -1055,6 +1098,10 @@ export class TurnCardManager {
       bodyElements.push({ tag: "markdown", content: msg });
     } else if (isInterrupting) {
       bodyElements.push(greyText(s.actionInterrupting));
+    } else if (isAwaitingApproval) {
+      bodyElements.push(greyText(s.awaitingApproval));
+    } else if (isFailed) {
+      bodyElements.push(greyText(s.statusFailed));
     } else if (!isDone && state.tools.length === 0 && state.toolOutputs.size === 0 && state.fileChanges.length === 0) {
       bodyElements.push(greyText(s.waitingOutput));
     }
@@ -1200,6 +1247,12 @@ export class TurnCardManager {
           ]
         }]
       });
+    } else if (isAwaitingApproval) {
+      bodyElements.push({ tag: "hr" });
+      bodyElements.push(greyText(s.awaitingApproval));
+    } else if (isFailed) {
+      bodyElements.push({ tag: "hr" });
+      bodyElements.push(greyText(s.statusFailed));
     } else if (isInterrupting || isInterrupted) {
       bodyElements.push({ tag: "hr" });
       bodyElements.push(greyText(isInterrupting ? s.actionInterrupting : s.actionInterrupted));
@@ -1260,7 +1313,7 @@ export class TurnCardManager {
 
     // ── Header title: <Mode>: keywords ────────────────────────────────
     const modeLabel = state.turnMode === "plan" ? s.planMode : s.agentMode;
-    const headerTitle = isDone || isInterrupted
+    const headerTitle = isDone || isInterrupted || isFailed
       ? (state.promptSummary
           ? `${modeLabel}: ${state.promptSummary}`
           : modeLabel)
@@ -1299,12 +1352,21 @@ export class TurnCardManager {
   private buildHistoricalState(input: HistoricalTurnCardInput): TurnCardState {
     const s = getFeishuTurnCardStrings(this.locale);
     const tokenText = toTokenText(input.tokenUsage);
-    const footerParts = [`✅ ${s.done}`];
-    if (tokenText !== "-") footerParts.push(`${tokenText} tokens`);
-    if (input.fileChanges.length > 0) footerParts.push(s.fileChanges(computeFileStats(input.fileChanges).totalFiles));
+    const footerParts: string[] = [];
+    const totalFiles = computeFileStats(input.fileChanges).totalFiles;
+    if (input.status === "completed" || input.status === "accepted" || input.status === "reverted") {
+      footerParts.push(`✅ ${s.done}`);
+      if (tokenText !== "-") footerParts.push(`${tokenText} tokens`);
+      if (input.fileChanges.length > 0) footerParts.push(s.fileChanges(totalFiles));
+    } else if (input.status === "interrupted") {
+      footerParts.push(s.footerAborted(s.actionInterrupted, tokenText, totalFiles));
+    } else if (input.status === "failed") {
+      footerParts.push(s.footerFailed(s.statusFailedLabel, tokenText));
+    }
     return {
       chatId: input.chatId,
       turnId: input.turnId,
+      status: input.status,
       threadName: input.threadName,
       turnNumber: input.turnNumber,
       backendName: input.backendName,

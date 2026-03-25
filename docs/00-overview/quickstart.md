@@ -1,64 +1,64 @@
 ---
-title: "Quickstart"
+title: QUICKSTART
 layer: overview
 status: active
 source_of_truth: package.json, src/server.ts, src/config.ts, docs/00-overview/platform-feishu.md
 ---
 
-# Quickstart
+# QUICKSTART
 
-This document is for readers deploying `CollabVibe` and running it end-to-end for the first time. The goal is to complete the shortest path to:
+这份文档面向第一次部署和第一次跑通 `CollabVibe` 的读者，目标是在最短路径内完成：
 
-- install dependencies
-- configure environment variables
-- prepare the API backend command and workspace
-- start the service
-- validate the message and card path in Feishu
+- 安装依赖
+- 配置环境变量
+- 准备 API backend 命令与 workspace
+- 启动服务
+- 在 Feishu 中验证消息与卡片链路
 
-## 1. Prerequisites
+## 1. 运行前提
 
-| Item | Description |
+| 项目 | 说明 |
 | --- | --- |
-| Node.js | Required to run `tsx`, VitePress, and test scripts |
-| npm / pnpm compatible environment | The current repository exposes scripts via `npm run` |
-| Local filesystem | Stores `data/`, config, logs, SQLite, and workspace state |
-| Feishu app credentials | Required for the current primary platform |
-| Backend executable command | For example `codex app-server` |
+| Node.js | 用于运行 `tsx`、VitePress、测试脚本 |
+| npm / pnpm 兼容环境 | 当前仓库脚本以 `npm run` 形式提供 |
+| 本地文件系统 | 保存 `data/`、配置、日志、SQLite、workspace |
+| Feishu 应用凭据 | 当前主平台必需 |
+| backend 可执行命令 | 例如 `codex app-server` |
 
 ```bash
 node -v
 npm -v
 ```
 
-## 2. Install dependencies
+## 2. 安装依赖
 
 ```bash
 npm install
 ```
 
-## 3. Prepare environment variables
+## 3. 准备环境变量
 
-Start from the existing environment template or your deployment environment variables. At minimum, prepare the following values:
+推荐从现有环境模板或本地部署变量开始整理，至少准备以下变量：
 
-| Variable | Required | Purpose |
+| 变量 | 必填 | 作用 |
 | --- | --- | --- |
-| `FEISHU_APP_ID` | Yes | Feishu app ID |
-| `FEISHU_APP_SECRET` | Yes | Feishu app secret |
-| `FEISHU_SIGNING_SECRET` | No | Event signature validation; usually optional in Stream mode |
-| `FEISHU_ENCRYPT_KEY` | No | Encrypted-event support |
-| `CODEX_APP_SERVER_CMD` | Recommended | Backend start command |
-| `COLLABVIBE_WORKSPACE_CWD` | Recommended | Workspace root directory |
-| `CODEX_SANDBOX` | No | Default sandbox policy |
-| `CODEX_APPROVAL_POLICY` | No | Default approval policy |
-| `APPROVAL_TIMEOUT_MS` | No | Approval timeout |
-| `COLLABVIBE_STREAM_PERSIST_WINDOW_MS` | No | Streaming persist window for Path B |
-| `COLLABVIBE_STREAM_PERSIST_MAX_WAIT_MS` | No | Streaming persist max wait |
-| `COLLABVIBE_STREAM_PERSIST_MAX_CHARS` | No | Early persist flush threshold |
-| `COLLABVIBE_STREAM_UI_WINDOW_MS` | No | Streaming UI flush window |
-| `COLLABVIBE_STREAM_UI_MAX_WAIT_MS` | No | Streaming UI max wait |
-| `COLLABVIBE_STREAM_UI_MAX_CHARS` | No | Early UI flush threshold |
-| `PORT` | No | Service listening port |
-| `SYS_ADMIN_USER_IDS` | Recommended | Initial system administrator IDs |
+| `FEISHU_APP_ID` | 是 | Feishu 应用 ID |
+| `FEISHU_APP_SECRET` | 是 | Feishu 应用密钥 |
+| `FEISHU_SIGNING_SECRET` | 否 | 事件签名校验；Stream 模式通常可不填 |
+| `FEISHU_ENCRYPT_KEY` | 否 | 加密事件支持 |
+| `CODEX_APP_SERVER_CMD` | 建议 | backend 启动命令 |
+| `COLLABVIBE_WORKSPACE_CWD` | 建议 | 工作区根目录 |
+| `CODEX_SANDBOX` | 否 | 默认 sandbox 策略 |
+| `CODEX_APPROVAL_POLICY` | 否 | 默认审批策略 |
+| `APPROVAL_TIMEOUT_MS` | 否 | 审批超时 |
+| `COLLABVIBE_STREAM_PERSIST_WINDOW_MS` | 否 | Path B 流式持久化窗口 |
+| `COLLABVIBE_STREAM_PERSIST_MAX_WAIT_MS` | 否 | Path B 流式持久化最长等待时间 |
+| `COLLABVIBE_STREAM_PERSIST_MAX_CHARS` | 否 | 提前触发持久化 flush 的字符阈值 |
+| `COLLABVIBE_STREAM_UI_WINDOW_MS` | 否 | Path B 流式 UI flush 窗口 |
+| `COLLABVIBE_STREAM_UI_MAX_WAIT_MS` | 否 | Path B 流式 UI 最长等待时间 |
+| `COLLABVIBE_STREAM_UI_MAX_CHARS` | 否 | 提前触发 UI flush 的字符阈值 |
+| `PORT` | 否 | 服务监听端口 |
+| `SYS_ADMIN_USER_IDS` | 建议 | 初始系统管理员 ID 列表 |
 
 ```bash
 cp .env.example .env
@@ -73,41 +73,41 @@ SYS_ADMIN_USER_IDS=ou_xxx
 PORT=3100
 ```
 
-These stream tuning variables are optional. In most deployments, keep the defaults unless you need to reduce burst frequency or improve perceived latency for high-volume turns.
+这些 stream 调参变量都是可选项。大多数部署场景保持默认值即可，只有在高频流式 turn 下需要平衡“推送频率 / 感知延迟”时再调整。
 
 
 
-## 4. Prepare local directories
+## 4. 准备本地目录
 
-Runtime depends on the following directories:
+运行时会依赖以下目录：
 
-| Path | Description |
+| 路径 | 说明 |
 | --- | --- |
-| `collabvibe.db` | Main SQLite database |
-| `config/` | Backend configuration directory |
-| `logs/` | Runtime logs |
-| `COLLABVIBE_WORKSPACE_CWD` | Root of the code workspace |
+| `collabvibe.db` | SQLite 主库 |
+| `config/` | backend 配置目录 |
+| `logs/` | 运行日志 |
+| `COLLABVIBE_WORKSPACE_CWD` | 代码工作区根目录 |
 
 ```bash
 mkdir -p config logs
 mkdir -p /abs/path/to/workspace
 ```
 
-## 5. Start the service
+## 5. 启动服务
 
-Development mode:
+开发模式：
 
 ```bash
 npm run start:dev
 ```
 
-Production mode:
+生产模式：
 
 ```bash
 npm run start
 ```
 
-Documentation preview:
+文档预览：
 
 ```bash
 npm run docs:dev
@@ -115,24 +115,24 @@ npm run docs:dev
 
 
 
-## 6. Complete the Feishu-side integration
+## 6. 完成 Feishu 平台接入
 
-Feishu is currently the primary platform for `CollabVibe`. On the first deployment, you need to complete bot creation, permission setup, event subscriptions, and visibility publishing on the platform side.
+`CollabVibe` 当前主平台是 Feishu。第一次部署时，需要先在平台侧完成 Bot 创建、权限开通、事件订阅与可见范围发布。
 
-- See [Feishu Integration](/00-overview/platform-feishu) for the platform steps
-- If you just want to understand the current state, you can also review [Slack Integration](/00-overview/platform-slack)
+- 平台步骤详见 [Feishu 平台接入](/00-overview/platform-feishu)
+- 如果只是了解现状，可同时参考 [Slack 平台接入](/00-overview/platform-slack)
 
 
 
-## 7. Minimal validation
+## 7. 最小验证
 
-Validate in the following order:
+建议按下面顺序验证：
 
-1. The service starts without startup errors
-2. The bot is visible in the target group chat or direct chat
-3. Sending a user message triggers an event
-4. The bot returns a message or card
-5. `logs/app.log` contains the corresponding logs
+1. 服务已启动，无启动时报错
+2. Bot 已加入目标群聊或单聊可见
+3. 用户发送消息后可触发事件
+4. 机器人可返回消息或卡片
+5. `logs/app.log` 中可以看到对应日志
 
 ```bash
 tail -f logs/app.log
@@ -142,7 +142,7 @@ tail -f logs/app.log
 npm run test:workspace
 ```
 
-## 8. Common commands
+## 8. 常用命令
 
 ```bash
 npm run start:dev
@@ -153,9 +153,9 @@ npm run test:workspace
 npm test
 ```
 
-## 9. Optional stream tuning
+## 9. 可选的 stream 调参
 
-If your backend emits very dense streaming deltas, you can tune Path B throttling at the environment level:
+如果 backend 会产生非常密集的流式 delta，可以通过环境变量调节 Path B 节流参数：
 
 ```dotenv
 COLLABVIBE_STREAM_PERSIST_WINDOW_MS=700
@@ -163,9 +163,9 @@ COLLABVIBE_STREAM_UI_WINDOW_MS=500
 COLLABVIBE_STREAM_UI_MAX_WAIT_MS=1500
 ```
 
-Use these only after you have validated the default behavior. Terminal events still force a final flush.
+建议先验证默认行为，再决定是否调参。终态事件仍会强制执行最终 flush。
 
-## What to read next
+## 下一步
 
-- To understand the whole system: [System Overview](/00-overview/system-overview)
-- To understand the three core entities: [Core Entities: Project / Thread / Turn](/01-architecture/architecture)
+- 想理解系统全貌：看 [系统总览](/00-overview/system-overview)
+- 想理解三大核心对象：看 [核心类：Project / Thread / Turn](/01-architecture/core-entities)

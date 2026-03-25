@@ -10,6 +10,7 @@ export interface FeishuTurnCardStrings {
   statusDoneLabel: string;
   statusAbortedLabel: string;
   statusFailedLabel: string;
+  statusAwaitingApprovalLabel: string;
   patchPrefix(targetFile: string): string;
   applyPatch: string;
   childAgentWorking(agentId: string): string;
@@ -26,6 +27,7 @@ export interface FeishuTurnCardStrings {
   fileChanges(count: number): string;
   statusDone: string;
   statusRunning: string;
+  awaitingApproval: string;
   truncated: string;
   waitingOutput: string;
   thinkingProcess(label: string): string;
@@ -87,6 +89,7 @@ const zhCN: FeishuTurnCardStrings = {
   statusDoneLabel: "已完成",
   statusAbortedLabel: "已中断",
   statusFailedLabel: "失败",
+  statusAwaitingApprovalLabel: "等待审批",
   patchPrefix: (targetFile) => `补丁: ${targetFile}`,
   applyPatch: "应用补丁",
   childAgentWorking: (agentId) => `子 agent-${agentId} 工作中`,
@@ -103,6 +106,7 @@ const zhCN: FeishuTurnCardStrings = {
   fileChanges: (count) => `${count} 文件变更`,
   statusDone: "已完成",
   statusRunning: "运行中",
+  awaitingApproval: "等待审批，需先处理当前审批请求",
   truncated: "_...已截断_",
   waitingOutput: "等待输出...",
   thinkingProcess: (label) => `**思考过程** (${label})`,
@@ -164,6 +168,7 @@ const enUS: FeishuTurnCardStrings = {
   statusDoneLabel: "Done",
   statusAbortedLabel: "Aborted",
   statusFailedLabel: "Failed",
+  statusAwaitingApprovalLabel: "Awaiting approval",
   patchPrefix: (targetFile) => `Patch: ${targetFile}`,
   applyPatch: "Apply patch",
   childAgentWorking: (agentId) => `Child agent-${agentId} is running`,
@@ -180,6 +185,7 @@ const enUS: FeishuTurnCardStrings = {
   fileChanges: (count) => `${count} file changes`,
   statusDone: "Done",
   statusRunning: "Running",
+  awaitingApproval: "Awaiting approval. Resolve the pending approval request first.",
   truncated: "_...truncated_",
   waitingOutput: "Waiting for output...",
   thinkingProcess: (label) => `**Thinking** (${label})`,

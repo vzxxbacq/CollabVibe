@@ -3269,7 +3269,7 @@ export function buildAdminBackendEditCard(
   // ── 接入源面板 ────────────────────────────────────────────────────
   for (let pi = 0; pi < b.providers.length; pi++) {
     const p = b.providers[pi]!;
-    const keyDisplay = displayKey(p.apiKeyEnv);
+    const keyDisplay = p.apiKeyMasked ?? displayKey(p.apiKeyEnv);
 
     // ── 接入源内容（折叠区域） ───────────────────────
     const providerElements: unknown[] = [];
@@ -3429,8 +3429,17 @@ export function buildAdminBackendModelCard(
 
   // ── Existing profiles list ────────────────────────────────────────────
   const profiles = b.profiles ?? [];
-  if (profiles.length > 0) {
-    for (const profile of profiles) {
+  for (const provider of b.providers) {
+    const providerProfiles = profiles.filter((profile) => profile.provider === provider.name);
+    if (providerProfiles.length === 0) continue;
+
+    elements.push({
+      tag: "markdown",
+      content: `**${provider.name}**  ·  ${providerProfiles.length}`,
+      icon: { tag: "standard_icon", token: "cloud_outlined", color: "turquoise" }
+    });
+
+    for (const profile of providerProfiles) {
       const ex = (profile as any).extras ?? {};
       const extraParts: string[] = [];
       if (ex.model_reasoning_effort) extraParts.push(String(ex.model_reasoning_effort));
@@ -3465,16 +3474,17 @@ export function buildAdminBackendModelCard(
                 title: { tag: "plain_text", content: s.adminBackendDeleteModelConfirmTitle(profile.name) },
                 text: { tag: "plain_text", content: s.adminBackendDeleteModelConfirmText }
               },
-              behaviors: [{ type: "callback", value: { action: "admin_backend_remove_profile", backend: b.name, profile: profile.name } }]
+              behaviors: [{ type: "callback", value: { action: "admin_backend_remove_profile", backend: b.name, provider: provider.name, profile: profile.name } }]
             }]
           }
         ]
       });
     }
+
+    elements.push({ tag: "hr" });
   }
 
   // ── New model form ────────────────────────────────────────────────────
-  elements.push({ tag: "hr" });
   const pfId = sanitizeElementId(`pf_${backendName}`);
   const pfFields: unknown[] = [];
 

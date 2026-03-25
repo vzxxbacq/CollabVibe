@@ -181,8 +181,11 @@ export class AsyncDatabaseProxy {
 
   async close(): Promise<void> {
     if (this.closed) return;
-    this.closed = true;
-    await this.send({ method: "close" });
-    await this.worker.terminate();
+    try {
+      await this.send({ method: "close" });
+    } finally {
+      this.closed = true;
+      await this.worker.terminate();
+    }
   }
 }

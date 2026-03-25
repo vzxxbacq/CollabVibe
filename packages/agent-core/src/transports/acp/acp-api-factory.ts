@@ -31,6 +31,10 @@ export class AcpApiFactory implements AgentApiFactory {
     log.info({ projectThreadKey }, "ACP client initialized");
     const api = new AcpApiAdapter(client);
     api.setCreationConfig(config);
+    api.setErrorContext({
+      projectId: config.projectId,
+      threadName,
+    });
     // Wire session persistence callback first — ensureSession may fall back to
     // session/new which triggers sessionIdChangedCallback to persist the new ID.
     if (config.onBackendSessionIdChanged) {

@@ -41,8 +41,8 @@ async function syncChatMembersBackground(
     log.info({ chatId, projectId, memberCount: memberIds.length, memberIds: memberIds.slice(0, 20) }, "syncChatMembersBackground: listChatMembers result");
     if (!memberIds.length) return;
     for (const uid of memberIds) {
-      log.info({ uid, projectId }, "syncChatMembersBackground: resolving role");
-      await api.resolveRole({ userId: uid, projectId });
+      log.info({ uid, projectId }, "syncChatMembersBackground: ensuring project member");
+      await api.ensureProjectMember({ userId: uid, projectId, defaultRole: "auditor" });
     }
     log.info({ projectId, count: memberIds.length }, "syncChatMembersBackground: synced all members");
   } catch (err) {
@@ -154,8 +154,8 @@ export class FeishuPlatformModule implements PlatformModule {
               for (const u of users) {
                 const userId = extractOpenId(u, "user_id") || (typeof u.open_id === "string" ? u.open_id : "");
                 if (userId) {
-                  log.info({ userId, projectId: project.id }, "member.joined: resolving role for user");
-                  await ctx.api.resolveRole({ userId, projectId: project.id });
+                  log.info({ userId, projectId: project.id }, "member.joined: ensuring project member");
+                  await ctx.api.ensureProjectMember({ userId, projectId: project.id, defaultRole: "auditor" });
                 }
               }
             } catch (error) {

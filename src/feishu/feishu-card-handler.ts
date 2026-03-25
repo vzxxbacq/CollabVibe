@@ -2127,7 +2127,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
   adminBackendRemoveProfile: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "ADMIN_HELP");
     if (!action.backend || !action.profileName) return;
-    await deps.api.adminDeleteProfile({ actorId: action.actorId, backendId: action.backend, profileName: action.profileName });
+    await deps.api.adminDeleteProfile({ actorId: action.actorId, backendId: action.backend, providerName: action.provider, profileName: action.profileName });
     const data = await buildAdminBackendData(deps);
     return rawCard(deps.platformOutput.buildAdminBackendModelCard(data, action.backend));
   },
@@ -2159,6 +2159,7 @@ async function resolveUnifiedTurnCard(deps: FeishuHandlerDeps, chatId: string, o
     return deps.platformOutput.primeHistoricalTurnCard({
       chatId,
       turnId: data.turnId,
+      status: data.status,
       threadName: data.threadName,
       turnNumber: data.turnNumber,
       backendName: data.backendName,
@@ -3145,6 +3146,7 @@ async function buildAdminBackendData(deps: FeishuHandlerDeps): Promise<import(".
         baseUrl: p.baseUrl,
         apiKeyEnv: p.apiKeyEnv,
         apiKeySet: p.apiKeySet,
+        apiKeyMasked: p.apiKeyMasked,
         isActive: c.activeProvider === p.name,
         models: p.models.map((m) => ({
           name: m.name,

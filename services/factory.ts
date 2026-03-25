@@ -570,8 +570,8 @@ export async function createOrchestratorLayer(
       async adminWriteProfile(input: { backendId: string; profileName: string; model: string; provider: string; extras?: Record<string, unknown> }) {
         return backendService.adminWriteProfile(input.backendId, input.profileName, input.model, input.provider, input.extras);
       },
-      async adminDeleteProfile(input: { backendId: string; profileName: string }) {
-        return backendService.adminDeleteProfile(input.backendId, input.profileName);
+      async adminDeleteProfile(input: { backendId: string; providerName?: string; profileName: string }) {
+        return backendService.adminDeleteProfile(input.backendId, input.profileName, input.providerName);
       },
       async handleMerge(input: { projectId: string; branchName: string; force?: boolean; deleteBranch?: boolean; context?: Parameters<typeof mergeUseCase.handleMerge>[3] }) {
         return toMergeResult(await mergeUseCase.handleMerge(
@@ -768,6 +768,9 @@ export async function createOrchestratorLayer(
       },
       listAdmins() {
         return iamService.listAdmins();
+      },
+      ensureProjectMember(input: { projectId: string; userId: string; defaultRole?: "maintainer" | "developer" | "auditor" }) {
+        return iamService.ensureProjectMember(input);
       },
       addProjectMember(input: { projectId: string; userId: string; role: "maintainer" | "developer" | "auditor" }) {
         return iamService.addProjectMember(input);
@@ -1053,7 +1056,7 @@ export async function createOrchestratorLayer(
       if (typeof apiPool.releaseAll === "function") {
         await apiPool.releaseAll();
       }
-      db.close();
+      await db.close();
     },
   };
 }

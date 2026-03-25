@@ -21,12 +21,20 @@ export class AcpApiAdapter implements AgentApi {
   private readonly optionMapper = createApprovalOptionMapper();
   /** Callback to persist session ID changes to the database */
   private sessionIdChangedCallback?: (newSessionId: string) => void;
+  private errorContext: {
+    projectId?: string;
+    threadName?: string;
+  } = {};
 
   constructor(private readonly client: AcpClient) { }
 
   /** Called by AcpAgentApiFactory after creation to store the config */
   setCreationConfig(config: RuntimeConfig): void {
     this.creationConfig = config;
+  }
+
+  setErrorContext(context: { projectId?: string; threadName?: string }): void {
+    this.errorContext = { ...context };
   }
 
   /** Initialize from persisted backendSessionId (read from DB binding) */
@@ -54,52 +62,70 @@ export class AcpApiAdapter implements AgentApi {
       const errMsg = loadErr instanceof Error ? loadErr.message : String(loadErr);
       log.error({ sessionId, err: errMsg }, "ensureSession: session/load failed");
       throw new Error(
-        `Thread 的 ACP session 已失效 (${sessionId})，上下文不可恢复。请使用 /thread new 创建新 thread`
+        this.withThreadContext(
+          `Thread 的 ACP session 已失效 (${sessionId})，上下文不可恢复。请使用 /thread new 创建新 thread`,
+          sessionId
+        )
       );
     }
   }
 
   async threadStart(params: RuntimeConfig): Promise<{ thread: { id: string } }> {
-    const response = await this.client.sessionNew(params as unknown as Record<string, unknown>);
-    this.currentSessionId = response.session.id;
-    this.sessionEstablished = true;
-    // Notify caller to persist the new session ID
-    this.sessionIdChangedCallback?.(response.session.id);
-    return { thread: { id: response.session.id } };
+    try {
+      const response = await this.client.sessionNew(params as unknown as Record<string, unknown>);
+      this.currentSessionId = response.session.id;
+      this.sessionEstablished = true;
+      // Notify caller to persist the new session ID
+      this.sessionIdChangedCallback?.(response.session.id);
+      return { thread: { id: response.session.id } };
+    } catch (error) {
+      throw this.wrapError(error);
+    }
   }
 
   async threadResume(threadId: string, params?: RuntimeConfig): Promise<{ thread: { id: string } }> {
-    const response = await this.client.sessionLoad(threadId, params as unknown as Record<string, unknown> | undefined);
-    this.currentSessionId = response.session.id;
-    this.sessionEstablished = true;
-    return { thread: { id: response.session.id } };
+    try {
+      const response = await this.client.sessionLoad(threadId, params as unknown as Record<string, unknown> | undefined);
+      this.currentSessionId = response.session.id;
+      this.sessionEstablished = true;
+      return { thread: { id: response.session.id } };
+    } catch (error) {
+      throw this.wrapError(error, threadId);
+    }
   }
 
   async turnStart(params: { threadId: string; traceId?: string; input: AgentTurnInputItem[] }): Promise<{ turn: { id: string } }> {
     if (!this.sessionEstablished) {
-      throw new Error("ACP session not established — call ensureSession() or threadStart() first");
+      throw new Error(this.withThreadContext(
+        "ACP session not established — call ensureSession() or threadStart() first",
+        params.threadId
+      ));
     }
-    const turnMode = this.pendingMode;
-    this.client.setLogCorrelation({ turnMode });
-    await this.client.setMode(this.currentSessionId, turnMode);
-    // Map rich TurnInputItem[] to ACP-native input format
-    const acpInput = params.input.map(item => {
-      switch (item.type) {
-        case "text": return { type: "text" as const, text: item.text };
-        case "skill": return { type: "text" as const, text: `[使用 Skill: ${item.name}, 参考 ${item.path}/SKILL.md]` };
-        case "file_mention": return { type: "text" as const, text: `[请重点关注文件: ${item.path}]` };
-        case "local_image": return { type: "image" as const, source: { type: "file" as const, path: item.path } };
-      }
-    });
-    const result = await this.client.prompt({
-      sessionId: this.currentSessionId,
-      traceId: params.traceId,
-      input: acpInput
-    });
-    this.pendingMode = "code";
-    this.currentTurnId = result.turn.id;
-    this.turnFinished = false;
-    return result;
+    try {
+      const turnMode = this.pendingMode;
+      this.client.setLogCorrelation({ turnMode });
+      await this.client.setMode(this.currentSessionId, turnMode);
+      // Map rich TurnInputItem[] to ACP-native input format
+      const acpInput = params.input.map(item => {
+        switch (item.type) {
+          case "text": return { type: "text" as const, text: item.text };
+          case "skill": return { type: "text" as const, text: `[使用 Skill: ${item.name}, 参考 ${item.path}/SKILL.md]` };
+          case "file_mention": return { type: "text" as const, text: `[请重点关注文件: ${item.path}]` };
+          case "local_image": return { type: "image" as const, source: { type: "file" as const, path: item.path } };
+        }
+      });
+      const result = await this.client.prompt({
+        sessionId: this.currentSessionId,
+        traceId: params.traceId,
+        input: acpInput
+      });
+      this.pendingMode = "code";
+      this.currentTurnId = result.turn.id;
+      this.turnFinished = false;
+      return result;
+    } catch (error) {
+      throw this.wrapError(error, params.threadId);
+    }
   }
 
   async setMode(mode: "plan" | "code"): Promise<void> {
@@ -108,14 +134,22 @@ export class AcpApiAdapter implements AgentApi {
       log.warn("setMode called before session established — skipping");
       return;
     }
-    this.client.setLogCorrelation({ turnMode: mode });
-    await this.client.setMode(this.currentSessionId, mode);
+    try {
+      this.client.setLogCorrelation({ turnMode: mode });
+      await this.client.setMode(this.currentSessionId, mode);
+    } catch (error) {
+      throw this.wrapError(error);
+    }
   }
 
   async turnInterrupt(threadId: string, turnId: string): Promise<void> {
-    const sessionId = this.currentSessionId || threadId;
-    log.info({ sessionId, turnId, originalThreadId: threadId }, "cancelling session");
-    await this.client.cancel(sessionId, turnId);
+    try {
+      const sessionId = this.currentSessionId || threadId;
+      log.info({ sessionId, turnId, originalThreadId: threadId }, "cancelling session");
+      await this.client.cancel(sessionId, turnId);
+    } catch (error) {
+      throw this.wrapError(error, threadId);
+    }
   }
 
   async threadRollback(): Promise<void> {
@@ -123,9 +157,13 @@ export class AcpApiAdapter implements AgentApi {
   }
 
   async respondApproval(params: { action: "approve" | "deny" | "approve_always"; approvalId: string; threadId?: string; turnId?: string; callId?: string; approvalType?: "command_exec" | "file_change"; }): Promise<void> {
-    const selectedOptionId = this.optionMapper.toOptionId(params.action) ?? "deny";
-    const sessionId = this.currentSessionId;
-    await this.client.respondApproval(sessionId, params.approvalId, selectedOptionId);
+    try {
+      const selectedOptionId = this.optionMapper.toOptionId(params.action) ?? "deny";
+      const sessionId = this.currentSessionId;
+      await this.client.respondApproval(sessionId, params.approvalId, selectedOptionId);
+    } catch (error) {
+      throw this.wrapError(error, params.threadId);
+    }
   }
 
   onNotification(handler: (notification: UnifiedAgentEvent) => void): void {
@@ -202,5 +240,22 @@ export class AcpApiAdapter implements AgentApi {
     this.currentTurnId = eventTurnId;
     this.turnFinished = true;
     return false;
+  }
+
+  private wrapError(error: unknown, threadId?: string): Error {
+    const message = error instanceof Error ? error.message : String(error);
+    return new Error(this.withThreadContext(message, threadId));
+  }
+
+  private withThreadContext(message: string, threadId?: string): string {
+    const effectiveThreadId = threadId ?? this.currentSessionId;
+    const parts = [
+      "backend=acp",
+      this.errorContext.projectId ? `projectId=${this.errorContext.projectId}` : null,
+      this.errorContext.threadName ? `threadName=${this.errorContext.threadName}` : null,
+      effectiveThreadId ? `threadId=${effectiveThreadId}` : null,
+    ].filter((value): value is string => Boolean(value));
+    if (parts.length === 0) return message;
+    return `[${parts.join(" ")}] ${message}`;
   }
 }

@@ -1,14 +1,14 @@
 ---
-title: "Execution Paths and Data Flow"
+title: "调用链与数据流"
 status: active
 ---
 
-# Execution Paths and Data Flow
+# 调用链与数据流
 
-This page moved to [System Architecture](/01-architecture/architecture).
+本文已迁移到[系统架构](/01-architecture/architecture)。
 
-The architecture page is now the canonical document for:
+现在统一由该页面维护：
 
-- the two data paths
-- layer boundaries
-- core invariants
+- 两条数据路径
+- 分层边界
+- 核心不变式

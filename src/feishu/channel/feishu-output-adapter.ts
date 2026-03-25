@@ -32,6 +32,7 @@ import {
   type IMAdminMemberPanel,
   type IMAdminSkillPanel,
   type IMAdminBackendPanel,
+  type TurnStatus,
 } from "../../../services/index";
 import { createLogger } from "../../logging";
 import { DEFAULT_APP_LOCALE, type AppLocale } from "../../common/app-locale";
@@ -615,6 +616,7 @@ export class FeishuOutputAdapter {
   primeHistoricalTurnCard(input: {
     chatId: string;
     turnId: string;
+    status: TurnStatus;
     threadName?: string;
     turnNumber?: number;
     backendName?: string;

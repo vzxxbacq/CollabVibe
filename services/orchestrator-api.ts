@@ -580,6 +580,7 @@ export interface OrchestratorApi {
       baseUrl?: string;
       apiKeyEnv?: string;
       apiKeySet: boolean;
+      apiKeyMasked?: string;
       models: Array<{ name: string; available: boolean | null; checkedAt?: string; error?: string }>;
     }>;
     policy?: Record<string, string>;
@@ -649,7 +650,7 @@ export interface OrchestratorApi {
   }): Promise<void>;
 
   /** [Admin] 删除模型 profile。 */
-  adminDeleteProfile(input: { backendId: string; profileName: string; actorId: string }): Promise<void>;
+  adminDeleteProfile(input: { backendId: string; providerName?: string; profileName: string; actorId: string }): Promise<void>;
 
   /** 检查后端可用性。 */
   checkBackendHealth(input: {
@@ -690,6 +691,13 @@ export interface OrchestratorApi {
 
   /** 列出所有系统管理员。 */
   listAdmins(): Promise<Array<{ userId: string; source: "env" | "im" }>>;
+
+  /** 确保用户属于项目成员；若缺失则以默认角色补齐。 */
+  ensureProjectMember(input: {
+    projectId: string;
+    userId: string;
+    defaultRole?: "maintainer" | "developer" | "auditor";
+  }): Promise<void>;
 
   /** 添加项目成员（自动 upsert 用户记录）。 */
   addProjectMember(input: {

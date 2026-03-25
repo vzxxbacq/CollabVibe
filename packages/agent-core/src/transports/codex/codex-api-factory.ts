@@ -47,60 +47,76 @@ class CodexProtocolAdapter implements CodexApiWithNotifications {
   ) { }
 
   async threadStart(params: RuntimeConfig): Promise<{ thread: { id: string } }> {
-    // D2: Map RuntimeConfig → Codex ThreadStartParams
-    return this.client.threadStart({
-      model: params.backend.model,
-      cwd: params.cwd,
-      sandbox: params.sandbox as import("./types").SandboxPolicy,
-      approvalPolicy: params.approvalPolicy,
-      personality: params.personality,
-      serviceName: params.serviceName,
-    });
+    try {
+      // D2: Map RuntimeConfig → Codex ThreadStartParams
+      return await this.client.threadStart({
+        model: params.backend.model,
+        cwd: params.cwd,
+        sandbox: params.sandbox as import("./types").SandboxPolicy,
+        approvalPolicy: params.approvalPolicy,
+        personality: params.personality,
+        serviceName: params.serviceName,
+      });
+    } catch (error) {
+      throw this.wrapError(error);
+    }
   }
 
   async turnStart(params: { threadId: string; traceId?: string; input: AgentTurnInputItem[] }): Promise<{ turn: { id: string } }> {
-    const turnMode = this.pendingMode === "plan" ? "plan" : "code";
-    this.transport.setLogCorrelation({ ...this.correlation, turnMode, turnId: undefined });
-    this.rpc.setLogCorrelation({ ...this.correlation, turnMode, turnId: undefined });
-    // Map rich TurnInputItem[] to Codex-native input format
-    const codexInput = params.input.map(item => {
-      switch (item.type) {
-        case "text": return { type: "text" as const, text: item.text };
-        case "skill": return { type: "skill" as const, name: item.name, path: item.path };
-        case "file_mention": return { type: "text" as const, text: `[请重点关注文件: ${item.path}]` };
-        case "local_image": return { type: "localImage" as const, path: item.path };
-      }
-    });
-    const turnParams: Record<string, unknown> = {
-      threadId: params.threadId,
-      input: codexInput,
-    };
-    if (params.traceId) turnParams.traceId = params.traceId;
-    // Always send collaborationMode to ensure Codex agent mode stays in sync.
-    // Without this, a prior /plan turn would leave the agent in plan mode
-    // because the server preserves the last-set mode across turns.
-    // settings.model from constructor (I3: sourced from ThreadRecord.backend.model)
-    turnParams.collaborationMode = {
-      mode: this.pendingMode,
-      settings: { model: this.model, reasoning_effort: null, developer_instructions: null }
-    };
-    const result = await this.client.turnStart(turnParams as unknown as Parameters<CodexClient["turnStart"]>[0]);
-    this.transport.setLogCorrelation({ ...this.correlation, turnMode, turnId: result.turn.id });
-    this.rpc.setLogCorrelation({ ...this.correlation, turnMode, turnId: result.turn.id });
-    // Reset pending mode after turn start
-    this.pendingMode = "default";
-    return result;
+    try {
+      const turnMode = this.pendingMode === "plan" ? "plan" : "code";
+      this.transport.setLogCorrelation({ ...this.correlation, turnMode, turnId: undefined });
+      this.rpc.setLogCorrelation({ ...this.correlation, turnMode, turnId: undefined });
+      // Map rich TurnInputItem[] to Codex-native input format
+      const codexInput = params.input.map(item => {
+        switch (item.type) {
+          case "text": return { type: "text" as const, text: item.text };
+          case "skill": return { type: "skill" as const, name: item.name, path: item.path };
+          case "file_mention": return { type: "text" as const, text: `[请重点关注文件: ${item.path}]` };
+          case "local_image": return { type: "localImage" as const, path: item.path };
+        }
+      });
+      const turnParams: Record<string, unknown> = {
+        threadId: params.threadId,
+        input: codexInput,
+      };
+      if (params.traceId) turnParams.traceId = params.traceId;
+      // Always send collaborationMode to ensure Codex agent mode stays in sync.
+      // Without this, a prior /plan turn would leave the agent in plan mode
+      // because the server preserves the last-set mode across turns.
+      // settings.model from constructor (I3: sourced from ThreadRecord.backend.model)
+      turnParams.collaborationMode = {
+        mode: this.pendingMode,
+        settings: { model: this.model, reasoning_effort: null, developer_instructions: null }
+      };
+      const result = await this.client.turnStart(turnParams as unknown as Parameters<CodexClient["turnStart"]>[0]);
+      this.transport.setLogCorrelation({ ...this.correlation, turnMode, turnId: result.turn.id });
+      this.rpc.setLogCorrelation({ ...this.correlation, turnMode, turnId: result.turn.id });
+      // Reset pending mode after turn start
+      this.pendingMode = "default";
+      return result;
+    } catch (error) {
+      throw this.wrapError(error, params.threadId);
+    }
   }
 
   async setMode(mode: "plan" | "code"): Promise<void> {
-    this.pendingMode = mode === "plan" ? "plan" : "default";
-    const turnMode = this.pendingMode === "plan" ? "plan" : "code";
-    this.transport.setLogCorrelation({ ...this.correlation, turnMode });
-    this.rpc.setLogCorrelation({ ...this.correlation, turnMode });
+    try {
+      this.pendingMode = mode === "plan" ? "plan" : "default";
+      const turnMode = this.pendingMode === "plan" ? "plan" : "code";
+      this.transport.setLogCorrelation({ ...this.correlation, turnMode });
+      this.rpc.setLogCorrelation({ ...this.correlation, turnMode });
+    } catch (error) {
+      throw this.wrapError(error);
+    }
   }
 
   async threadResume(threadId: string): Promise<{ thread: { id: string } }> {
-    return this.client.threadResume(threadId);
+    try {
+      return await this.client.threadResume(threadId);
+    } catch (error) {
+      throw this.wrapError(error, threadId);
+    }
   }
 
   async respondApproval(params: {
@@ -116,7 +132,11 @@ class CodexProtocolAdapter implements CodexApiWithNotifications {
     const decision = params.action === "approve" ? "accept"
       : params.action === "deny" ? "decline"
         : "acceptForSession";
-    await this.transport.respondToServerRequest(params.approvalId, { decision });
+    try {
+      await this.transport.respondToServerRequest(params.approvalId, { decision });
+    } catch (error) {
+      throw this.wrapError(error, params.threadId);
+    }
   }
 
   async respondUserInput(params: { callId: string; answers: Record<string, string[]> }): Promise<void> {
@@ -125,11 +145,19 @@ class CodexProtocolAdapter implements CodexApiWithNotifications {
     for (const [qId, values] of Object.entries(params.answers)) {
       response[qId] = { answers: values };
     }
-    await this.transport.respondToServerRequest(params.callId, { answers: response });
+    try {
+      await this.transport.respondToServerRequest(params.callId, { answers: response });
+    } catch (error) {
+      throw this.wrapError(error);
+    }
   }
 
   async turnInterrupt(threadId: string, turnId: string): Promise<void> {
-    await this.client.turnInterrupt(threadId, turnId);
+    try {
+      await this.client.turnInterrupt(threadId, turnId);
+    } catch (error) {
+      throw this.wrapError(error, threadId);
+    }
   }
 
   onNotification(handler: (event: UnifiedAgentEvent) => void): void {
@@ -163,6 +191,17 @@ class CodexProtocolAdapter implements CodexApiWithNotifications {
 
   close(): void {
     this.transport.close();
+  }
+
+  private wrapError(error: unknown, threadId?: string): Error {
+    const message = error instanceof Error ? error.message : String(error);
+    const parts = [
+      "backend=codex",
+      `projectId=${this.correlation.projectId}`,
+      `threadName=${this.correlation.threadName}`,
+      threadId ? `threadId=${threadId}` : null,
+    ].filter((value): value is string => Boolean(value));
+    return new Error(`[${parts.join(" ")}] ${message}`);
   }
 }
 

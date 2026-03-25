@@ -60,8 +60,9 @@ export function parseCodexConfigContent(params: {
       name: providerName,
       baseUrl: section.base_url,
       apiKeyEnv,
-      apiKeySet: apiKeyEnv ? !!envReader(apiKeyEnv) : false,
       apiKey: section.api_key,
+      apiKeySet: !!(section.api_key || (apiKeyEnv ? envReader(apiKeyEnv) : undefined)),
+      apiKeyMasked: section.api_key ? maskApiKey(section.api_key) : undefined,
       isActive: providerName === root.model_provider,
       models: [],
       wireApi: section.wire_api,
@@ -211,7 +212,6 @@ export function parseOpenCodeConfigContent(params: {
     if (rawKey.startsWith("$")) {
       apiKeyEnv = rawKey.slice(1);
     } else if (rawKey) {
-      apiKeyEnv = rawKey;
       apiKey = rawKey;
     }
 
@@ -220,11 +220,18 @@ export function parseOpenCodeConfigContent(params: {
       baseUrl: options.baseURL,
       apiKeyEnv,
       apiKey,
-      apiKeySet: !!params.resolveApiKey(apiKeyEnv),
+      apiKeySet: !!(apiKey || params.resolveApiKey(apiKeyEnv)),
+      apiKeyMasked: apiKey ? maskApiKey(apiKey) : undefined,
       isActive: false,
       models,
     });
   }
 
   return { parsed, policy, providers };
+}
+
+function maskApiKey(apiKey?: string): string | undefined {
+  if (!apiKey) return undefined;
+  if (apiKey.length <= 8) return apiKey.slice(0, 2) + "****";
+  return apiKey.slice(0, 3) + "****" + apiKey.slice(-4);
 }

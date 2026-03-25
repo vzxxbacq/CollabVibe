@@ -1,21 +1,21 @@
 ---
-title: "Slack Integration"
+title: Slack 平台接入
 layer: overview
 status: active
 source_of_truth: src/slack/*, src/slack/channel/*, src/server.ts
 ---
 
-# Slack Integration
+# Slack 平台接入
 
-The Slack-related code already has foundational output and Socket Mode handling, but the application layer is not yet wired end-to-end the way Feishu is.
+Slack 相关代码已具备基础输出与 Socket Mode 处理能力，但应用层尚未像 Feishu 一样完成完整接线。
 
-## Current code capabilities
+## 当前代码能力
 
-| Module | Responsibility |
+| 模块 | 作用 |
 | --- | --- |
-| `src/slack/slack-socket-mode-app.ts` | Handles Socket Mode bootstrap |
-| `src/slack/slack-message-handler.ts` | Parses Slack messages and routes commands |
-| `src/slack/channel/*` | Renders unified output into Slack messages / updates |
+| `src/slack/slack-socket-mode-app.ts` | 处理 Socket Mode 启动与接线 |
+| `src/slack/slack-message-handler.ts` | 解析 Slack 消息并路由命令 |
+| `src/slack/channel/*` | 将统一输出渲染为 Slack 消息与更新 |
 
 ```mermaid
 flowchart LR
@@ -26,46 +26,46 @@ flowchart LR
 
 
 
-## Target integration shape
+## 目标接入方式
 
-| Item | Approach |
+| 项目 | 方案 |
 | --- | --- |
-| Event intake | Socket Mode |
-| Message types | `message` / `app_mention` |
-| Interaction type | `block_actions` |
-| Output methods | `chat.postMessage` / `chat.update` / `reactions.*` / Stream API |
+| 事件接收 | Socket Mode |
+| 消息类型 | `message` / `app_mention` |
+| 交互类型 | `block_actions` |
+| 输出方式 | `chat.postMessage` / `chat.update` / `reactions.*` / Stream API |
 
-## Mapping Feishu cards to Slack Block Kit
+## 飞书 Card 到 Slack Block Kit 的映射
 
-Slack does not have a built-in “mention the bot and show a native help card” mechanism. The help panel therefore has to be sent as an app-owned Block Kit message and updated in place through `block_actions`.
+Slack 没有“@ bot 后直接弹出平台内建帮助卡片”的机制，因此帮助面板必须作为应用自己发送的一条 Block Kit 消息来承载，再通过 `block_actions` 原地更新。
 
-| Feishu capability | Slack implementation |
+| Feishu 能力 | Slack 落地 |
 | --- | --- |
-| Empty `@bot` mention returns a help card | When `app_mention` / `message` matches empty text, `slack-message-handler` proactively sends the help panel message |
-| Switching panels inside a card | Update the same message in place via `chat.update` |
+| `@bot` 空消息直接回帮助卡 | `app_mention` / `message` 命中空文本后，由 `slack-message-handler` 主动发送帮助面板消息 |
+| 卡片内面板切换 | 同一条消息通过 `chat.update` 原地切换 Block Kit blocks |
 | `card.action.trigger` | `block_actions` |
-| Main help card home | Block Kit `header + section + actions` |
-| Sub-panels (thread/history/skill/backend/turn) | Different block views in the same message |
-| Card forms | Prefer command-driven flows or modals; current thread creation uses a help-panel button plus a separate form message |
-| Approval buttons inside cards | Continue to use existing Block Kit button actions |
+| 主帮助卡首页 | Block Kit `header + section + actions` |
+| 子面板（线程/历史/技能/后端/turn） | 同一消息的不同 blocks 视图 |
+| 卡片表单 | 优先改为命令驱动或 modal；当前线程创建先用帮助面板按钮 + 独立表单消息 |
+| 卡片内审批按钮 | 继续沿用现有 Block Kit button action |
 
-Constraints:
+约束：
 
-- Path A still applies: the Slack platform entry receives the event, the Platform layer parses it, shared commands or the orchestrator are invoked, and the Slack output layer renders the result.
-- Do not introduce Slack-specific backend identity or thread-state persistence fields.
-- The help panel is only UI navigation; it must not change the main data flow of `projectId -> threadRecord -> backendIdentity`.
+- 仍然遵守路径 A：Slack 平台入口接收事件，平台层解析后调用共享命令或 orchestrator，再由 Slack 输出层渲染。
+- 不引入 Slack 专属后端身份或线程状态持久化字段。
+- 帮助面板只做 UI 导航，不改变 `projectId -> threadRecord -> backendIdentity` 的主数据流。
 
-## Create the Slack App
+## 创建 Slack App
 
-| Step | Action |
+| 步骤 | 操作 |
 | --- | --- |
-| 1 | Create an app in the Slack developer console |
-| 2 | Enable Bot User |
-| 3 | Enable Socket Mode |
-| 4 | Create an App-level Token |
-| 5 | Configure Bot Token Scopes |
-| 6 | Configure Event Subscriptions and Interactivity |
-| 7 | Install the app to the target workspace |
+| 1 | 在 Slack 开发者后台创建 App |
+| 2 | 启用 Bot User |
+| 3 | 启用 Socket Mode |
+| 4 | 创建 App-level Token |
+| 5 | 配置 Bot Token Scopes |
+| 6 | 配置 Event Subscriptions 与 Interactivity |
+| 7 | 将应用安装到目标 Workspace |
 
 
 
@@ -77,69 +77,69 @@ flowchart LR
   D --> E[Install App]
 ```
 
-## Required tokens
+## 需要的 Token
 
-| Token | Purpose |
+| Token | 用途 |
 | --- | --- |
-| Bot User OAuth Token (`xoxb-`) | Calls Web APIs such as `chat.postMessage`, `chat.update`, and `reactions.*` |
-| App-level Token (`xapp-`) | Establishes the WebSocket connection for Socket Mode |
+| Bot User OAuth Token (`xoxb-`) | 调用 `chat.postMessage`、`chat.update`、`reactions.*` 等 Web API |
+| App-level Token (`xapp-`) | Socket Mode 建立 WebSocket 连接 |
 
 ```dotenv
 SLACK_BOT_TOKEN=xoxb-xxx
 SLACK_APP_TOKEN=xapp-xxx
 ```
 
-## Recommended scopes
+## 建议权限范围
 
-| Scope | Purpose |
+| Scope | 用途 |
 | --- | --- |
-| `app_mentions:read` | Receive `app_mention` events |
-| `chat:write` | Send and update messages |
-| `reactions:write` | Add / remove emoji reactions |
-| `channels:history` | Read public-channel message events |
-| `groups:history` | Read private-channel message events |
-| `im:history` | Read DM message events |
-| `mpim:history` | Read multi-party DM message events |
-| `connections:write` | Establish Socket Mode connections (App-level Token) |
+| `app_mentions:read` | 接收 `app_mention` 事件 |
+| `chat:write` | 发送与更新消息 |
+| `reactions:write` | 添加/移除 emoji reaction |
+| `channels:history` | 读取公有频道消息事件 |
+| `groups:history` | 读取私有频道消息事件 |
+| `im:history` | 读取 DM 消息事件 |
+| `mpim:history` | 读取多人私信消息事件 |
+| `connections:write` | Socket Mode 建立连接（App-level Token） |
 
-> If you only plan to drive commands through `app_mention`, you can start with the minimum set: `app_mentions:read` + `chat:write`, then add the `*:history` scopes based on the target coverage.
+> 如果只计划通过 `app_mention` 驱动命令，可先最小化配置 `app_mentions:read` + `chat:write`，再根据接入范围补 `*:history`。
 
 
 
-## Events and interactions
+## 事件与交互
 
-| Setting | Value |
+| 配置项 | 值 |
 | --- | --- |
 | Bot Event | `app_mention` |
 | Bot Event | `message.channels` |
 | Bot Event | `message.groups` |
 | Bot Event | `message.im` |
 | Bot Event | `message.mpim` |
-| Interactivity | Enable Block Actions |
-| Socket Mode | Enabled |
+| Interactivity | 启用 Block Actions |
+| Socket Mode | 启用 |
 
 
 
-## How the current code maps to Slack capabilities
+## 与当前代码的对应关系
 
-| Slack capability | Code location |
+| Slack 能力 | 代码位置 |
 | --- | --- |
-| Receive `events_api` / `interactive` | `slack-socket-handler.ts` |
-| Handle `message` / `app_mention` | `slack-socket-handler.ts` |
-| Handle `block_actions` | `slack-socket-handler.ts` |
-| Send messages | `chat.postMessage` |
-| Update messages | `chat.update` |
-| Stream messages | `chat.startStream` / `chat.appendStream` / `chat.stopStream` |
-| Reactions | `reactions.add` / `reactions.remove` |
+| 接收 `events_api` / `interactive` | `slack-socket-handler.ts` |
+| 处理 `message` / `app_mention` | `slack-socket-handler.ts` |
+| 处理 `block_actions` | `slack-socket-handler.ts` |
+| 发消息 | `chat.postMessage` |
+| 更新消息 | `chat.update` |
+| 流式消息 | `chat.startStream` / `chat.appendStream` / `chat.stopStream` |
+| reaction | `reactions.add` / `reactions.remove` |
 
-## Current status
+## 当前状态说明
 
-| Item | Status |
+| 项目 | 状态 |
 | --- | --- |
-| Low-level package | Present |
-| Application-layer handler | Not finished |
-| `src/server.ts` wiring | Not finished |
-| Production readiness | Needs full wiring and real validation |
+| 底层包 | 已存在 |
+| 应用层 handler | 未完成 |
+| `src/server.ts` 装配 | 未完成 |
+| 生产可用性 | 需补完整接线与实测 |
 
 ```bash
 rg -n "slack" packages/channel-slack src

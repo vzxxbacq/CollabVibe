@@ -1,22 +1,22 @@
 ---
-title: "Feishu Integration"
+title: Feishu 平台接入
 layer: overview
 status: active
 source_of_truth: src/feishu/*, src/feishu/channel/*, scripts/export-feishu-scopes.ts
 ---
 
-# Feishu Integration
+# Feishu 平台接入
 
-Feishu / Lark is currently the primary platform for the system, and it is integrated via WebSocket Stream mode.
+当前系统的主平台是 Feishu / Lark，接入方式为 WebSocket Stream 模式。
 
-## Understand the integration first
+## 接入前先理解
 
-| Item | Current implementation |
+| 项目 | 当前实现 |
 | --- | --- |
-| Event intake | WebSocket Stream |
-| Main entry point | `src/feishu/feishu-ws-app.ts` |
-| Bot interactions | messages, cards, bot menu |
-| Platform output | `src/feishu/channel/*` |
+| 事件接收 | WebSocket Stream |
+| 主要入口 | `src/feishu/feishu-ws-app.ts` |
+| Bot 交互 | 消息、卡片、Bot 菜单 |
+| 平台输出 | `src/feishu/channel/*` |
 
 ```mermaid
 flowchart LR
@@ -26,42 +26,42 @@ flowchart LR
   D --> E[FeishuOutputAdapter]
 ```
 
-Feishu Open Platform entry:
+Feishu 开放平台入口：
 
 - https://open.feishu.cn/app
 
-## Create the app
+## 创建应用
 
-Recommended sequence:
+推荐步骤：
 
-| Step | Action |
+| 步骤 | 操作 |
 | --- | --- |
-| 1 | Create an internal enterprise app in the Feishu Open Platform |
-| 2 | Enable bot capability |
-| 3 | Get the `App ID` and `App Secret` |
-| 4 | Grant the required permissions |
-| 5 | Configure event subscriptions |
-| 6 | Configure app visibility and publish |
-| 7 | Add the app to a group chat or enable 1:1 chat usage |
+| 1 | 在 Feishu 开放平台创建企业自建应用 |
+| 2 | 启用机器人能力 |
+| 3 | 获取 `App ID` 与 `App Secret` |
+| 4 | 开通所需权限 |
+| 5 | 配置事件订阅 |
+| 6 | 配置应用可见范围并发布 |
+| 7 | 将应用加入群聊或开放单聊使用 |
 
 ```mermaid
 flowchart LR
-  A[Create App] --> B[Enable Bot]
-  B --> C[Configure Permissions]
-  C --> D[Configure Events]
-  D --> E[Publish]
-  E --> F[Add to Group Chat]
+  A[创建应用] --> B[开启机器人]
+  B --> C[配置权限]
+  C --> D[配置事件]
+  D --> E[发布]
+  E --> F[加入群聊]
 ```
 
-## Environment variables
+## 环境变量
 
-| Variable | Description |
+| 变量 | 说明 |
 | --- | --- |
-| `FEISHU_APP_ID` | App ID |
-| `FEISHU_APP_SECRET` | App secret |
-| `FEISHU_SIGNING_SECRET` | Event signing secret; usually optional in Stream mode |
-| `FEISHU_ENCRYPT_KEY` | Encryption support for encrypted events |
-| `FEISHU_API_BASE_URL` | Defaults to `https://open.feishu.cn/open-apis` |
+| `FEISHU_APP_ID` | 应用 ID |
+| `FEISHU_APP_SECRET` | 应用密钥 |
+| `FEISHU_SIGNING_SECRET` | 事件签名密钥；Stream 模式通常可不填 |
+| `FEISHU_ENCRYPT_KEY` | 加密事件支持 |
+| `FEISHU_API_BASE_URL` | 默认 `https://open.feishu.cn/open-apis` |
 
 ```dotenv
 FEISHU_APP_ID=cli_xxx
@@ -71,72 +71,73 @@ FEISHU_ENCRYPT_KEY=
 FEISHU_API_BASE_URL=https://open.feishu.cn/open-apis
 ```
 
-## Permissions
+## 权限
 
-The following permissions are based on the permission list you provided and are shown here as tenant-level scopes.
+以下权限使用你提供的当前权限列表整理，按租户权限维度列出：
 
-| Permission | Purpose |
+| 权限 | 用途 |
 | --- | --- |
-| `cardkit:card:write` | Create and update cards |
-| `contact:contact.base:readonly` | Read basic contact directory data |
-| `contact:user.base:readonly` | Read basic user info |
-| `im:chat` | Access chat-level capabilities |
-| `im:chat.members:read` | Read group member lists |
-| `im:chat.menu_tree:read` | Read chat menu trees |
-| `im:chat.menu_tree:write_only` | Write chat menu trees |
-| `im:chat.top_notice:write_only` | Write top notices in chats |
-| `im:chat.widgets:read` | Read chat widgets |
-| `im:chat.widgets:write_only` | Write chat widgets |
-| `im:chat:readonly` | Read chat info |
-| `im:message` | Read and send messages |
-| `im:message.group_at_msg:readonly` | Read group mentions to the bot |
-| `im:message.group_msg` | Handle group messages |
-| `im:message.p2p_msg:readonly` | Read direct messages |
-| `im:message:send_as_bot` | Send messages as the app/bot |
+| `cardkit:card:write` | 创建与更新卡片 |
+| `contact:contact.base:readonly` | 读取通讯录基础信息 |
+| `im:message:send_as_bot` | 以应用身份发送消息 |
+| `contact:user.base:readonly` | 读取用户基础信息 |
+| `im:chat` | 访问群组相关能力 |
+| `contact:user.base:readonly` | 读取用户基础信息 |
+| `im:chat.members:read` | 读取群成员列表 |
+| `im:chat.menu_tree:read` | 读取群菜单 |
+| `im:chat.menu_tree:write_only` | 写入群菜单 |
+| `im:chat.top_notice:write_only` | 写入群置顶公告 |
+| `im:chat.widgets:read` | 读取群组件 |
+| `im:chat.widgets:write_only` | 写入群组件 |
+| `im:chat:readonly` | 读取群信息 |
+| `im:message` | 获取与发送消息 |
+| `im:message.group_at_msg:readonly` | 读取群内 @ 机器人消息 |
+| `im:message.group_msg` | 处理群消息 |
+| `im:message.p2p_msg:readonly` | 读取单聊消息 |
 
-If you want to configure the app directly, use:
+如果你要去平台侧配置，直接从这里进入：
 
 - https://open.feishu.cn/app
 
-## Event subscriptions
+## 事件订阅
 
-Based on the event configuration screenshot you provided, the current event subscriptions should include:
+根据你提供的事件配置截图，当前应订阅以下事件：
 
-| Event | Purpose |
+| 事件 | 用途 |
 | --- | --- |
-| `im.message.receive_v1` | Receive user messages |
-| `card.action.trigger` | Receive card callbacks |
-| `im.chat.member.bot.added_v1` | Bot added to group chat |
-| `im.chat.member.bot.deleted_v1` | Bot removed from group chat |
-| `im.chat.member.user.added_v1` | New member joined the group chat |
-| `application.bot.menu_v6` | Bot menu event |
+| `im.message.receive_v1` | 接收用户消息 |
+| `card.action.trigger` | 接收卡片回调 |
+| `im.chat.member.bot.added_v1` | Bot 被加入群聊 |
+| `im.chat.member.bot.deleted_v1` | Bot 被移出群聊 |
+| `im.chat.member.user.added_v1` | 新成员加入群聊 |
+| `application.bot.menu_v6` | Bot 菜单事件 |
 
-For callbacks, the required entry is:
+回调方面，当前需要保留：
 
-| Callback | Purpose |
+| 回调 | 用途 |
 | --- | --- |
-| `card.action.trigger` | Receive interactive card callbacks |
+| `card.action.trigger` | 接收卡片交互回调 |
 
-Your callback screenshot also shows `url.preview.get` and `profile.view.get`, but they are not required for the current main path.
+你给的回调截图里还能看到 `url.preview.get` 和 `profile.view.get`，但它们不属于当前主链路必需项。
 
-## Visibility and release
+## 可见性与发布
 
-| Setting | Recommendation |
+| 配置项 | 建议 |
 | --- | --- |
-| App visibility | Include the users and groups that need the bot |
-| Version publishing | Publish the app version after permissions and events are ready |
-| Group capability | Add the bot to the target group chats |
-| Direct-message capability | Confirm the app allows 1:1 chat with the bot |
+| 应用可见范围 | 覆盖需要使用机器人的用户与群 |
+| 版本发布 | 权限与事件配置完成后发布应用版本 |
+| 群聊能力 | 将 Bot 添加到目标群聊 |
+| 单聊能力 | 确认应用允许用户单聊机器人 |
 
-## Minimal validation checklist
+## 最小验证清单
 
-| Check | Expected result |
+| 检查项 | 预期 |
 | --- | --- |
-| Bot can join a group chat | The bot is visible in the group |
-| User messages trigger events | `im.message.receive_v1` works |
-| Card buttons call back successfully | `card.action.trigger` works |
-| Bot menu triggers work | `application.bot.menu_v6` works |
-| Bot can send messages / update cards | Output path is functioning |
+| Bot 可加入群聊 | 群中能看到 Bot |
+| 用户发消息可触发事件 | `im.message.receive_v1` 生效 |
+| 卡片按钮可回调 | `card.action.trigger` 生效 |
+| Bot 菜单可触发 | `application.bot.menu_v6` 生效 |
+| 机器人能发消息/更新卡片 | 输出链路正常 |
 
 ```bash
 npm run start:dev

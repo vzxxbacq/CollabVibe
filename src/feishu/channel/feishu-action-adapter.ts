@@ -281,7 +281,7 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     if (action === "admin_backend_remove_model") return { kind: "admin_backend_remove_model", backend: String(actionValue.backend ?? ""), provider: String(actionValue.provider ?? ""), model: String(actionValue.model ?? ""), ...base };
     if (action === "admin_backend_recheck") return { kind: "admin_backend_recheck", backend: String(actionValue.backend ?? ""), provider: String(actionValue.provider ?? ""), ...base };
     if (action === "admin_backend_add_profile") return { kind: "admin_backend_add_profile", backend: String(actionValue.backend ?? ""), ...base };
-    if (action === "admin_backend_remove_profile") return { kind: "admin_backend_remove_profile", backend: String(actionValue.backend ?? ""), profileName: String(actionValue.profile ?? ""), ...base };
+    if (action === "admin_backend_remove_profile") return { kind: "admin_backend_remove_profile", backend: String(actionValue.backend ?? ""), provider: String(actionValue.provider ?? ""), profileName: String(actionValue.profile ?? ""), ...base };
 
     return { kind: "raw", actionId: action, ...base };
   }

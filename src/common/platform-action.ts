@@ -437,6 +437,7 @@ export interface AdminBackendAddProfileAction extends PlatformActionBase {
 export interface AdminBackendRemoveProfileAction extends PlatformActionBase {
   kind: "admin_backend_remove_profile";
   backend: string;
+  provider?: string;
   profileName: string;
 }
 
