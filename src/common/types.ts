@@ -17,7 +17,10 @@ export interface CoreDeps {
   api: OrchestratorApi;
 }
 
-export type CardActionResponse = { card: { type: "raw"; data: Record<string, unknown> } } | void;
+export type CardActionResponse =
+  | { card: { type: "raw"; data: Record<string, unknown> } }
+  | { toast: { type: "info" | "success" | "warning" | "error"; content: string } }
+  | void;
 
 export interface TurnCardReader {
   resolveProjectId(chatId: string): Promise<string | null>;

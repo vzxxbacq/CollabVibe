@@ -48,12 +48,18 @@ export class FeishuWsApp {
       "im.message.receive_v1": (data: Record<string, unknown>) =>
         this.dispatchBackground("im.message.receive_v1", () => this.options.onInboundMessage(data)),
       "card.action.trigger": (data: Record<string, unknown>) => this.options.onCardAction(data),
-      "im.chat.member.bot.added_v1": (data: Record<string, unknown>) =>
-        this.dispatchBackground("im.chat.member.bot.added_v1", () => this.options.onBotAdded(data)),
-      "im.chat.member.bot.deleted_v1": (data: Record<string, unknown>) =>
-        this.dispatchBackground("im.chat.member.bot.deleted_v1", () => this.options.onBotRemoved(data)),
-      "im.chat.member.user.added_v1": (data: Record<string, unknown>) =>
-        this.dispatchBackground("im.chat.member.user.added_v1", () => this.options.onMemberJoined(data)),
+      "im.chat.member.bot.added_v1": (data: Record<string, unknown>) => {
+        this.log.info({ dataKeys: Object.keys(data ?? {}) }, "ws-app: im.chat.member.bot.added_v1 event received");
+        return this.dispatchBackground("im.chat.member.bot.added_v1", () => this.options.onBotAdded(data));
+      },
+      "im.chat.member.bot.deleted_v1": (data: Record<string, unknown>) => {
+        this.log.info({ dataKeys: Object.keys(data ?? {}) }, "ws-app: im.chat.member.bot.deleted_v1 event received");
+        return this.dispatchBackground("im.chat.member.bot.deleted_v1", () => this.options.onBotRemoved(data));
+      },
+      "im.chat.member.user.added_v1": (data: Record<string, unknown>) => {
+        this.log.info({ dataKeys: Object.keys(data ?? {}) }, "ws-app: im.chat.member.user.added_v1 event received");
+        return this.dispatchBackground("im.chat.member.user.added_v1", () => this.options.onMemberJoined(data));
+      },
       "application.bot.menu_v6": (data: Record<string, unknown>) =>
         this.dispatchBackground("application.bot.menu_v6", () => this.options.onBotMenuEvent(data))
     });

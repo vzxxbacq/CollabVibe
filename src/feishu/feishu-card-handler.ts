@@ -144,7 +144,7 @@ function rawCard(data: Record<string, unknown>): CardActionResponse {
 }
 
 function extractRawCardData(response?: CardActionResponse): Record<string, unknown> | undefined {
-  return response?.card?.data;
+  return response && 'card' in response ? response.card?.data : undefined;
 }
 
 type AsyncCardTone = "blue" | "orange" | "grey" | "red";
@@ -1894,9 +1894,12 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       return;
     }
     await deps.api.updateProjectMemberRole({ projectId: action.projectId, userId: action.targetUserId, role: newRole as "maintainer" | "developer" | "auditor", actorId: action.actorId });
-    const updatedMembers = (await deps.api.listProjectMembers(action.projectId)).map((m: { userId: string; role: string }) => ({
-      userId: m.userId, role: m.role
-    }));
+    const rawMembers = await deps.api.listProjectMembers(action.projectId);
+    const updatedMembers = await Promise.all(rawMembers.map(async (m: { userId: string; role: string }) => ({
+      userId: m.userId,
+      displayName: await deps.feishuAdapter.getUserDisplayName?.(m.userId) ?? m.userId,
+      role: m.role
+    })));
     return rawCard(deps.platformOutput.buildHelpCard(action.actorId, {
       isAdmin: true, members: updatedMembers, projectId: action.projectId
     }));
@@ -3015,11 +3018,11 @@ async function buildAdminMemberData(deps: FeishuHandlerDeps): Promise<import("..
   const allProjects = await deps.api.listProjects();
   const projects = await Promise.all(allProjects.map(async p => {
     const rawMembers = await deps.api.listProjectMembers(p.id);
-    const members = rawMembers.map((m) => ({
+    const members = await Promise.all(rawMembers.map(async (m) => ({
       userId: m.userId,
-      displayName: getCachedDisplayName(deps, m.userId),
+      displayName: await deps.feishuAdapter.getUserDisplayName?.(m.userId) ?? m.userId,
       role: m.role
-    }));
+    })));
     return {
       projectName: p.name,
       projectId: p.id,
@@ -3034,12 +3037,12 @@ const USER_PAGE_SIZE = 15;
 
 async function buildAdminUserData(deps: FeishuHandlerDeps, page = 0): Promise<import("../../services/event/im-output").IMAdminUserPanel> {
   const { users, total } = await deps.api.listUsers({ offset: page * USER_PAGE_SIZE, limit: USER_PAGE_SIZE });
-  const enriched = users.map((u) => ({
+  const enriched = await Promise.all(users.map(async (u) => ({
     userId: u.userId,
-    displayName: getCachedDisplayName(deps, u.userId),
+    displayName: await deps.feishuAdapter.getUserDisplayName?.(u.userId) ?? u.userId,
     sysRole: u.sysRole === "admin" ? 1 as const : 0 as const,
     source: u.source as "env" | "im"
-  }));
+  })));
   return {
     kind: "admin_user",
     users: enriched,
@@ -3131,8 +3134,8 @@ async function buildAdminBackendData(deps: FeishuHandlerDeps): Promise<import(".
       policy: c.policy,
       providers: c.providers.map((p) => ({
         name: p.name,
-        baseUrl: undefined,
-        apiKeyEnv: undefined,
+        baseUrl: p.baseUrl,
+        apiKeyEnv: p.apiKeyEnv,
         apiKeySet: p.apiKeySet,
         isActive: c.activeProvider === p.name,
         models: p.models.map((m) => ({
@@ -3339,7 +3342,7 @@ export async function handleFeishuCardAction(deps: FeishuHandlerDeps, data: Reco
     const { GUARD } = getFeishuNotifyCatalog(deps.config.locale);
     if (error instanceof AuthorizationError) {
       actionLog.info({ actionKind: action.kind }, "card action authorization denied");
-      return rawCard(buildImmediateErrorCard(deps.config.locale, GUARD.NO_PERMISSION));
+      return { toast: { type: "warning" as const, content: GUARD.NO_PERMISSION } };
     }
     actionLog.error({ err: error instanceof Error ? error.message : error }, "card action error");
     if (error instanceof TurnRecoveryError) {

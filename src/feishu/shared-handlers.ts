@@ -135,11 +135,11 @@ export async function resolveHelpCard(deps: FeishuHandlerDeps, chatId: string, u
     let members: Array<{ userId: string; displayName?: string; role: string }> | undefined;
     if (isAdmin && project) {
         const rawMembers = await deps.api.listProjectMembers(project.id);
-        members = rawMembers.map((m) => ({
+        members = await Promise.all(rawMembers.map(async (m) => ({
             userId: m.userId,
-            displayName: deps.feishuAdapter.getCachedUserDisplayName?.(m.userId) ?? m.userId,
+            displayName: await deps.feishuAdapter.getUserDisplayName?.(m.userId) ?? m.userId,
             role: m.role
-        }));
+        })));
     }
     return deps.platformOutput.buildHelpCard(userId, {
         isAdmin,

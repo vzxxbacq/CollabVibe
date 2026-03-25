@@ -577,6 +577,8 @@ export interface OrchestratorApi {
     activeProvider?: string;
     providers: Array<{
       name: string;
+      baseUrl?: string;
+      apiKeyEnv?: string;
       apiKeySet: boolean;
       models: Array<{ name: string; available: boolean | null; checkedAt?: string; error?: string }>;
     }>;

@@ -29,6 +29,27 @@ function extractOpenId(data: Record<string, unknown>, field: string): string {
   return "";
 }
 
+async function syncChatMembersBackground(
+  adapter: FeishuAdapter,
+  api: PlatformModuleContext["api"],
+  chatId: string,
+  projectId: string
+): Promise<void> {
+  log.info({ chatId, projectId }, "syncChatMembersBackground: started");
+  try {
+    const memberIds = await adapter.listChatMembers(chatId);
+    log.info({ chatId, projectId, memberCount: memberIds.length, memberIds: memberIds.slice(0, 20) }, "syncChatMembersBackground: listChatMembers result");
+    if (!memberIds.length) return;
+    for (const uid of memberIds) {
+      log.info({ uid, projectId }, "syncChatMembersBackground: resolving role");
+      await api.resolveRole({ userId: uid, projectId });
+    }
+    log.info({ projectId, count: memberIds.length }, "syncChatMembersBackground: synced all members");
+  } catch (err) {
+    log.warn({ projectId, chatId, err: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined }, "syncChatMembersBackground: failed");
+  }
+}
+
 export class FeishuPlatformModule implements PlatformModule {
   readonly platformId = "feishu" as const;
 
@@ -74,34 +95,45 @@ export class FeishuPlatformModule implements PlatformModule {
           onInboundMessage: (data) => handleFeishuMessage(deps, data),
           onCardAction: (data) => handleFeishuCardAction(deps, data),
           onBotAdded: async (data) => {
+            log.info({ dataKeys: Object.keys(data ?? {}) }, "bot.added: handler entered");
             try {
               const payload = data as Record<string, unknown>;
+              log.info({ payload: JSON.stringify(payload).slice(0, 1000) }, "bot.added: raw payload");
               const resolvedChatId = extractChatId(payload);
+              log.info({ resolvedChatId, hasChatId: !!resolvedChatId }, "bot.added: extractChatId result");
               if (!resolvedChatId) {
                 log.warn({ payloadKeys: Object.keys(payload) }, "bot.added missing chatId");
                 return;
               }
               const existing = await resolveProjectByChatId(ctx.api, resolvedChatId);
+              log.info({ resolvedChatId, existingProject: existing ? { id: existing.id, status: existing.status, name: existing.name } : null }, "bot.added: project lookup result");
               if (existing) {
                 if (existing.status === "disabled") {
+                  log.info({ projectId: existing.id }, "bot.added: reactivating disabled project");
                   await ctx.api.reactivateProject({ projectId: existing.id, actorId: "system" });
                 }
                 await feishuAdapter.sendInteractiveCard(resolvedChatId, feishuPlatformOutput.buildProjectResumedCard(existing));
+                log.info({ projectId: existing.id, chatId: resolvedChatId }, "bot.added: starting member sync");
+                void syncChatMembersBackground(feishuAdapter, ctx.api, resolvedChatId, existing.id);
                 return;
               }
+              log.info({ resolvedChatId }, "bot.added: no existing project, sending init card");
               const unbound = await ctx.api.listUnboundProjects();
               await feishuAdapter.sendInteractiveCard(resolvedChatId, feishuPlatformOutput.buildInitCard(unbound.length > 0 ? unbound : undefined));
             } catch (error) {
-              log.error({ err: error instanceof Error ? error.message : error }, "bot.added error");
+              log.error({ err: error instanceof Error ? error.message : error, stack: error instanceof Error ? error.stack : undefined }, "bot.added error");
             }
           },
           onBotRemoved: async (data) => {
+            log.info({ dataKeys: Object.keys(data ?? {}) }, "bot.removed: handler entered");
             try {
               const payload = data as Record<string, unknown>;
               const resolvedChatId = extractChatId(payload);
+              log.info({ resolvedChatId }, "bot.removed: extractChatId result");
               if (!resolvedChatId) return;
               const project = await resolveProjectByChatId(ctx.api, resolvedChatId);
               if (project) {
+                log.info({ projectId: project.id }, "bot.removed: disabling project");
                 await ctx.api.disableProject({ projectId: project.id, actorId: "system" });
               }
             } catch (error) {
@@ -109,16 +141,20 @@ export class FeishuPlatformModule implements PlatformModule {
             }
           },
           onMemberJoined: async (data) => {
+            log.info({ dataKeys: Object.keys(data ?? {}) }, "member.joined: handler entered");
             try {
               const event = data as Record<string, unknown>;
               const chatId = extractChatId(event);
               const users = Array.isArray(event.users) ? event.users as Array<Record<string, unknown>> : [];
+              log.info({ chatId, userCount: users.length, rawUsers: JSON.stringify(users).slice(0, 500) }, "member.joined: parsed event");
               if (!chatId || users.length === 0) return;
               const project = await resolveProjectByChatId(ctx.api, chatId);
+              log.info({ chatId, projectId: project?.id ?? null }, "member.joined: project lookup");
               if (!project) return;
               for (const u of users) {
                 const userId = extractOpenId(u, "user_id") || (typeof u.open_id === "string" ? u.open_id : "");
                 if (userId) {
+                  log.info({ userId, projectId: project.id }, "member.joined: resolving role for user");
                   await ctx.api.resolveRole({ userId, projectId: project.id });
                 }
               }
