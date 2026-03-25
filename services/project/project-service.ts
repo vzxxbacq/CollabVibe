@@ -1,4 +1,4 @@
-import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { resolve as pathResolve, sep as pathSep } from "node:path";
 
 import { createLogger } from "../../packages/logger/src/index";
@@ -428,15 +428,40 @@ export class ProjectSetupService {
       }
     };
 
-    await this.writeProjectFiles(projectId, {
-      gitignoreContent: decode(input.gitignore, ".gitignore"),
-      agentsMdContent: decode(input.agentsMd, "AGENTS.md"),
-    });
-
     const project = await this.getProjectById(projectId);
     if (!project) {
-      throw new Error(`project not found after writing initial files: ${projectId}`);
+      throw new Error(`project not found: ${projectId}`);
     }
+
+    // After clone, the repo may already contain .gitignore / AGENTS.md.
+    // Treat existing repo content as the "initial draft value" — only write
+    // files that do NOT already exist (i.e. fresh git-init with no remote).
+    const gitignorePath = pathResolve(project.cwd, ".gitignore");
+    const agentsMdPath = pathResolve(project.cwd, "AGENTS.md");
+
+    const fileExists = async (p: string): Promise<boolean> => {
+      try { await access(p); return true; } catch { return false; }
+    };
+
+    const [gitignoreExists, agentsMdExists] = await Promise.all([
+      fileExists(gitignorePath),
+      fileExists(agentsMdPath),
+    ]);
+
+    const patch: { gitignoreContent?: string; agentsMdContent?: string } = {};
+    if (!gitignoreExists) {
+      patch.gitignoreContent = decode(input.gitignore, ".gitignore");
+    } else {
+      log.info({ projectId, path: gitignorePath }, "preserving existing .gitignore from repo");
+    }
+    if (!agentsMdExists) {
+      patch.agentsMdContent = decode(input.agentsMd, "AGENTS.md");
+    } else {
+      log.info({ projectId, path: agentsMdPath }, "preserving existing AGENTS.md from repo");
+    }
+
+    await this.writeProjectFiles(projectId, patch);
+
     await this.gitOps.merge.commitChanges(
       project.cwd,
       "[collabvibe] initialize project control files",
