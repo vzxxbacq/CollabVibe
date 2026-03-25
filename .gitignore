@@ -46,6 +46,7 @@ data/config/*.yml
 # Docs build output
 docs/.vitepress/cache/
 docs/.vitepress/dist/
+docs/.vitepress/generated/
 
 # OS / Editors
 .DS_Store

@@ -21,14 +21,14 @@ source_of_truth: src/feishu/*, src/feishu/channel/*, scripts/export-feishu-scope
 ```mermaid
 flowchart LR
   A[Feishu Event] --> B[src/feishu/*]
-  B --> C[src/platform/dispatcher.ts]
+  B --> C[src/common/dispatcher.ts]
   C --> D[orchestrator]
   D --> E[FeishuOutputAdapter]
 ```
 
-![Feishu 接入概览占位图](/placeholders/guide-image-placeholder.svg)
+Feishu 开放平台入口：
 
-> Placeholder：在这里插入 Feishu 开放平台的应用首页截图，标出 App ID、权限配置、事件订阅入口。
+- https://open.feishu.cn/app
 
 ## 创建应用
 
@@ -43,10 +43,6 @@ flowchart LR
 | 5 | 配置事件订阅 |
 | 6 | 配置应用可见范围并发布 |
 | 7 | 将应用加入群聊或开放单聊使用 |
-
-![Feishu 创建应用步骤占位图](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder：在这里插入“创建企业自建应用”的流程截图，建议逐步标记按钮位置。
 
 ```mermaid
 flowchart LR
@@ -77,26 +73,35 @@ FEISHU_API_BASE_URL=https://open.feishu.cn/open-apis
 
 ## 权限
 
-以下权限来自 `scripts/export-feishu-scopes.ts` 与当前代码调用。
+以下权限使用你提供的当前权限列表整理，按租户权限维度列出：
 
 | 权限 | 用途 |
 | --- | --- |
-| `im:message` | 获取与发送单聊、群组消息 |
-| `im:message:send_as_bot` | 以应用身份发送消息 |
-| `im:message:patch` | 更新消息 / 互动卡片 |
-| `cardkit:card:read` | 读取卡片信息 |
 | `cardkit:card:write` | 创建与更新卡片 |
-| `im:message:pin` | Pin 消息 |
+| `contact:contact.base:readonly` | 读取通讯录基础信息 |
+| `im:message:send_as_bot` | 以应用身份发送消息 |
+| `contact:user.base:readonly` | 读取用户基础信息 |
+| `im:chat` | 访问群组相关能力 |
 | `contact:user.base:readonly` | 读取用户基础信息 |
 | `im:chat.members:read` | 读取群成员列表 |
+| `im:chat.menu_tree:read` | 读取群菜单 |
+| `im:chat.menu_tree:write_only` | 写入群菜单 |
+| `im:chat.top_notice:write_only` | 写入群置顶公告 |
+| `im:chat.widgets:read` | 读取群组件 |
+| `im:chat.widgets:write_only` | 写入群组件 |
+| `im:chat:readonly` | 读取群信息 |
+| `im:message` | 获取与发送消息 |
+| `im:message.group_at_msg:readonly` | 读取群内 @ 机器人消息 |
+| `im:message.group_msg` | 处理群消息 |
+| `im:message.p2p_msg:readonly` | 读取单聊消息 |
 
-![Feishu 权限配置占位图](/placeholders/guide-image-placeholder.svg)
+如果你要去平台侧配置，直接从这里进入：
 
-> Placeholder：在这里插入权限申请页截图，建议圈出最小必需权限。
+- https://open.feishu.cn/app
 
 ## 事件订阅
 
-当前代码中注册了以下事件：
+根据你提供的事件配置截图，当前应订阅以下事件：
 
 | 事件 | 用途 |
 | --- | --- |
@@ -107,9 +112,13 @@ FEISHU_API_BASE_URL=https://open.feishu.cn/open-apis
 | `im.chat.member.user.added_v1` | 新成员加入群聊 |
 | `application.bot.menu_v6` | Bot 菜单事件 |
 
-![Feishu 事件订阅占位图](/placeholders/guide-image-placeholder.svg)
+回调方面，当前需要保留：
 
-> Placeholder：在这里插入事件订阅配置截图，建议显示订阅事件列表和回调模式选择。
+| 回调 | 用途 |
+| --- | --- |
+| `card.action.trigger` | 接收卡片交互回调 |
+
+你给的回调截图里还能看到 `url.preview.get` 和 `profile.view.get`，但它们不属于当前主链路必需项。
 
 ## 可见性与发布
 
@@ -119,10 +128,6 @@ FEISHU_API_BASE_URL=https://open.feishu.cn/open-apis
 | 版本发布 | 权限与事件配置完成后发布应用版本 |
 | 群聊能力 | 将 Bot 添加到目标群聊 |
 | 单聊能力 | 确认应用允许用户单聊机器人 |
-
-![Feishu 发布配置占位图](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder：在这里插入应用发布页和可见范围设置页截图。
 
 ## 最小验证清单
 
@@ -138,7 +143,3 @@ FEISHU_API_BASE_URL=https://open.feishu.cn/open-apis
 npm run start:dev
 tail -f data/logs/app.log
 ```
-
-![Feishu 验证视频占位图](/placeholders/guide-video-placeholder.svg)
-
-> Placeholder：在这里插入一次完整 Feishu 接入验证录屏，建议包括“加群 -> 发消息 -> 点击卡片”。

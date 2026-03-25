@@ -11,13 +11,9 @@ source_of_truth: package.json, src/server.ts, src/config.ts, docs/00-overview/pl
 
 - 安装依赖
 - 配置环境变量
-- 准备 backend 与 workspace
+- 准备 API backend 命令与 workspace
 - 启动服务
 - 在 Feishu 中验证消息与卡片链路
-
-![Quickstart 总览占位图](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder：在这里插入“从本地启动到飞书收消息”的总览图，建议标出 `.env`、`data/`、workspace、Feishu App 四个关键点。
 
 ## 1. 运行前提
 
@@ -79,9 +75,7 @@ PORT=3100
 
 这些 stream 调参变量都是可选项。大多数部署场景保持默认值即可，只有在高频流式 turn 下需要平衡“推送频率 / 感知延迟”时再调整。
 
-![环境变量配置占位图](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 `.env` 示例或部署平台环境变量配置截图。
 
 ## 4. 准备本地目录
 
@@ -119,9 +113,7 @@ npm run start
 npm run docs:dev
 ```
 
-![本地启动终端占位图](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入服务启动成功的终端截图，建议保留端口、日志文件目录和 Feishu WS 启动信息。
 
 ## 6. 完成 Feishu 平台接入
 
@@ -130,9 +122,7 @@ npm run docs:dev
 - 平台步骤详见 [Feishu 平台接入](/zh/00-overview/platform-feishu)
 - 如果只是了解现状，可同时参考 [Slack 平台接入](/zh/00-overview/platform-slack)
 
-![Feishu 接入流程占位图](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入 Feishu 平台配置完成页截图。
 
 ## 7. 最小验证
 
@@ -175,12 +165,7 @@ COLLABVIBE_STREAM_UI_MAX_WAIT_MS=1500
 
 建议先验证默认行为，再决定是否调参。终态事件仍会强制执行最终 flush。
 
-![Quickstart 演示视频占位图](/placeholders/guide-video-placeholder.svg)
-
-> Placeholder：在这里插入 1~3 分钟 Quickstart 录屏，建议包含“启动服务 -> 飞书发消息 -> 查看日志”。
-
 ## 下一步
 
 - 想理解系统全貌：看 [系统总览](/zh/00-overview/system-overview)
 - 想理解三大核心对象：看 [核心类：Project / Thread / Turn](/zh/01-architecture/core-entities)
-- 想理解日志：看 [日志系统](/zh/02-operations/logging-system)

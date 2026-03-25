@@ -403,9 +403,18 @@ async function handleFeishuMessageLegacy(deps: FeishuHandlerDeps, data: Record<s
     }
     text = text.replace(/@_user_\d+/g, "").trim();
 
-    // DM 不接受文本命令 — admin 通过 bot 菜单操作管理面板
+    // DM → admin panel（管理员）/ 拒绝提示（非管理员）
     if (chatType === "p2p") {
-      requestLog.info("dm.ignored: text commands disabled");
+      // resolveRole 自动注册用户
+      await deps.api.resolveRole({ userId });
+      if (await deps.api.isAdmin(userId)) {
+        requestLog.info("dm.admin: sending admin panel");
+        const card = deps.platformOutput.buildAdminHelpCard();
+        await deps.feishuAdapter.sendInteractiveCard(chatId, card);
+      } else {
+        requestLog.info("dm.non-admin: sending denial");
+        await deps.feishuAdapter.sendMessage({ chatId, text: s.dmNotAdmin });
+      }
       return;
     }
 

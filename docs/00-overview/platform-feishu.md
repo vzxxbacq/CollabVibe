@@ -21,14 +21,14 @@ Feishu / Lark is currently the primary platform for the system, and it is integr
 ```mermaid
 flowchart LR
   A[Feishu Event] --> B[src/feishu/*]
-  B --> C[src/platform/dispatcher.ts]
+  B --> C[src/common/dispatcher.ts]
   C --> D[orchestrator]
   D --> E[FeishuOutputAdapter]
 ```
 
-![Feishu integration overview placeholder](/placeholders/guide-image-placeholder.svg)
+Feishu Open Platform entry:
 
-> Placeholder: add a screenshot of the Feishu Open Platform app home page and mark App ID, permission settings, and event subscription entry points.
+- https://open.feishu.cn/app
 
 ## Create the app
 
@@ -43,10 +43,6 @@ Recommended sequence:
 | 5 | Configure event subscriptions |
 | 6 | Configure app visibility and publish |
 | 7 | Add the app to a group chat or enable 1:1 chat usage |
-
-![Feishu app creation steps placeholder](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder: add a step-by-step screenshot flow for “Create enterprise internal app” and mark the relevant buttons.
 
 ```mermaid
 flowchart LR
@@ -77,26 +73,34 @@ FEISHU_API_BASE_URL=https://open.feishu.cn/open-apis
 
 ## Permissions
 
-The following permissions come from `scripts/export-feishu-scopes.ts` and the current code paths.
+The following permissions are based on the permission list you provided and are shown here as tenant-level scopes.
 
 | Permission | Purpose |
 | --- | --- |
-| `im:message` | Read and send direct and group messages |
-| `im:message:send_as_bot` | Send messages as the app/bot |
-| `im:message:patch` | Update messages / interactive cards |
-| `cardkit:card:read` | Read card data |
 | `cardkit:card:write` | Create and update cards |
-| `im:message:pin` | Pin messages |
+| `contact:contact.base:readonly` | Read basic contact directory data |
 | `contact:user.base:readonly` | Read basic user info |
+| `im:chat` | Access chat-level capabilities |
 | `im:chat.members:read` | Read group member lists |
+| `im:chat.menu_tree:read` | Read chat menu trees |
+| `im:chat.menu_tree:write_only` | Write chat menu trees |
+| `im:chat.top_notice:write_only` | Write top notices in chats |
+| `im:chat.widgets:read` | Read chat widgets |
+| `im:chat.widgets:write_only` | Write chat widgets |
+| `im:chat:readonly` | Read chat info |
+| `im:message` | Read and send messages |
+| `im:message.group_at_msg:readonly` | Read group mentions to the bot |
+| `im:message.group_msg` | Handle group messages |
+| `im:message.p2p_msg:readonly` | Read direct messages |
+| `im:message:send_as_bot` | Send messages as the app/bot |
 
-![Feishu permission configuration placeholder](/placeholders/guide-image-placeholder.svg)
+If you want to configure the app directly, use:
 
-> Placeholder: add a screenshot of the permissions page and highlight the minimum required scopes.
+- https://open.feishu.cn/app
 
 ## Event subscriptions
 
-The current code registers the following events:
+Based on the event configuration screenshot you provided, the current event subscriptions should include:
 
 | Event | Purpose |
 | --- | --- |
@@ -107,9 +111,13 @@ The current code registers the following events:
 | `im.chat.member.user.added_v1` | New member joined the group chat |
 | `application.bot.menu_v6` | Bot menu event |
 
-![Feishu event subscription placeholder](/placeholders/guide-image-placeholder.svg)
+For callbacks, the required entry is:
 
-> Placeholder: add a screenshot of the event subscription page showing the event list and callback mode selection.
+| Callback | Purpose |
+| --- | --- |
+| `card.action.trigger` | Receive interactive card callbacks |
+
+Your callback screenshot also shows `url.preview.get` and `profile.view.get`, but they are not required for the current main path.
 
 ## Visibility and release
 
@@ -119,10 +127,6 @@ The current code registers the following events:
 | Version publishing | Publish the app version after permissions and events are ready |
 | Group capability | Add the bot to the target group chats |
 | Direct-message capability | Confirm the app allows 1:1 chat with the bot |
-
-![Feishu publishing configuration placeholder](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder: add screenshots of the app release page and visibility settings page.
 
 ## Minimal validation checklist
 
@@ -138,7 +142,3 @@ The current code registers the following events:
 npm run start:dev
 tail -f data/logs/app.log
 ```
-
-![Feishu validation video placeholder](/placeholders/guide-video-placeholder.svg)
-
-> Placeholder: add a complete Feishu validation recording, ideally covering “join group -> send message -> click card button”.

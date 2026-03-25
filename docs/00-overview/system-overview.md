@@ -1,7 +1,7 @@
 ---
 title: "System Overview"
 layer: overview
-source_of_truth: src/server.ts, src/platform/*, services/*, src/feishu/channel/*
+source_of_truth: src/server.ts, src/common/*, services/*, src/feishu/channel/*
 status: active
 ---
 
@@ -9,23 +9,19 @@ status: active
 
 The system is composed of four kinds of capabilities: platform integration, shared orchestration, foundational packages, and local state.
 
-![System layering overview placeholder](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder: add the latest full system architecture diagram, ideally as a four-layer structure: `src / services / packages / local state`.
-
 ## System structure
 
 | Layer | Purpose | Typical directories |
 | --- | --- | --- |
-| Platform | Receives platform events and handles platform-specific interactions | `src/feishu/*` |
-| Core / Services | Intent dispatch, thread management, backend scheduling, approvals, authorization, persistence | `src/platform/*`, `services/*` |
-| Packages | Channel abstractions, protocol clients, output adapters, fundamental types | `packages/*` |
+| Platform | Receives platform events and handles platform-specific interactions | `src/feishu/*`, `src/slack/*` |
+| Shared L1 + Services | Intent dispatch, thread management, backend scheduling, approvals, authorization, persistence | `src/common/*`, `services/*` |
+| Packages | Protocol clients, git operations, logging, fundamental types | `packages/*` |
 | Local State | Database storage, logs, config, workspace state | `data/*`, local workspace |
 
 ```mermaid
 flowchart LR
   A[src/server.ts] --> B[src/feishu/*]
-  B --> C[src/platform/*]
+  B --> C[src/common/*]
   C --> D[services/*]
   D --> E[src/feishu/channel/*]
 ```
@@ -47,6 +43,4 @@ flowchart LR
 | Administrators | Manage backends, projects, members, and system configuration |
 | Developers | Extend platforms, backends, and shared capabilities through the unified paths |
 
-![System overview demo video placeholder](/placeholders/guide-video-placeholder.svg)
 
-> Placeholder: add a cover image or screen recording for the system overview walkthrough.

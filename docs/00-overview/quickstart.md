@@ -11,13 +11,9 @@ This document is for readers deploying `CollabVibe` and running it end-to-end fo
 
 - install dependencies
 - configure environment variables
-- prepare the backend and workspace
+- prepare the API backend command and workspace
 - start the service
 - validate the message and card path in Feishu
-
-![Quickstart overview placeholder](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder: add an overview diagram from local startup to receiving a Feishu message, ideally highlighting `.env`, `data/`, the workspace, and the Feishu App.
 
 ## 1. Prerequisites
 
@@ -79,9 +75,7 @@ PORT=3100
 
 These stream tuning variables are optional. In most deployments, keep the defaults unless you need to reduce burst frequency or improve perceived latency for high-volume turns.
 
-![Environment variable configuration placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add a screenshot of a sample `.env` file or the environment variable screen in the deployment platform.
 
 ## 4. Prepare local directories
 
@@ -119,9 +113,7 @@ Documentation preview:
 npm run docs:dev
 ```
 
-![Local startup terminal placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add a screenshot of successful startup output, ideally showing the port, log directory, and Feishu WebSocket startup info.
 
 ## 6. Complete the Feishu-side integration
 
@@ -130,9 +122,7 @@ Feishu is currently the primary platform for `CollabVibe`. On the first deployme
 - See [Feishu Integration](/00-overview/platform-feishu) for the platform steps
 - If you just want to understand the current state, you can also review [Slack Integration](/00-overview/platform-slack)
 
-![Feishu integration process placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add a screenshot of a completed Feishu platform configuration page.
 
 ## 7. Minimal validation
 
@@ -175,12 +165,7 @@ COLLABVIBE_STREAM_UI_MAX_WAIT_MS=1500
 
 Use these only after you have validated the default behavior. Terminal events still force a final flush.
 
-![Quickstart demo video placeholder](/placeholders/guide-video-placeholder.svg)
-
-> Placeholder: add a 1–3 minute Quickstart recording covering “start service -> send a Feishu message -> inspect logs”.
-
 ## What to read next
 
 - To understand the whole system: [System Overview](/00-overview/system-overview)
 - To understand the three core entities: [Core Entities: Project / Thread / Turn](/01-architecture/architecture)
-- To understand logging: [Logging System](/02-operations/logging-system)

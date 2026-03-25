@@ -17,13 +17,8 @@ title: 首页
 | 理解调用链 | [调用链与数据流](/zh/01-architecture/architecture) |
 | 理解核心对象 | [核心类：Project / Thread / Turn](/zh/01-architecture/core-entities) |
 | 理解分层边界 | [分层隔离与模块契约](/zh/01-architecture/architecture) |
-| 查看运维与日志 | [数据与存储](/zh/02-operations/data-and-storage), [日志系统](/zh/02-operations/logging-system) |
-| 数据迁移与备份 | [数据与存储](/zh/02-operations/data-and-storage) |
-| 本地开发 | [本地开发](/zh/03-development/local-development) |
 
 ## 文档组织
 
 - **00 QUICKSTART**：第一次部署、平台接入、项目定位
 - **01 架构**：调用链、核心对象、分层边界、模块契约
-- **02 运维**：数据目录、日志系统、排障、文档发布
-- **开发**：本地运行、测试、模块地图、核心类型、改动入口

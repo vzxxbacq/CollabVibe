@@ -1,7 +1,7 @@
 ---
 title: 系统总览
 layer: overview
-source_of_truth: src/server.ts, src/platform/*, services/*, src/feishu/channel/*
+source_of_truth: src/server.ts, src/common/*, services/*, src/feishu/channel/*
 status: active
 ---
 
@@ -9,23 +9,19 @@ status: active
 
 系统由四类能力组成：平台接入、共享协调、基础包、本地状态。
 
-![系统分层总览占位图](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder：在这里插入最新版系统架构总图，建议用四层结构表示 `src / services / packages / local state`。
-
 ## 系统结构
 
 | 层级 | 作用 | 典型目录 |
 | --- | --- | --- |
-| Platform | 接收平台事件，处理平台特有交互 | `src/feishu/*` |
-| Core / Services | intent 分发、线程管理、backend 调度、审批、权限、持久化 | `src/platform/*`, `services/*` |
-| Packages | 通道抽象、协议客户端、输出适配、基础类型 | `packages/*` |
+| Platform | 接收平台事件，处理平台特有交互 | `src/feishu/*`, `src/slack/*` |
+| Shared L1 + Services | intent 分发、线程管理、backend 调度、审批、权限、持久化 | `src/common/*`, `services/*` |
+| Packages | 协议客户端、git 操作、日志、基础类型 | `packages/*` |
 | Local State | 数据库存储、日志、配置、工作区状态 | `data/*`, 本地 workspace |
 
 ```mermaid
 flowchart LR
   A[src/server.ts] --> B[src/feishu/*]
-  B --> C[src/platform/*]
+  B --> C[src/common/*]
   C --> D[services/*]
   D --> E[src/feishu/channel/*]
 ```
@@ -47,6 +43,4 @@ flowchart LR
 | 管理员 | 管理 backend、项目、成员、系统配置 |
 | 开发者 | 基于统一路径扩展平台、backend、共享能力 |
 
-![系统演示视频占位图](/placeholders/guide-video-placeholder.svg)
 
-> Placeholder：在这里插入系统总览讲解视频封面或录屏。

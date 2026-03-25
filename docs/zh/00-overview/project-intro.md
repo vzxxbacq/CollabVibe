@@ -14,9 +14,7 @@ status: active
 - 审批驱动的 Human-in-the-Loop 流程
 - 线程、快照、审计、本地状态持久化
 
-![项目简介封面占位图](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入一张“系统主界面 / 卡片流 / Agent 协作过程”的总览图，建议尺寸 1280x720。
 
 ## 设计目标
 
@@ -39,26 +37,21 @@ flowchart LR
 
 | 平台 | 状态 | 当前能力 | 代码位置 |
 | --- | --- | --- | --- |
-| Feishu / Lark | 已支持 | WS 事件、消息、卡片、Bot 菜单、群/单聊入口 | `src/feishu/*`, `packages/channel-feishu/*` |
-| Slack | TODO | 已有输出适配与 socket handler，未完成应用层主链路接线 | `packages/channel-slack/*` |
+| Feishu / Lark | 已支持 | WS 事件、消息、卡片、Bot 菜单、群/单聊入口 | `src/feishu/*`, `src/feishu/channel/*` |
+| Slack | TODO | 已有输出适配与 socket handler，未完成应用层主链路接线 | `src/slack/*`, `src/slack/channel/*` |
 | MS Teams | TODO | 预留平台扩展方向，当前仓库未接入 | — |
-
-![平台能力对比占位图](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder：在这里插入平台能力矩阵截图，建议标出 Feishu 已接入、Slack 当前处于“输出层就绪 / 应用层待接线”的状态。
 
 ## Backend 支持
 
-| Backend | 传输 | 接入方式 | 状态 | 说明 |
+当前代码只保留基于 API transport 的 backend 接入模式。
+
+| Backend | 传输 | 模式 | 状态 | 说明 |
 | --- | --- | --- | --- | --- |
 | `codex` | `codex` | API | 已支持 | 通过 Codex protocol / stdio 接入 |
 | `opencode` | `acp` | API | 已支持 | 通过 ACP 接入 |
 | `claude-code` | `acp` | API | 已支持 | 通过 ACP 接入 |
-| `codex` | TBD | RefreshToken | 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
-| `claude-code` | TBD | RefreshToken | 规划中 | 基于平台 RefreshToken 的接入方式在路线图中 |
-| `github-copilot` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
-| `gemini-cli` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
-| `trae-cli` | TBD | RefreshToken | 规划中 | 当前代码未接入 |
+| `gemini-cli` | TBD | — | 规划中 | 当前代码未接入 |
+| `trae-cli` | TBD | — | 规划中 | 当前代码未接入 |
 
 ```bash
 # 本地文档预览
@@ -85,10 +78,6 @@ npm run docs:dev
 | `RoleResolver` | 角色解析 |
 | `authorize` / `command-guard` | 命令级权限校验 |
 
-![权限与角色占位图](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder：在这里插入“平台接入认证 + 系统内角色控制”的分层示意图。
-
 ## 使用方式
 
 | 步骤 | 说明 |
@@ -101,13 +90,7 @@ npm run docs:dev
 | 6 | 高风险动作进入审批流 |
 | 7 | 结果、线程状态、审计信息写入本地存储 |
 
-![使用流程示意图占位图](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder：在这里插入“用户发消息 -> Agent 执行 -> 审批 -> 回写结果”的流程图。
-
-![使用流程讲解视频占位图](/placeholders/guide-video-placeholder.svg)
-
-> Placeholder：在这里插入 1~3 分钟产品演示视频，建议覆盖 “发起一次任务、查看流式输出、处理审批” 三个动作。
 
 ## 快速接入入口
 

@@ -25,6 +25,7 @@ export interface FeishuMessageHandlerStrings {
   threadJoinHint: string;
   feishuFileSourceLabel: string;
   skillInstallExpiresHint: string;
+  dmNotAdmin: string;
 }
 
 const zhCN: FeishuMessageHandlerStrings = {
@@ -52,6 +53,7 @@ const zhCN: FeishuMessageHandlerStrings = {
   threadJoinHint: "请先 /thread new 或 /thread join",
   feishuFileSourceLabel: "Feishu 文件",
   skillInstallExpiresHint: "10 分钟内确认，否则自动取消",
+  dmNotAdmin: "你不是管理员，只有管理员可以呼出面板",
 };
 
 const enUS: FeishuMessageHandlerStrings = {
@@ -79,6 +81,7 @@ const enUS: FeishuMessageHandlerStrings = {
   threadJoinHint: "Please /thread new or /thread join first",
   feishuFileSourceLabel: "Feishu file",
   skillInstallExpiresHint: "Confirm within 10 minutes, or it will be canceled automatically",
+  dmNotAdmin: "You are not an admin. Only admins can access the panel.",
 };
 
 export function getFeishuMessageHandlerStrings(locale: AppLocale): FeishuMessageHandlerStrings {

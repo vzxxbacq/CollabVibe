@@ -143,6 +143,10 @@ function rawCard(data: Record<string, unknown>): CardActionResponse {
   return { card: { type: "raw", data } };
 }
 
+function warningToast(content: string): CardActionResponse {
+  return { toast: { type: "warning", content } };
+}
+
 function extractRawCardData(response?: CardActionResponse): Record<string, unknown> | undefined {
   return response && 'card' in response ? response.card?.data : undefined;
 }
@@ -766,7 +770,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       const ownerId = String(actionValue.ownerId ?? "");
       if (ownerId) {
         const { GUARD } = getFeishuNotifyCatalog(deps.config.locale);
-        return rawCard(buildImmediateErrorCard(deps.config.locale, GUARD.NOT_YOUR_CARD));
+        return warningToast(GUARD.NOT_YOUR_CARD);
       }
     }
     return handleCreateThreadAction(
@@ -891,7 +895,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
           const ownerId = String(actionValue.ownerId ?? "");
           if (ownerId) {
             const { GUARD } = getFeishuNotifyCatalog(deps.config.locale);
-            return rawCard(buildImmediateErrorCard(deps.config.locale, GUARD.NOT_YOUR_CARD));
+            return warningToast(GUARD.NOT_YOUR_CARD);
           }
         }
         return startAsyncPanelTask(deps, {
@@ -962,7 +966,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       const ownerId = String(actionValue.ownerId ?? "");
       if (ownerId) {
         const { GUARD } = getFeishuNotifyCatalog(deps.config.locale);
-        return rawCard(buildImmediateErrorCard(deps.config.locale, GUARD.NOT_YOUR_CARD));
+        return warningToast(GUARD.NOT_YOUR_CARD);
       }
     }
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
@@ -997,7 +1001,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       const ownerId = String(actionValue.ownerId ?? "");
       if (ownerId) {
         const { GUARD } = getFeishuNotifyCatalog(deps.config.locale);
-        return rawCard(buildImmediateErrorCard(deps.config.locale, GUARD.NOT_YOUR_CARD));
+        return warningToast(GUARD.NOT_YOUR_CARD);
       }
     }
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
@@ -1111,7 +1115,7 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       const ownerId = String(actionValue.ownerId ?? "");
       if (ownerId) {
         const { GUARD } = getFeishuNotifyCatalog(deps.config.locale);
-        return rawCard(buildImmediateErrorCard(deps.config.locale, GUARD.NOT_YOUR_CARD));
+        return warningToast(GUARD.NOT_YOUR_CARD);
       }
     }
     const { ERR } = getFeishuNotifyCatalog(deps.config.locale);
@@ -2143,34 +2147,38 @@ async function authorizeFeishuCardIntent(
 async function resolveUnifiedTurnCard(deps: FeishuHandlerDeps, chatId: string, operatorId: string, turnId: string): Promise<Record<string, unknown> | undefined> {
   try {
     const projectId = (await requireProjectByChatId(deps, chatId)).id;
-    const recovery = await deps.api.getTurnDetail({ projectId, turnId });
+    const data = await deps.api.getTurnCardData({ projectId, turnId });
+    if (!data) {
+      const s = getFeishuCardHandlerStrings(deps.config.locale);
+      log.error({ chatId, turnId, projectId, operatorId }, "resolveUnifiedTurnCard: getTurnCardData returned null");
+      throw new TurnRecoveryError(
+        s.turnRecoveryFailed(s.turnRecordMissing, turnId, projectId, chatId),
+        { turnId, projectId, chatId }
+      );
+    }
     return deps.platformOutput.primeHistoricalTurnCard({
       chatId,
-      turnId: recovery.record.turnId,
-      threadName: recovery.record.threadName,
-      backendName: recovery.detail.backendName,
-      modelName: recovery.detail.modelName,
-      thinking: recovery.detail.reasoning,
-      message: recovery.detail.message ?? recovery.record.lastAgentMessage,
-      tools: recovery.detail.tools,
-      fileChanges: recovery.record.diffSummary
-        ? [{
-          filesChanged: recovery.record.filesChanged ?? [],
-          diffSummary: recovery.record.diffSummary,
-          stats: recovery.record.stats
-        }]
-        : [],
-      toolOutputs: recovery.detail.toolOutputs,
-      planState: recovery.detail.planState,
-      tokenUsage: recovery.record.tokenUsage,
-      promptSummary: recovery.detail.promptSummary,
-      agentNote: recovery.detail.agentNote,
-      actionTaken: recovery.record.status === "accepted" || recovery.record.status === "reverted" || recovery.record.status === "interrupted"
-        ? recovery.record.status
+      turnId: data.turnId,
+      threadName: data.threadName,
+      turnNumber: data.turnNumber,
+      backendName: data.backendName,
+      modelName: data.modelName,
+      thinking: data.reasoning,
+      message: data.message,
+      tools: data.tools,
+      fileChanges: data.fileChanges,
+      toolOutputs: data.toolOutputs,
+      planState: data.planState,
+      tokenUsage: data.tokenUsage,
+      promptSummary: data.promptSummary,
+      agentNote: data.agentNote,
+      actionTaken: data.status === "accepted" || data.status === "reverted" || data.status === "interrupted"
+        ? data.status
         : undefined,
-      turnMode: recovery.detail.turnMode
+      turnMode: data.turnMode,
     });
   } catch (error) {
+    if (error instanceof TurnRecoveryError) throw error;
     if (error instanceof OrchestratorError && (error.code === ErrorCode.TURN_RECORD_MISSING || error.code === ErrorCode.TURN_DETAIL_MISSING)) {
       const s = getFeishuCardHandlerStrings(deps.config.locale);
       const projectId = String(error.meta?.projectId ?? (await resolveProjectByChatId(deps.api, chatId))?.id ?? "unknown");
@@ -2782,7 +2790,7 @@ async function handleThreadSwitchAction(
   const { GUARD, ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const ownerId = String(actionValue.ownerId ?? "");
   if (ownerId && ownerId !== userId) {
-    return rawCard(buildImmediateErrorCard(deps.config.locale, GUARD.NOT_YOUR_CARD));
+    return warningToast(GUARD.NOT_YOUR_CARD);
   }
 
   try {
@@ -2903,7 +2911,7 @@ async function handleSnapshotAction(
   const { GUARD, ERR } = getFeishuNotifyCatalog(deps.config.locale);
   const ownerId = String(actionValue.ownerId ?? "");
   if (ownerId && ownerId !== userId) {
-    return rawCard(buildImmediateErrorCard(deps.config.locale, GUARD.NOT_YOUR_CARD));
+    return warningToast(GUARD.NOT_YOUR_CARD);
   }
   const turnId = String(actionValue.turnId ?? "");
   const threadId = String(actionValue.threadId ?? "");
@@ -3342,7 +3350,7 @@ export async function handleFeishuCardAction(deps: FeishuHandlerDeps, data: Reco
     const { GUARD } = getFeishuNotifyCatalog(deps.config.locale);
     if (error instanceof AuthorizationError) {
       actionLog.info({ actionKind: action.kind }, "card action authorization denied");
-      return { toast: { type: "warning" as const, content: GUARD.NO_PERMISSION } };
+      return warningToast(GUARD.NO_PERMISSION);
     }
     actionLog.error({ err: error instanceof Error ? error.message : error }, "card action error");
     if (error instanceof TurnRecoveryError) {

@@ -2,7 +2,7 @@
 title: "Slack Integration"
 layer: overview
 status: active
-source_of_truth: packages/channel-slack/*, src/server.ts
+source_of_truth: src/slack/*, src/slack/channel/*, src/server.ts
 ---
 
 # Slack Integration
@@ -13,9 +13,9 @@ The Slack-related code already has foundational output and Socket Mode handling,
 
 | Module | Responsibility |
 | --- | --- |
-| `packages/channel-slack/src/slack-socket-handler.ts` | Handles Socket Mode events |
-| `packages/channel-slack/src/slack-message-client.ts` | Calls the Slack Web API |
-| `packages/channel-slack/src/slack-output-adapter.ts` | Renders unified output into Slack Block Kit / Stream API |
+| `src/slack/slack-socket-mode-app.ts` | Handles Socket Mode bootstrap |
+| `src/slack/slack-message-handler.ts` | Parses Slack messages and routes commands |
+| `src/slack/channel/*` | Renders unified output into Slack messages / updates |
 
 ```mermaid
 flowchart LR
@@ -24,9 +24,7 @@ flowchart LR
   C --> D[Slack Block Kit / Stream API]
 ```
 
-![Slack integration overview placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add a Slack App configuration overview screenshot and mark the Socket Mode, OAuth, and Event Subscriptions entry points.
 
 ## Target integration shape
 
@@ -69,9 +67,7 @@ Constraints:
 | 6 | Configure Event Subscriptions and Interactivity |
 | 7 | Install the app to the target workspace |
 
-![Slack app creation steps placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add screenshots of the Slack App creation flow, ideally showing Socket Mode and OAuth pages.
 
 ```mermaid
 flowchart LR
@@ -108,9 +104,7 @@ SLACK_APP_TOKEN=xapp-xxx
 
 > If you only plan to drive commands through `app_mention`, you can start with the minimum set: `app_mentions:read` + `chat:write`, then add the `*:history` scopes based on the target coverage.
 
-![Slack scope configuration placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add a screenshot of the OAuth Scopes page and highlight the minimum permission set.
 
 ## Events and interactions
 
@@ -124,9 +118,7 @@ SLACK_APP_TOKEN=xapp-xxx
 | Interactivity | Enable Block Actions |
 | Socket Mode | Enabled |
 
-![Slack events configuration placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add screenshots of Event Subscriptions and Interactivity configuration.
 
 ## How the current code maps to Slack capabilities
 
@@ -153,6 +145,4 @@ SLACK_APP_TOKEN=xapp-xxx
 rg -n "slack" packages/channel-slack src
 ```
 
-![Slack validation video placeholder](/placeholders/guide-video-placeholder.svg)
 
-> Placeholder: add a Slack integration validation recording; if the integration is not complete yet, replace it with a “to be recorded” cover.

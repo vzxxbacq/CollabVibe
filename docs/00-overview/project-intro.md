@@ -14,9 +14,7 @@ status: active
 - approval-driven human-in-the-loop workflows
 - local persistence for threads, snapshots, audit data, and state
 
-![Project introduction cover placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add an overview image showing the main UI, card flow, or agent collaboration flow. Recommended size: 1280x720.
 
 ## Design goals
 
@@ -39,26 +37,21 @@ flowchart LR
 
 | Platform | Status | Current capability | Code location |
 | --- | --- | --- | --- |
-| Feishu / Lark | Supported | WebSocket events, messages, cards, bot menu, group and DM entry points | `src/feishu/*`, `packages/channel-feishu/*` |
-| Slack | TODO | Output adapter and socket handler exist, but the application-layer main path is not fully wired | `packages/channel-slack/*` |
+| Feishu / Lark | Supported | WebSocket events, messages, cards, bot menu, group and DM entry points | `src/feishu/*`, `src/feishu/channel/*` |
+| Slack | TODO | Output adapter and socket handler exist, but the application-layer main path is not fully wired | `src/slack/*`, `src/slack/channel/*` |
 | MS Teams | TODO | Reserved as an extension direction; not integrated in the current repository | — |
-
-![Platform capability comparison placeholder](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder: add a platform capability matrix screenshot and highlight that Feishu is integrated while Slack is currently “output layer ready / application layer pending”.
 
 ## Backend support
 
-| Backend | Transport | Access method | Status | Notes |
+The current codebase only supports backend access through API-driven transports.
+
+| Backend | Transport | Mode | Status | Notes |
 | --- | --- | --- | --- | --- |
 | `codex` | `codex` | API | Supported | Connected through the Codex protocol / stdio |
 | `opencode` | `acp` | API | Supported | Connected through ACP |
 | `claude-code` | `acp` | API | Supported | Connected through ACP |
-| `codex` | TBD | RefreshToken | Planned | Platform RefreshToken-based access is on the roadmap |
-| `claude-code` | TBD | RefreshToken | Planned | Platform RefreshToken-based access is on the roadmap |
-| `github-copilot` | TBD | RefreshToken | Planned | Not integrated in the current code |
-| `gemini-cli` | TBD | RefreshToken | Planned | Not integrated in the current code |
-| `trae-cli` | TBD | RefreshToken | Planned | Not integrated in the current code |
+| `gemini-cli` | TBD | — | Planned | Not integrated in the current code |
+| `trae-cli` | TBD | — | Planned | Not integrated in the current code |
 
 ```bash
 # Preview the documentation locally
@@ -85,10 +78,6 @@ npm run docs:dev
 | `RoleResolver` | Resolves roles |
 | `authorize` / `command-guard` | Command-level authorization checks |
 
-![Permissions and roles placeholder](/placeholders/guide-image-placeholder.svg)
-
-> Placeholder: add a layered diagram showing “platform integration credentials + in-system role control”.
-
 ## How it is used
 
 | Step | Description |
@@ -101,13 +90,7 @@ npm run docs:dev
 | 6 | High-risk actions enter an approval flow |
 | 7 | Results, thread state, and audit data are written to local storage |
 
-![Usage flow placeholder](/placeholders/guide-image-placeholder.svg)
 
-> Placeholder: add a flow chart of “user sends message -> agent executes -> approval -> result written back”.
-
-![Usage walkthrough video placeholder](/placeholders/guide-video-placeholder.svg)
-
-> Placeholder: add a 1–3 minute product demo covering “start a task, watch streaming output, handle an approval”.
 
 ## Quick entry points
 

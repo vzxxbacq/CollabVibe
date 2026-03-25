@@ -1,7 +1,7 @@
 ---
 title: "System Architecture"
 layer: architecture
-source_of_truth: AGENTS.md, agent/01-architecture.md
+source_of_truth: AGENTS.md, src/server.ts, src/common/dispatcher.ts, services/factory.ts
 status: active
 ---
 
@@ -9,213 +9,127 @@ status: active
 
 ## Overview
 
-Codex App Server is a multi-platform IM Bot service connecting Feishu/Slack and other IM platforms to AI Agent backends (Codex CLI / ACP protocol). Users send messages in group chats, the system routes them to the Agent for execution, and streams results back to IM cards in real time.
+CollabVibe connects IM platforms to agent backends and returns both synchronous command results and streaming turn output.
 
-The system uses a **4-layer architecture** with strict **unidirectional dependencies** and **layer isolation**.
+The system still follows the AGENTS invariants:
 
----
+- exactly two data paths
+- strict L0/L1/L2/L3 layering
+- `projectId` as the aggregate key
+- `BackendIdentity` as the thread backend source of truth
 
-## 1. Layer Architecture
+The code shape, however, is the current repository layout below.
 
-```
-┌────────────────────────────────────────────────────────────┐
-│  L0  Composition Root                                      │
-│  src/server.ts · src/config.ts · src/platform/             │
-├────────────────────────────────────────────────────────────┤
-│  L1  Platform Modules                                      │
-│  src/feishu/ · src/slack/                                  │
-├────────────────────────────────────────────────────────────┤
-│  L2  Services                                              │
-│  contracts · orchestrator · persistence                    │
-├────────────────────────────────────────────────────────────┤
-│  L3  Core Packages                                         │
-│  agent-core · git-utils · logger · admin-ui                │
-└────────────────────────────────────────────────────────────┘
+## 1. Layering in the current codebase
+
+```text
+L0  src/server.ts, src/config.ts
+L1  src/common/, src/feishu/, src/slack/
+L2  services/index.ts, services/orchestrator-api.ts, services/* domain modules, services/persistence/
+L3  packages/agent-core/, packages/git-utils/, packages/logger/, packages/admin-ui/
 ```
 
-### Layer Responsibilities
+### Responsibilities
 
-| Layer | Responsibility | Modules |
-|---|---|---|
-| **L0** | Process startup, dependency injection, platform bootstrap | `server.ts`, `config.ts`, `platform/` |
-| **L1** | IM platform adaptation: message handling, card rendering, WebSocket | `src/feishu/`, `src/slack/` |
-| **L2** | Platform-agnostic business logic and type definitions | `services/contracts/`, `services/orchestrator/`, `services/persistence/` |
-| **L3** | Low-level infrastructure: Agent protocol, utilities | `packages/agent-core/`, `packages/git-utils/`, `packages/logger/` |
+| Layer | Current files | Responsibility |
+| --- | --- | --- |
+| `L0` | `src/server.ts`, `src/config.ts` | process bootstrap and wiring |
+| `L1` | `src/common/`, `src/feishu/`, `src/slack/` | platform handlers, shared dispatch, platform rendering |
+| `L2` | `services/*` | business orchestration, persistence, IAM, merge, plugin, event runtime |
+| `L3` | `packages/*` | backend transport abstraction, git operations, logging |
 
-### Isolation Rules
+### Import constraints
 
-| Source | May import | Must not import |
-|--------|-----------|-----------------|
-| **L0** | orchestrator factory, logger | L1 internals, L3 |
-| **L1** | orchestrator, contracts, logger | L3, other platform modules |
-| **L2** | L3, peer L2 modules | L0, L1 |
-| **L3** | same-layer (unidirectional) | L0, L1, L2 |
+| Layer | May import | Must not import |
+| --- | --- | --- |
+| `L0/L1` | `services/index.ts`, public logger exports | `services/*` internals, `packages/agent-core` transport internals, `packages/git-utils` internals |
+| `L2` | `packages/*` public entries, peer `services/*` modules | `src/*` |
+| `L3` | same-package internals | `services/*`, `src/*` |
 
-### L2 Modules
+## 2. Path A: command response
 
-| Module | Responsibility |
-|--------|---------------|
-| **contracts** | Pure types/interfaces: IM protocol (`im/`) + admin contracts (`admin/`), zero logic |
-| **orchestrator** | Business core: Agent sessions, Intent, Commands, IAM, Approval, Audit, Plugin |
-| **persistence** | Storage implementation: SQLite, injected into orchestrator via DI only |
+Current Path A is implemented through shared L1 dispatch plus L2 API calls:
 
-### L3 agent-core
-
-Unified backend protocol containing `transports/codex/` (Codex stdio) and `transports/acp/` (ACP SSE). L2 accesses backends through the `AgentApiFactory` interface; direct imports of `transports/` internals are forbidden.
-
----
-
-## 2. Data Paths
-
-The system has exactly two data paths. All functionality must flow along these paths.
-
-### Path A: Command Response (User Message → Rendered Result)
-
-```
+```text
 IM Event
-  → server.ts dispatch (L0)
-  → feishu-message-handler (L1)
-  → orchestrator/intent/dispatcher (L2)
-    ├─ agent command → orchestrator.handleIntent()
-    │                 → AgentApiPool → AgentApiFactory
-    │                 → HandleIntentResult
-    └─ non-agent command → orchestrator/commands/platform-commands
-  → FeishuOutputAdapter render (L1)
+  -> src/server.ts wiring
+  -> src/feishu/* or src/slack/*
+  -> src/common/dispatcher.ts
+     -> agent turn path: OrchestratorApi.createTurn(...)
+     -> command path: platform handlers + src/common/platform-commands.ts
+  -> services/index.ts facade
+  -> platform renderers in L1
 ```
 
-| Stage | Module | Responsibility |
-|-------|--------|---------------|
-| Event binding | `server.ts` (L0) | Binds IM callbacks |
-| Platform parsing | `feishu-message-handler` (L1) | Parses messages/users/content |
-| Intent dispatch | `orchestrator/intent/dispatcher` (L2) | Classify → authorize → route |
-| Non-agent commands | `orchestrator/commands/` (L2) | `/thread`, `/help`, project management |
-| Agent commands | `orchestrator.handleIntent()` (L2) | Thread/backend/turn/pipeline |
-| Platform output | `FeishuOutputAdapter` (L1) | Renders Feishu messages and cards |
+### Notes
 
-### Path B: Agent Streaming Events (Agent Executing → Real-time Push)
+- L1 does not call backend transports directly.
+- `src/common/dispatcher.ts` is the shared command split point for agent turns.
+- Project and admin workflows still call the same L2 `OrchestratorApi`; they are not a third data path.
 
+## 3. Path B: streaming agent events
+
+Current Path B is:
+
+```text
+Backend (Codex stdio / ACP)
+  -> AgentApi.onNotification
+  -> services/event/EventPipeline
+  -> ThreadRuntimeRegistry
+  -> ThreadEventRuntime
+  -> AgentEventRouter
+  -> transformUnifiedAgentEvent / toPlatformOutput
+  -> OutputGateway
+  -> Feishu / Slack adapters
 ```
-Backend (Codex stdio / ACP SSE)
-  → onNotification
-  → agent-core/transports/ eventBridge (L3)
-  → UnifiedAgentEvent
-  → orchestrator/event/EventPipeline facade (L2)
-  → ThreadEventRuntime / AgentEventRouter
-  → L1 delivery queue / AgentStreamOutput interface
-  → FeishuOutputAdapter / SlackOutputAdapter (L1)
-```
 
-| Stage | Module | Responsibility |
-|-------|--------|---------------|
-| Backend integration | `agent-core/transports/` (L3) | Connects to Codex/ACP protocols |
-| Event unification | `UnifiedAgentEvent` (L3) | Unified event model |
-| Event orchestration | `orchestrator/event/` (L2) | Pipeline, routing, callbacks |
-| Platform push | Output Adapter (L1) | Converts to platform messages |
+### Key files
 
-### Design Constraints
+| Stage | File |
+| --- | --- |
+| backend abstraction | `packages/agent-core/src/types.ts` |
+| event bridge | `packages/agent-core/src/transports/*` |
+| pipeline facade | `services/event/pipeline.ts` |
+| per-thread runtime | `services/event/thread-event-runtime.ts` |
+| event router | `services/event/router.ts` |
+| platform output contract | `services/event/output-contracts.ts` |
 
-| Constraint | Description |
-|-----------|-------------|
-| Path A must go through `intent/dispatcher` | Unified command entry point |
-| Path B must go through `EventPipeline` | Unified streaming event entry point |
-| L1 must not call backends directly | Backend differences handled inside L3 |
-| New platforms must not add a third path | Reuse Path A / B |
+## 4. Current L2 assembly
 
-### Turn lifecycle semantics
+`services/factory.ts` assembles the runtime in this order:
 
-- After `turn/start` succeeds and returns a `turnId`, L2 `TurnLifecycleService` must immediately establish the turn baseline: create the turn record, persist the initial snapshot, and mark the active turn.
-- `EventPipeline` is the Path B facade; per-thread live event convergence, state sync, and completion handling are owned by `ThreadEventRuntime`. It is not the sole source of turn-start persistence.
-- To tolerate early backend notifications, `EventPipeline` may defensively call idempotent `ensureTurnStarted()` and buffer notifications before activation. This does not change the authoritative start point, which remains `TurnLifecycleService`.
-- `finishTurn()` may compute commit/diff only from an already-established active turn. Missing turn-start persistence is therefore a lifecycle error, not something UI fallback should mask.
+1. persistence and project resolver
+2. backend registry, config service, session resolver
+3. runtime config provider and transport factory registry
+4. API pool
+5. thread, turn, and snapshot sub-layers
+6. merge, approval, IAM, audit, plugin, and project services
+7. raw `OrchestratorApi`
+8. `withApiGuards(...)`
+9. deferred `runStartup(gateway)` wiring for Path B
 
----
+## 5. State invariants that still matter
 
-## 3. Core Invariants
+### Project and chat
 
-### 3.1 BackendIdentity
+- `chatId` is only the platform binding
+- `projectId` is the real aggregate key
+- IM entry points must resolve `chatId -> projectId` before thread or turn access
 
-| Rule | Description |
-|------|------------|
-| **I1** | `transport` derived from `backendId` automatically; never passed independently |
-| **I2** | Must be passed as a whole `BackendIdentity`; never split into fields |
-| **I3** | `ThreadRecord.backend` is the single persistent source |
-| **I4** | Frozen with `Object.freeze()` after creation; immutable |
-| **I5** | `UserThreadBinding` is a pure pointer; no backend metadata |
+### Thread and backend
 
-### 3.2 Project / Chat Relationship
+- `ThreadRecord.backend` is the persisted backend identity
+- `UserThreadBinding` is only a pointer to the active thread
+- thread runtime config is built from project config plus thread backend identity
 
-| Rule | Description |
-|------|------------|
-| **P1** | Project is the aggregate root |
-| **P2** | `chatId` is a platform binding, not a persistence key |
-| **P3** | IM entry dereferences `chatId → projectId` first |
-| **P4** | Thread history does not migrate on chat rebinding |
-| **P5** | `UserThreadBinding` is a pure pointer |
+### Turn lifecycle
 
-### 3.3 Thread State Model
+- `TurnLifecycleService` owns authoritative turn start and finish behavior
+- `EventPipeline` may buffer or defensively ensure state, but it is not the source of truth for turn creation
+- merge resolver threads skip normal commit flow when `MERGE_HEAD` is active
 
-| Type | Scope | Persistent Source |
-|------|-------|------------------|
-| `ProjectRecord` | project aggregate root | `AdminStateStore` |
-| `ThreadRecord` | project-level, immutable | `ThreadRegistry` |
-| `UserThreadBinding` | user-level, pure pointer | `UserThreadBindingService` |
-| `RuntimeConfig` | per-turn, transient | `RuntimeConfigProvider` |
-| `UserRecord` | global, mutable | `UserRepository` (SQLite) |
+## 6. Why this page changed
 
-### 3.4 User State
+Older docs described a `services/contracts/` plus `services/orchestrator/` layout and an `orchestrator/intent/dispatcher` path that no longer matched the repository.
 
-| Rule | Description |
-|------|------------|
-| **U1** | Admin merged from `env` (non-deletable) and `im` (mutable) |
-| **U2** | `users` table is the single source of truth for roles |
-| **U3** | Admin has all permissions |
-
-### 3.5 Merge Resolver Thread
-
-Merge resolver threads (`threadName` matching `merge-{branchName}`) run on a branch worktree with an active `MERGE_HEAD`. These constraints protect the merge state:
-
-| Rule | Description |
-|------|------------|
-| **M1: No snapshot** | `createTurnStart` skips `snapshot.create()` for merge resolver threads. `git stash create` + `git reset HEAD` consumes `MERGE_HEAD`, producing a single-parent commit that breaks the ancestry chain |
-| **M2: No commitAndDiff** | `finishTurn` skips `commitAndDiff()` for merge resolver threads. A normal commit would consume `MERGE_HEAD` |
-| **M3: MERGE_HEAD guard** | `finishTurn` additionally checks for a `MERGE_HEAD` file in the worktree, skipping commit even if the thread name doesn't match |
-| **M4: Self-managed session** | Merge commit/rollback is managed by `MergeService.commitMergeReview()` / `abortMergeSession()`, not the turn-level snapshot/commit flow |
-| **M5: Single commit point** | `MERGE_HEAD` may only be consumed by `commitMergeSession()` via `git commit --allow-empty`, which must produce a two-parent merge commit |
-
----
-
-## 4. Platform Extension Rules
-
-### New Platform Minimum Contract
-
-A new IM platform must provide:
-- A message → input adapter for Path A
-- An interactive callback → command adapter
-- An `IMOutputAdapter` implementation for Path B and structured Path A outputs
-
-Must not:
-- Persist thread/backend state at the platform layer
-- Bypass `dispatchIntent()` or `EventPipeline`
-- Leak platform payload shapes into shared services
-
-### Adding a New Backend
-
-- Add a new transport under `agent-core/transports/`
-- Update `BackendId` enum + `BACKEND_TRANSPORT` mapping
-- Zero changes required in L2
-
----
-
-## 5. Governance
-
-### Fallback Governance
-
-Critical paths must fail explicitly. Fallbacks allowed only on non-critical paths (logs/cache/UI degradation), must record the original error, and must not alter core semantics.
-
-### Test File Protection
-
-Test files (`*.test.*`) are read-only by default. Explicit authorization + rationale required before modification.
-
-### Architecture Changes
-
-Propose rationale → obtain human approval → verify isolation constraints still hold.
+This page now reflects the current code while preserving the architecture invariants defined in `AGENTS.md`.
