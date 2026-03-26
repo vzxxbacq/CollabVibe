@@ -184,7 +184,8 @@ export class ThreadService {
   async isPendingApproval(projectId: string, threadName: string): Promise<boolean> {
     const turnId = (await this.threadTurnStateRepository.get(projectId, threadName))?.blockingTurnId;
     if (!turnId || !this.lookupTurnStatusSync) return false;
-    return this.lookupTurnStatusSync(projectId, turnId) === "awaiting_approval";
+    const status = await this.lookupTurnStatusSync(projectId, turnId);
+    return status === "awaiting_approval";
   }
 
   private async upsertRuntimeState(projectId: string, threadName: string, patch: {

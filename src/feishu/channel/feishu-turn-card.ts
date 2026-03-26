@@ -1041,8 +1041,10 @@ export class TurnCardManager {
   // ── Card Rendering ───────────────────────────────────────────────────────
 
   renderCard(state: TurnCardState): Record<string, unknown> {
-    const isDone = state.status === "completed" || state.status === "accepted" || state.status === "reverted";
-    const isAwaitingApproval = state.status === "awaiting_approval";
+    // awaiting_approval = turn finished, pending user accept/revert (NOT agent tool approval;
+    // tool approvals are rendered as separate approval cards by requestApproval())
+    const isDone = state.status === "completed" || state.status === "accepted" || state.status === "reverted" || state.status === "awaiting_approval";
+    const isAwaitingApproval = false;
     const isFailed = state.status === "failed";
     const isInterrupting = this.isInterruptPending(state);
     const isInterrupted = this.isInterrupted(state);
@@ -1354,7 +1356,7 @@ export class TurnCardManager {
     const tokenText = toTokenText(input.tokenUsage);
     const footerParts: string[] = [];
     const totalFiles = computeFileStats(input.fileChanges).totalFiles;
-    if (input.status === "completed" || input.status === "accepted" || input.status === "reverted") {
+    if (input.status === "completed" || input.status === "accepted" || input.status === "reverted" || input.status === "awaiting_approval") {
       footerParts.push(`✅ ${s.done}`);
       if (tokenText !== "-") footerParts.push(`${tokenText} tokens`);
       if (input.fileChanges.length > 0) footerParts.push(s.fileChanges(totalFiles));

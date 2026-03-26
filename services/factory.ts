@@ -461,7 +461,11 @@ export async function createOrchestratorLayer(
         return threadRuntimeService.deleteThread(input.projectId, input.threadName);
       },
       async isPendingApproval(input: { projectId: string; threadName: string }): Promise<boolean> {
-        return sessionStateService.hasPendingApproval(projectThreadKey(input.projectId, input.threadName));
+        // Check both: (1) in-memory agent-tool approval state, (2) persistent turn-completion blockingTurnId
+        if (sessionStateService.hasPendingApproval(projectThreadKey(input.projectId, input.threadName))) {
+          return true;
+        }
+        return threadService.isPendingApproval(input.projectId, input.threadName);
       },
       async acceptTurn(input: { projectId: string; turnId: string }) {
         return turnCommandService.acceptTurn(input.projectId, input.turnId);

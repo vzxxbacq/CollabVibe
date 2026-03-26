@@ -55,6 +55,15 @@ export async function git(
         return await exec("git", fullArgs, {
             cwd,
             maxBuffer: opts?.maxBuffer ?? 10 * 1024 * 1024,
+            env: {
+                ...process.env,
+                // Prevent git from prompting for credentials on stdin.
+                // Without this, a failed token/auth on `git clone` causes the
+                // process to hang indefinitely waiting for interactive input.
+                GIT_TERMINAL_PROMPT: "0",
+                // Clear any external askpass helper that might pop up a dialog.
+                GIT_ASKPASS: "",
+            },
         });
     } catch (error) {
         const execError = error as NodeJS.ErrnoException & {
@@ -63,8 +72,8 @@ export async function git(
             spawnargs?: string[];
         };
         // Log the failure at debug level so domain APIs can decide whether it's an error
-        log.debug({ 
-            cwd, 
+        log.debug({
+            cwd,
             subcommand,
             ...opts?.logContext,
             err: error instanceof Error ? error.message : String(error),

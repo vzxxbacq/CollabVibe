@@ -18,6 +18,7 @@ export const ErrorCode = {
   MERGE_NO_CHANGES:        "MERGE_NO_CHANGES",
   TURN_RECORD_MISSING:     "TURN_RECORD_MISSING",
   TURN_DETAIL_MISSING:     "TURN_DETAIL_MISSING",
+  TURN_BLOCKED_PENDING_APPROVAL: "TURN_BLOCKED_PENDING_APPROVAL",
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

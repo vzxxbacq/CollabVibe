@@ -107,7 +107,7 @@ export class ProjectSetupService {
       const real = await realpath(resolved);
       const realWorkspace = await realpath(workspace);
       if (!real.startsWith(realWorkspace + pathSep)) {
-        await rm(resolved, { recursive: true, force: true }).catch(() => {});
+        await rm(resolved, { recursive: true, force: true }).catch(() => { });
         log.warn({ chatId: input.chatId, cwd: resolved, real, realWorkspace }, "project setup rejected: symlink escape");
         throw new Error("路径解析后超出 workspace 范围（疑似符号链接越狱）");
       }
@@ -119,7 +119,10 @@ export class ProjectSetupService {
     if (input.gitUrl) {
       let cloneUrl = input.gitUrl;
       if (input.gitToken && cloneUrl.startsWith("https://")) {
-        cloneUrl = cloneUrl.replace("https://", `https://${input.gitToken}@`);
+        // Use x-token-auth:TOKEN format — token goes in the password field.
+        // Putting token as username only (https://TOKEN@host) causes git to
+        // prompt for a password, hanging the process in non-interactive mode.
+        cloneUrl = cloneUrl.replace("https://", `https://x-token-auth:${input.gitToken}@`);
       }
       await this.gitOps.repo.init(resolved, cloneUrl);
       log.info({ chatId: input.chatId, cwd: resolved, hasGitUrl: true }, "project repository initialized from remote");
@@ -251,7 +254,7 @@ export class ProjectSetupService {
   async updateGitRemote(projectCwd: string, gitUrl: string, gitToken?: string): Promise<void> {
     let url = gitUrl;
     if (gitToken && url.startsWith("https://")) {
-      url = url.replace("https://", `https://${gitToken}@`);
+      url = url.replace("https://", `https://x-token-auth:${gitToken}@`);
     }
     await this.gitOps.repo.setRemoteUrl(projectCwd, url);
     log.info({ cwd: projectCwd, hasGitToken: Boolean(gitToken) }, "project git remote updated");
@@ -476,7 +479,7 @@ export class ProjectService {
     private readonly onProjectDeactivated: (projectId: string) => Promise<void>,
     private readonly onProjectReactivated: (projectId: string) => Promise<void>,
     private readonly defaultProjectCwd: string,
-  ) {}
+  ) { }
 
   async resolveProjectId(chatId: string): Promise<string | null> {
     return this.projectSetupService.resolveProjectId(chatId);

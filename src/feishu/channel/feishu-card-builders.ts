@@ -359,7 +359,8 @@ export function buildMergePreviewCard(
   const txt = getFeishuCardBuilderStrings(locale);
   const elements: Record<string, unknown>[] = [];
 
-  // ── File changes ──
+  // ── File changes ── (truncated to avoid exceeding Feishu 30KB card limit)
+  const MERGE_PREVIEW_MAX_FILES = 30;
   if (diffStats.filesChanged.length > 0) {
     elements.push({
       tag: "markdown",
@@ -367,25 +368,23 @@ export function buildMergePreviewCard(
       icon: { tag: "standard_icon", token: "code_outlined", color: "turquoise" }
     });
 
-    if (diffStats.fileDiffs && diffStats.fileDiffs.length > 0) {
-      for (const fd of diffStats.fileDiffs) {
-        elements.push({
-          tag: "collapsible_panel",
-          expanded: false,
-          header: {
-            title: { tag: "markdown", content: fd.file },
-            icon: { tag: "standard_icon", token: "code_outlined", color: "grey", size: "16px 16px" },
-            icon_position: "follow_text", icon_expanded_angle: -180
-          },
-          vertical_spacing: "2px",
-          background_color: "grey",
-          elements: [{ tag: "markdown", content: "```diff\n" + fd.diff + "\n```" }]
-        });
+    // Show file name + per-file diff line counts (no inline diff content)
+    const fileDiffMap = new Map((diffStats.fileDiffs ?? []).map(fd => {
+      let adds = 0, dels = 0;
+      for (const line of fd.diff.split("\n")) {
+        if (line.startsWith("+") && !line.startsWith("+++")) adds++;
+        else if (line.startsWith("-") && !line.startsWith("---")) dels++;
       }
-    } else {
-      const fileList = diffStats.filesChanged.map((f) => `• ${f}`).join("\n");
-      elements.push({ tag: "markdown", content: fileList });
-    }
+      return [fd.file, { adds, dels }];
+    }));
+    const displayFiles = diffStats.filesChanged.slice(0, MERGE_PREVIEW_MAX_FILES);
+    const fileLines = displayFiles.map(f => {
+      const stat = fileDiffMap.get(f);
+      return stat ? `• \`${f}\`  (+${stat.adds} / -${stat.dels})` : `• \`${f}\``;
+    });
+    const remaining = diffStats.filesChanged.length - displayFiles.length;
+    if (remaining > 0) fileLines.push(`*… and ${remaining} more files*`);
+    elements.push({ tag: "markdown", content: fileLines.join("\n") });
   } else {
     elements.push(greyText(txt.mergePreviewNoChanges));
   }
@@ -617,7 +616,12 @@ export function buildMergeResultCard(
   const elements: Record<string, unknown>[] = [];
 
   if (success && diffStats && diffStats.filesChanged.length > 0) {
-    const fileList = diffStats.filesChanged.map((f) => `• \`${f}\``).join("\n");
+    const MERGE_RESULT_MAX_FILES = 30;
+    const displayFiles = diffStats.filesChanged.slice(0, MERGE_RESULT_MAX_FILES);
+    const fileListLines = displayFiles.map((f) => `• \`${f}\``);
+    const remaining = diffStats.filesChanged.length - displayFiles.length;
+    if (remaining > 0) fileListLines.push(`*… and ${remaining} more files*`);
+    const fileList = fileListLines.join("\n");
     elements.push({
       tag: "markdown",
       content: txt.mergeMergedFiles(diffStats.filesChanged.length, diffStats.additions, diffStats.deletions, fileList),
@@ -3918,8 +3922,9 @@ export function buildFileReviewCard(review: IMFileMergeReview, locale: AppLocale
 
   // ── Batch retry form (agent_resolved files) ──
   if (queues.agentResolvedPaths.length > 0 && sessionState === "reviewing") {
+    const MERGE_REVIEW_MAX_OPTIONS = 30;
     const unchangedPaths = queues.agentResolvedPaths;
-    const retryOptions = queues.agentResolvedPaths.map(p => ({
+    const retryOptions = queues.agentResolvedPaths.slice(0, MERGE_REVIEW_MAX_OPTIONS).map(p => ({
       text: { tag: "plain_text" as const, content: p },
       value: p
     }));

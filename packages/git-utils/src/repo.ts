@@ -131,16 +131,27 @@ export async function shallowClone(source: string, targetDir: string): Promise<v
  * @param fromBranch The branch to create from (e.g. "main")
  */
 export async function ensureWorkBranch(cwd: string, branchName: string, fromBranch: string): Promise<void> {
-    // Check if branch already exists
+    // Check if branch already exists locally
     try {
         await git(["rev-parse", "--verify", `refs/heads/${branchName}`], cwd);
         // Branch exists, just checkout
         await git(["checkout", branchName], cwd);
         return;
     } catch {
-        // Branch doesn't exist, create it
+        // Branch doesn't exist locally, create it
     }
-    await git(["checkout", "-b", branchName, fromBranch], cwd);
+
+    // Prefer remote tracking branch origin/{branchName} if it exists,
+    // so the local branch content matches the remote (e.g. origin/dev).
+    // Only fall back to fromBranch (e.g. main) when no remote match exists.
+    let base = fromBranch;
+    try {
+        await git(["rev-parse", "--verify", `refs/remotes/origin/${branchName}`], cwd);
+        base = `origin/${branchName}`;
+    } catch {
+        // No remote tracking branch, use fromBranch
+    }
+    await git(["checkout", "-b", branchName, base], cwd);
 }
 
 /**

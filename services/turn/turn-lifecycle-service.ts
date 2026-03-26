@@ -173,6 +173,16 @@ export class TurnLifecycleService {
   ): Promise<{ threadId: string; turnId: string; status: "started" }> {
     const key = projectThreadKey(projectIdResolved, threadName);
     try {
+      // L2 enforcement: block if the thread has a turn awaiting accept/revert.
+      // ensureCanStartTurn only checks the transient ConversationStateMachine (already IDLE
+      // after finishSessionTurn), so this persistent check is the true guard for turn-
+      // completion approval.
+      if (await this.threadService.isPendingApproval(projectIdResolved, threadName)) {
+        throw new OrchestratorError(
+          ErrorCode.TURN_BLOCKED_PENDING_APPROVAL,
+          `thread ${threadName} has a turn awaiting approval; accept or revert before starting a new turn`
+        );
+      }
       this.sessionStateService.ensureCanStartTurn(key);
       const threadRecord = await this.threadService.getRecord(projectIdResolved, threadName);
       await this.pluginService?.ensureProjectThreadSkills?.(projectIdResolved, threadName, threadRecord?.worktreePath);

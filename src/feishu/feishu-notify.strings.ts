@@ -55,6 +55,7 @@ const zhCN: FeishuNotifyStrings = {
     THREAD_ALREADY_EXISTS: "⚠️ 该线程名称已存在，请选择其他名称",
     PROJECT_NOT_FOUND: "❌ 当前会话未绑定有效项目，请先初始化或重新绑定项目",
     AGENT_API_UNAVAILABLE: "❌ Agent 连接不可用，请稍后重试",
+    TURN_BLOCKED_PENDING_APPROVAL: "⚠️ 有未确认的文件修改，请先 ✅批准 或 ↩️撤销 后再发新任务",
   }
 };
 
@@ -88,6 +89,7 @@ const enUS: FeishuNotifyStrings = {
     THREAD_ALREADY_EXISTS: "⚠️ That thread name already exists. Choose another name.",
     PROJECT_NOT_FOUND: "❌ This session is not bound to a valid project. Initialize or rebind the project first.",
     AGENT_API_UNAVAILABLE: "❌ Agent connection is unavailable. Try again later.",
+    TURN_BLOCKED_PENDING_APPROVAL: "⚠️ There are unconfirmed file changes. Approve or revert them before sending a new task.",
   }
 };
 
