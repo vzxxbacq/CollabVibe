@@ -28,6 +28,8 @@ const API_GUARDS: Partial<Record<keyof OrchestratorApi, ApiGuardConfig>> = {
   cancelMergeReview: { permission: "thread.merge", requiresProject: true, audit: true, auditAction: "merge.cancel" },
   resolveConflictsViaAgent: { permission: "thread.merge", requiresProject: true, audit: true, auditAction: "merge.agentResolve" },
   pushWorkBranch: { permission: "thread.merge", requiresProject: true, audit: true, auditAction: "branch.push" },
+  previewProjectPull: { permission: "project.read", requiresProject: true, audit: false },
+  confirmProjectPull: { permission: "config.write", requiresProject: true, audit: true, auditAction: "project.pull" },
   updateBackendPolicy: { permission: "system.admin", requiresProject: false, audit: true, auditAction: "backend.updatePolicy" },
   adminAddProvider: { permission: "system.admin", requiresProject: false, audit: true, auditAction: "backend.addProvider" },
   adminRemoveProvider: { permission: "system.admin", requiresProject: false, audit: true, auditAction: "backend.removeProvider" },
@@ -52,6 +54,9 @@ const API_GUARDS: Partial<Record<keyof OrchestratorApi, ApiGuardConfig>> = {
   listSkillCatalog: { permission: null, requiresProject: false, audit: false },
   // §1 Thread — supplemented
   listThreads: { permission: "project.read", requiresProject: true, audit: false },
+  getThreadExecutionPolicy: { permission: "project.read", requiresProject: true, audit: false },
+  previewThreadExecutionPolicyUpdate: { permission: "config.write", requiresProject: true, audit: false },
+  confirmThreadExecutionPolicyUpdate: { permission: "config.write", requiresProject: true, audit: true, auditAction: "thread.policy.update" },
   getBackendCatalog: { permission: "project.read", requiresProject: true, audit: false },
   // §5 Merge — supplemented
   mergeDecideFile: { permission: "thread.merge", requiresProject: true, audit: false },

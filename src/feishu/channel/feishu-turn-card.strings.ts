@@ -77,6 +77,12 @@ export interface FeishuTurnCardStrings {
   fileChangesTitle: string;
   executionProcessTitle: string;
   stepCount(stepCount: number): string;
+  viewFullReply: string;
+  viewFullThinking: string;
+  contentTruncatedHint: string;
+  messageDetailTitle: string;
+  thinkingDetailTitle: string;
+  pageInfo(current: number, total: number): string;
 }
 
 const zhCN: FeishuTurnCardStrings = {
@@ -156,6 +162,12 @@ const zhCN: FeishuTurnCardStrings = {
   fileChangesTitle: "文件修改",
   executionProcessTitle: "执行过程",
   stepCount: (stepCount) => `${stepCount} 步`,
+  viewFullReply: "**查看完整回复**",
+  viewFullThinking: "**查看完整思考过程**",
+  contentTruncatedHint: "内容过长，点击查看完整内容",
+  messageDetailTitle: "完整回复",
+  thinkingDetailTitle: "完整思考过程",
+  pageInfo: (current, total) => `第 ${current} 页 / 共 ${total} 页`,
 };
 
 const enUS: FeishuTurnCardStrings = {
@@ -235,6 +247,12 @@ const enUS: FeishuTurnCardStrings = {
   fileChangesTitle: "File changes",
   executionProcessTitle: "Execution process",
   stepCount: (stepCount) => `${stepCount} steps`,
+  viewFullReply: "**View full reply**",
+  viewFullThinking: "**View full thinking**",
+  contentTruncatedHint: "Content truncated. Click to view full content",
+  messageDetailTitle: "Full Reply",
+  thinkingDetailTitle: "Full Thinking",
+  pageInfo: (current, total) => `Page ${current} of ${total}`,
 };
 
 export function getFeishuTurnCardStrings(locale: AppLocale = DEFAULT_APP_LOCALE): FeishuTurnCardStrings {

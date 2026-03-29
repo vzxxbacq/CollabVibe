@@ -61,7 +61,7 @@ export class ThreadService {
     await this.threadRegistry.remove(projectId, threadName);
   }
 
-  async updateRecordRuntime(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath">>): Promise<void> {
+  async updateRecordRuntime(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath" | "executionPolicyOverride">>): Promise<void> {
     if (!this.threadRegistry.update) {
       throw new Error("ThreadRegistry.update is not available");
     }

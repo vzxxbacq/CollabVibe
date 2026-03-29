@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { parseDiffFileNames, parseDiffStats } from "../../../../git-utils/src/diff-parser";
-import { buildApprovalDisplay, nonEmptyString, summarizeText } from "../../approval-display";
+import { buildApprovalDisplay, nonEmptyString, stringArray, summarizeText } from "../../approval-display";
 import type { UnifiedAgentEvent, UnifiedAgentTool } from "../../unified-agent-event";
 
 import { createApprovalOptionMapper } from "./approval-option-mapper";
@@ -17,6 +17,7 @@ function buildAcpApprovalDisplay(update: AcpSessionUpdate): {
   summary?: string;
   reason?: string;
   cwd?: string;
+  files?: string[];
   description: string;
 } {
   const requestId = nonEmptyString(update.requestId);
@@ -25,10 +26,14 @@ function buildAcpApprovalDisplay(update: AcpSessionUpdate): {
     ?? nonEmptyString(update.label)
     ?? nonEmptyString(update.name);
   const description = nonEmptyString(update.description);
-  const command = nonEmptyString((update.rawInput as Record<string, unknown> | undefined)?.command);
-  const cwd = nonEmptyString((update.rawInput as Record<string, unknown> | undefined)?.cwd ?? update.cwd);
+  const rawInput = update.rawInput as Record<string, unknown> | undefined;
+  const command = nonEmptyString(rawInput?.command);
+  const cwd = nonEmptyString(rawInput?.cwd ?? update.cwd);
   const reason = description;
   const approvalType = normalizeApprovalType(update.permissionKind);
+  // Extract file paths from rawInput for file_change approvals
+  const filePathCandidate = nonEmptyString(rawInput?.file_path) ?? nonEmptyString(rawInput?.path);
+  const files = stringArray(rawInput?.files) ?? (filePathCandidate ? [filePathCandidate] : undefined);
   return buildApprovalDisplay({
     approvalType,
     requestId,
@@ -36,8 +41,13 @@ function buildAcpApprovalDisplay(update: AcpSessionUpdate): {
     description,
     reason,
     cwd,
+    files,
     displayNameCandidates: [titleCandidate],
-    summaryCandidates: [command, summarizeText(description?.split("\n")[0])],
+    summaryCandidates: [
+      command,
+      approvalType === "file_change" && files?.length ? files.join(", ") : undefined,
+      summarizeText(description?.split("\n")[0]),
+    ],
     fallbackDisplayName: approvalType === "file_change" ? "Approve file changes" : "Run shell command",
     fallbackDescription: approvalType === "file_change" ? "File change approval" : "Approval required"
   });
@@ -226,6 +236,7 @@ export function acpEventToUnifiedAgentEvent(update: AcpSessionUpdate, options: A
         summary: display.summary,
         reason: display.reason,
         cwd: display.cwd,
+        files: display.files,
         availableActions: availableActions.length > 0 ? [...new Set(availableActions)] : ["deny"],
         backendType: "acp"
       };

@@ -42,12 +42,14 @@ import type { ProjectRecord } from "./project/app-config";
 import { ProjectService, ProjectSetupService, pushProjectWorkBranch } from "./project/project-service";
 import { IamService } from "./iam/iam-service";
 import { withApiGuards } from "./api-guard";
+import { ThreadExecutionPolicyService } from "./thread/thread-execution-policy-service";
 import { createThreadLayer } from "./thread/create-thread-layer";
 import { createTurnLayer } from "./turn/create-turn-layer";
 import { createSnapshotLayer } from "./snapshot/create-snapshot-layer";
 import type { TurnQueryService } from "./turn/turn-query-service";
 import { TurnLifecycleService } from "./turn/turn-lifecycle-service";
 import { projectThreadKey } from "./session/session-state-service";
+import { ProjectPullService } from "./project/project-pull-service";
 
 import { OrchestratorError, ErrorCode } from "./errors";
 import type { IMOutputMessage } from "./event/im-output";
@@ -196,6 +198,7 @@ export async function createOrchestratorLayer(
     cwd: config.cwd,
     sandbox: config.sandbox,
     approvalPolicy: config.approvalPolicy,
+    approvalTimeoutMs: config.server.approvalTimeoutMs,
   };
   const runtimeConfigProvider = new DefaultRuntimeConfigProvider(projectResolver, runtimeDefaults);
   const apiFactory = new AgentApiFactoryRegistry(
@@ -420,6 +423,25 @@ export async function createOrchestratorLayer(
     config.cwd,
   );
   const iamService = new IamService(userRepo, adminStateStore, roleResolver);
+  const threadExecutionPolicyService = new ThreadExecutionPolicyService(
+    threadService,
+    projectResolver,
+    auditService,
+    threadRuntimeService,
+  );
+
+  const projectPullService = new ProjectPullService({
+    projectResolver,
+    threadRegistry,
+    threadService: {
+      getRuntimeState: threadService.getRuntimeState.bind(threadService),
+      updateRecordRuntime: threadService.updateRecordRuntime.bind(threadService),
+    },
+    sessionStateService,
+    mergeSessionRepository: persistence.mergeSessionRepo,
+    mergeUseCase,
+    gitOps,
+  });
 
   const rawApi: OrchestratorApi = {
       async getUserActiveThread(input: { projectId: string; userId: string }) {
@@ -427,6 +449,15 @@ export async function createOrchestratorLayer(
       },
       async getThreadRecord(input: { projectId: string; threadName: string }) {
         return threadService.getRecord(input.projectId, input.threadName);
+      },
+      async getThreadExecutionPolicy(input: { projectId: string; threadName: string }) {
+        return threadExecutionPolicyService.getPolicy(input.projectId, input.threadName);
+      },
+      async previewThreadExecutionPolicyUpdate(input: { projectId: string; threadName: string; actorId: string; override: Parameters<typeof threadExecutionPolicyService.previewUpdate>[2] }) {
+        return threadExecutionPolicyService.previewUpdate(input.projectId, input.threadName, input.override);
+      },
+      async confirmThreadExecutionPolicyUpdate(input: { projectId: string; threadName: string; actorId: string; override: Parameters<typeof threadExecutionPolicyService.confirmUpdate>[2] }) {
+        return threadExecutionPolicyService.confirmUpdate(input.projectId, input.threadName, input.override, input.actorId);
       },
       async createThread(input: {
         projectId: string;
@@ -869,6 +900,12 @@ export async function createOrchestratorLayer(
       },
       async pushWorkBranch(input: { projectId: string; actorId: string }) {
         return pushProjectWorkBranch(projectResolver, input.projectId, gitOps);
+      },
+      async previewProjectPull(input: { projectId: string; targetRef: string; actorId: string }) {
+        return projectPullService.preview(input.projectId, input.targetRef);
+      },
+      async confirmProjectPull(input: { projectId: string; previewId: string; actorId: string }) {
+        return projectPullService.confirm(input.projectId, input.previewId);
       },
       async configureMergeResolver(input: { projectId: string; branchName: string; backendId: string; model: string }) {
         return mergeUseCase.configureMergeResolver(input.projectId, input.branchName, input.backendId, input.model);

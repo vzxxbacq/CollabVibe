@@ -662,3 +662,28 @@ export async function readCachedFileDiff(cwd: string, filePath: string, context?
     const { stdout } = await git(["diff", "--cached", "--", filePath], cwd, { maxBuffer: 1024 * 1024, logContext: context });
     return stdout;
 }
+
+/**
+ * Check whether MERGE_HEAD exists in the repository/worktree.
+ *
+ * Uses `git rev-parse --git-dir` to resolve the correct git directory
+ * (handles worktrees where `.git` is a file pointing to the real git dir).
+ *
+ * @param cwd Repository or worktree path
+ * @returns true if MERGE_HEAD file exists
+ */
+export async function hasMergeHead(cwd: string): Promise<boolean> {
+    try {
+        const { stdout } = await git(["rev-parse", "--git-dir"], cwd);
+        let gitDir = stdout.trim();
+        if (!gitDir) return false;
+        if (!gitDir.startsWith("/")) {
+            gitDir = join(cwd, gitDir);
+        }
+        await access(join(gitDir, "MERGE_HEAD"));
+        return true;
+    } catch {
+        return false;
+    }
+}
+

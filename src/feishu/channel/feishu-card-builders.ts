@@ -295,6 +295,27 @@ export function buildThreadListCard(
           behaviors: [{ type: "callback", value: { action: "switch_thread", threadName: t.threadName, ownerId: userId ?? "" } }]
         }]
       };
+    const policyCol = !isCreating ? {
+      tag: "column", width: "auto", vertical_align: "center",
+      elements: [{
+        tag: "button", text: { tag: "plain_text", content: "⚙️" },
+        type: "text", size: "small", width: "default",
+        behaviors: [{ type: "callback", value: { action: "thread_policy_view", threadName: t.threadName, ownerId: userId ?? "" } }]
+      }]
+    } : null;
+    const columns: unknown[] = [
+      {
+        tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+        elements: [{
+          tag: "markdown",
+          content: isCreating
+            ? `**${t.threadName}**\n${s.threadCreatingDetail(t.backendName, t.modelName)}`
+            : `**${t.threadName}**\nID: \`${(t.threadId ?? "").slice(0, 8)}\``
+        }]
+      },
+      rightCol
+    ];
+    if (policyCol) columns.push(policyCol);
     elements.push({
       tag: "interactive_container",
       width: "fill",
@@ -308,18 +329,7 @@ export function buildThreadListCard(
       disabled: true,
       elements: [{
         tag: "column_set", flex_mode: "bisect", background_style: "default", horizontal_spacing: "default",
-        columns: [
-          {
-            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
-            elements: [{
-              tag: "markdown",
-              content: isCreating
-                ? `**${t.threadName}**\n${s.threadCreatingDetail(t.backendName, t.modelName)}`
-                : `**${t.threadName}**\nID: \`${(t.threadId ?? "").slice(0, 8)}\``
-            }]
-          },
-          rightCol
-        ]
+        columns,
       }]
     });
   }
@@ -1635,6 +1645,16 @@ export function buildHelpProjectCard(
             type: "default", size: "medium", width: "fill",
             icon: { tag: "standard_icon", token: "upload_outlined" },
             behaviors: [{ type: "callback", value: { action: "help_project_push", projectId: data.projectId, ownerId } }]
+          }]
+        },
+        {
+          tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+          elements: [{
+            tag: "button",
+            text: { tag: "plain_text", content: s.helpProjectPull },
+            type: "default", size: "medium", width: "fill",
+            icon: { tag: "standard_icon", token: "download_outlined" },
+            behaviors: [{ type: "callback", value: { action: "project_pull_preview", projectId: data.projectId, targetRef: `origin/${data.workBranch}`, ownerId } }]
           }]
         },
         {

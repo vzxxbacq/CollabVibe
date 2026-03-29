@@ -75,7 +75,7 @@ export class AcpClient {
     return { session: { id: String(response.result?.session?.id ?? sessionId) } };
   }
 
-  async prompt(params: Record<string, unknown>): Promise<{ turn: { id: string } }> {
+  async prompt(params: Record<string, unknown>, timeoutMs?: number): Promise<{ turn: { id: string } }> {
     // opencode ACP expects 'prompt' field, not 'input'
     const prompt = (params.prompt as unknown[]) ?? (params.input as unknown[]);
     const sessionId = String(params.sessionId ?? "");
@@ -89,6 +89,10 @@ export class AcpClient {
     // subsequent turns from completing.
     const turnId = requestId;
     this.setLogCorrelation({ turnId });
+    // Use caller-provided timeout (aligned with APPROVAL_TIMEOUT_MS) + 60s safety margin,
+    // so L2 ApprovalWaitManager fires before the RPC timeout.
+    // Fallback: 10 minutes for backward compatibility.
+    const rpcTimeout = timeoutMs ? timeoutMs + 60_000 : 10 * 60_000;
     this.transport.request<Record<string, unknown>>({
       id: requestId,
       method: "session/prompt",
@@ -97,7 +101,7 @@ export class AcpClient {
         traceId: params.traceId,
         prompt
       }
-    }, 10 * 60_000).then((resp) => {
+    }, rpcTimeout).then((resp) => {
       const anyResp = resp as unknown as { error?: { message?: string } };
       if (anyResp.error) {
         log.error({ sessionId, err: anyResp.error.message }, "session/prompt completed with error");

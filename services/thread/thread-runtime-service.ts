@@ -78,12 +78,16 @@ export class ThreadRuntimeService {
     // Backend-specific runtime env (e.g. CODEX_HOME) — serverCmd resolved by FactoryRegistry
     const env = this.withBackendRuntimeEnv(backend, overrides?.cwd ?? baseConfig.cwd, undefined);
 
+    // Thread-level execution policy override (Phase 1: sandbox/approvalPolicy)
+    const record = await this.deps.threadRegistry?.get(projectId, threadName);
+    const policyOverride = record?.executionPolicyOverride;
+
     return {
       backend,
       cwd: overrides?.cwd ?? baseConfig.cwd,
       env,
-      sandbox: baseConfig.sandbox,
-      approvalPolicy: overrides?.approvalPolicy ?? baseConfig.approvalPolicy,
+      sandbox: policyOverride?.sandbox ?? baseConfig.sandbox,
+      approvalPolicy: policyOverride?.approvalPolicy ?? overrides?.approvalPolicy ?? baseConfig.approvalPolicy,
       threadName,
     };
   }

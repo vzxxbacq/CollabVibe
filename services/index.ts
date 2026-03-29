@@ -49,6 +49,11 @@ export type {
   TurnCardData,
   BackendIdentity,
   BackendId,
+  ThreadExecutionPolicyView,
+  ProjectPullPreviewResult,
+  ProjectPullConfirmResult,
+  ProjectPullThreadDisposition,
+  ThreadDispositionEntry,
 } from "./orchestrator-api";
 export type { OrchestratorConfig } from "./project/orchestrator-config";
 export type { AppConfig } from "./project/app-config";

@@ -57,6 +57,7 @@ export interface GitMergeOps {
   abortSession(cwd: string, context?: MergeLogContext): Promise<void>;
   fastForwardMain(mainCwd: string, branchName: string, baseBranch: string,
     context?: MergeLogContext): Promise<{ success: boolean; message: string }>;
+  hasMergeHead(cwd: string): Promise<boolean>;
 }
 
 export interface GitSnapshotOps {
@@ -82,6 +83,9 @@ export interface GitRepoOps {
   shallowClone(source: string, targetDir: string): Promise<void>;
   push(cwd: string, branchName: string, remote?: string): Promise<void>;
   isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean>;
+  fetch(cwd: string, remote?: string): Promise<void>;
+  resolveRef(cwd: string, ref: string): Promise<string>;
+  resetHard(cwd: string, targetRef: string): Promise<string>;
 }
 
 /* ── Unified interface ───────────────────────────────────────────────── */
@@ -106,12 +110,14 @@ import {
   dryRunMerge, mergeWorktree, startConflictMerge, checkConflictsResolved,
   startMergeSession, applyFileDecision, commitMergeSession, abortMergeSession,
   fastForwardMain, commitWorktreeChanges, readCachedFileDiff, readWorktreeStatusMap,
+  hasMergeHead,
 } from "./merge";
 import { createSnapshot, restoreSnapshot, diffSnapshot, pinSnapshot } from "./snapshot";
 import { commitAndDiffWorktreeChanges, isWorktreeDirty } from "./commit";
 import {
   initRepo, getCurrentBranch, detectDefaultBranch, ensureWorkBranch,
   setRemoteUrl, getRemoteUrl, shallowClone, pushBranch, isAncestor,
+  fetchRemote, resolveRef, resetHard,
 } from "./repo";
 import { access } from "node:fs/promises";
 import { initDefaultExcludes } from "./default-excludes";
@@ -151,6 +157,7 @@ export function createGitOps(workspaceCwd: string): GitOps {
       commitSession: commitMergeSession,
       abortSession: abortMergeSession,
       fastForwardMain,
+      hasMergeHead,
     },
     snapshot: {
       create: createSnapshot,
@@ -172,6 +179,9 @@ export function createGitOps(workspaceCwd: string): GitOps {
       shallowClone,
       push: pushBranch,
       isAncestor,
+      fetch: fetchRemote,
+      resolveRef,
+      resetHard,
     },
     accessCheck: access,
   };

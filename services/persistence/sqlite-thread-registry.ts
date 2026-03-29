@@ -5,6 +5,7 @@ import type { BackendIdentity } from "../../packages/agent-core/src/index";
 import { createBackendIdentity, isBackendId } from "../../packages/agent-core/src/index";
 import type { ThreadListEntry, ThreadRegistry, ThreadReservation } from "../thread/contracts";
 import type { ThreadRecord } from "../thread/types";
+import type { ThreadExecutionPolicyOverride } from "../thread/thread-execution-policy-types";
 
 interface ProjectThreadRow {
   thread_id: string;
@@ -18,6 +19,16 @@ interface ProjectThreadRow {
   base_sha: string | null;
   has_diverged: number;
   worktree_path: string | null;
+  execution_policy_override_json: string | null;
+}
+
+function parseOverrideJson(json: string | null): ThreadExecutionPolicyOverride | undefined {
+  if (!json) return undefined;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
 }
 
 function rowToRecord(row: ProjectThreadRow): ThreadRecord {
@@ -36,6 +47,7 @@ function rowToRecord(row: ProjectThreadRow): ThreadRecord {
     baseSha: row.base_sha ?? undefined,
     hasDiverged: row.has_diverged === 1,
     worktreePath: row.worktree_path ?? undefined,
+    executionPolicyOverride: parseOverrideJson(row.execution_policy_override_json),
   };
 }
 
@@ -170,9 +182,9 @@ export class SqliteThreadRegistry implements ThreadRegistry {
     await this.db.run(
       `INSERT INTO project_threads (
         thread_id, project_id, chat_id, thread_name, backend_name, transport, model,
-        created_at, status, base_sha, has_diverged, worktree_path
+        created_at, status, base_sha, has_diverged, worktree_path, execution_policy_override_json
       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), 'active', ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), 'active', ?, ?, ?, ?)`,
       record.threadId,
       projectId,
       "",
@@ -183,13 +195,14 @@ export class SqliteThreadRegistry implements ThreadRegistry {
       record.baseSha ?? null,
       record.hasDiverged ? 1 : 0,
       record.worktreePath ?? null,
+      record.executionPolicyOverride ? JSON.stringify(record.executionPolicyOverride) : null,
     );
   }
 
   async get(projectId: string, threadName: string): Promise<ThreadRecord | null> {
     const row = await this.db.get(
       `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model
-       , status, base_sha, has_diverged, worktree_path
+       , status, base_sha, has_diverged, worktree_path, execution_policy_override_json
        FROM project_threads
        WHERE project_id = ? AND thread_name = ? AND status = 'active'`,
       projectId, threadName,
@@ -200,7 +213,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
   async list(projectId: string): Promise<ThreadRecord[]> {
     const rows = await this.db.all(
       `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model
-       , status, base_sha, has_diverged, worktree_path
+       , status, base_sha, has_diverged, worktree_path, execution_policy_override_json
        FROM project_threads
        WHERE project_id = ? AND status = 'active'`,
       projectId,
@@ -220,7 +233,7 @@ export class SqliteThreadRegistry implements ThreadRegistry {
 
   async listAll(): Promise<ThreadRecord[]> {
     const rows = await this.db.all(
-      `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model, status, base_sha, has_diverged, worktree_path
+      `SELECT thread_id, project_id, chat_id, thread_name, backend_name, transport, model, status, base_sha, has_diverged, worktree_path, execution_policy_override_json
        FROM project_threads
        WHERE status = 'active'`,
     ) as ProjectThreadRow[];
@@ -234,12 +247,16 @@ export class SqliteThreadRegistry implements ThreadRegistry {
     );
   }
 
-  async update(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath">>): Promise<void> {
+  async update(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath" | "executionPolicyOverride">>): Promise<void> {
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
     if (patch.baseSha !== undefined) { sets.push("base_sha = ?"); params.push(patch.baseSha); }
     if (patch.hasDiverged !== undefined) { sets.push("has_diverged = ?"); params.push(patch.hasDiverged ? 1 : 0); }
     if (patch.worktreePath !== undefined) { sets.push("worktree_path = ?"); params.push(patch.worktreePath); }
+    if (patch.executionPolicyOverride !== undefined) {
+      sets.push("execution_policy_override_json = ?");
+      params.push(JSON.stringify(patch.executionPolicyOverride));
+    }
     if (sets.length === 0) return;
     params.push(projectId, threadName);
     await this.db.run(

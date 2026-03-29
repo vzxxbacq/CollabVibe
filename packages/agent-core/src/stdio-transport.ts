@@ -51,7 +51,7 @@ export class StdioRpcTransport implements RpcTransport {
     if (this.child.stderr) {
       this.child.stderr.setEncoding("utf8");
       this.child.stderr.on("data", (chunk: string) => {
-        log.debug({ stderr: chunk.slice(0, 500) }, "process stderr");
+        log.debug({ ...this.correlation, stderr: chunk.slice(0, 500) }, "process stderr");
       });
     }
     this.child.on("close", (code, signal) => {

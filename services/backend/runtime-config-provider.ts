@@ -11,6 +11,7 @@ function toRuntimeConfig(project: ProjectRecord | null, defaults: RuntimeDefault
     baseBranch: project?.workBranch,
     sandbox: project?.sandbox ?? defaults.sandbox,
     approvalPolicy: project?.approvalPolicy ?? defaults.approvalPolicy,
+    approvalTimeoutMs: defaults.approvalTimeoutMs,
   };
 }
 

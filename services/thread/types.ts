@@ -14,6 +14,7 @@
  */
 
 import type { BackendIdentity } from "../../packages/agent-core/src/index";
+import type { ThreadExecutionPolicyOverride } from "./thread-execution-policy-types";
 
 /**
  * ThreadRecord — 项目级、创建后核心字段不可变的线程元数据。
@@ -36,4 +37,6 @@ export interface ThreadRecord {
   hasDiverged?: boolean;
   /** worktree 绝对路径 */
   worktreePath?: string;
+  /** Thread-level execution policy override (Phase 1: sandbox/approvalPolicy) */
+  executionPolicyOverride?: ThreadExecutionPolicyOverride;
 }

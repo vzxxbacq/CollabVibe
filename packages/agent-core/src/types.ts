@@ -34,6 +34,8 @@ export interface RuntimeConfig {
   onBackendSessionIdChanged?: (newSessionId: string) => void;
   /** MCP servers from plugins — passed to ACP session/new */
   mcpServers?: McpServerConfig[];
+  /** Approval timeout (ms) — used by ACP prompt RPC to align with L2 ApprovalWaitManager timeout */
+  approvalTimeoutMs?: number;
 }
 
 export type AgentTurnInputItem =

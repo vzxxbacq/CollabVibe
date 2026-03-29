@@ -236,19 +236,23 @@ export class ThreadEventRuntime {
     return { turnRoute, turnId };
   }
 
+  private isTerminalEvent(event: UnifiedAgentEvent): boolean {
+    return event.type === "turn_aborted" || event.type === "turn_complete";
+  }
+
   private isTurnSuppressed(route: ThreadRouteBinding, turnId: string, event: UnifiedAgentEvent): boolean {
     const incomingTurnId = turnIdFromEvent(event);
     const threadInterruptingTurnId = this.interruptingTurnByThread.get(threadKey(route));
-    if (incomingTurnId && this.suppressedTurns.has(contextKey(route.projectId, incomingTurnId)) && event.type !== "turn_aborted") {
+    if (incomingTurnId && this.suppressedTurns.has(contextKey(route.projectId, incomingTurnId)) && !this.isTerminalEvent(event)) {
       return true;
     }
     if (!incomingTurnId && threadInterruptingTurnId) {
       return true;
     }
-    if (threadInterruptingTurnId && incomingTurnId === threadInterruptingTurnId && event.type !== "turn_aborted") {
+    if (threadInterruptingTurnId && incomingTurnId === threadInterruptingTurnId && !this.isTerminalEvent(event)) {
       return true;
     }
-    return turnId.length > 0 && this.finishedTurns.has(`${route.projectId}:${turnId}`) && event.type !== "turn_aborted";
+    return turnId.length > 0 && this.finishedTurns.has(`${route.projectId}:${turnId}`) && !this.isTerminalEvent(event);
   }
 
   private async handleApprovalNotification(route: ThreadRouteBinding, event: UnifiedAgentEvent): Promise<void> {
@@ -379,6 +383,54 @@ export class ThreadEventRuntime {
     }
 
     if (event.type === "turn_complete") {
+      // If this turn is being interrupted, treat turn_complete as turn_aborted
+      // to ensure completeInterrupt() fires and the INTERRUPTING state is released.
+      const tKey = threadKey(route);
+      if (this.interruptingTurnByThread.get(tKey) === turnId) {
+        routeLog.info({ turnId, threadName: route.threadName }, "turn_complete for interrupting turn — redirecting to abort path");
+        const dedupKey = `${route.projectId}:${turnId}`;
+        if (this.finishedTurns.has(dedupKey)) {
+          return;
+        }
+        this.finishedTurns.add(dedupKey);
+        this.ensuredTurns.delete(dedupKey);
+        setTimeout(() => this.finishedTurns.delete(dedupKey), this.contextTtlMs);
+
+        const key = contextKey(route.projectId, turnId);
+        const turnContext = this.contexts.get(key);
+        await this.streamOutputCoordinator.forceFlush(route.projectId, route.threadName, turnId, "turn_aborted");
+        const finalizedPlan = this.planFinalizer.finalize(route.projectId, turnId);
+        if (finalizedPlan.error) {
+          routeLog.warn({ turnId, threadName: route.threadName }, finalizedPlan.error);
+        }
+        if (finalizedPlan.message) {
+          turnContext?.context.applyOutputMessage(finalizedPlan.message);
+          await this.eventRouter.routeMessage(route.projectId, finalizedPlan.message);
+        }
+        if (turnContext) {
+          await this.callbacks.finalizeTurnState?.(route.projectId, turnId, turnContext.context.snapshot());
+          this.contexts.delete(key);
+        }
+        await this.callbacks.onTurnAborted?.({
+          projectId: route.projectId,
+          threadName: route.threadName,
+          turnId,
+        });
+        this.interruptingTurnByThread.delete(tKey);
+        this.suppressedTurns.add(contextKey(route.projectId, turnId));
+        setTimeout(() => this.suppressedTurns.delete(contextKey(route.projectId, turnId)), this.contextTtlMs);
+        this.streamOutputCoordinator.cleanup(route.projectId, turnId);
+        this.planFinalizer.unregister(route.projectId, turnId);
+
+        if (turnRoute) {
+          this.activeTurns.delete(activeTurnKey(turnRoute, turnId));
+          if (this.latestTurnByThread.get(tKey) === turnId) {
+            this.latestTurnByThread.delete(tKey);
+          }
+        }
+        return;
+      }
+
       const dedupKey = `${route.projectId}:${turnId}`;
       if (this.finishedTurns.has(dedupKey)) {
         return;
@@ -427,9 +479,9 @@ export class ThreadEventRuntime {
 
       if (turnRoute) {
         this.activeTurns.delete(activeTurnKey(turnRoute, turnId));
-        const tKey = threadKey(turnRoute);
-        if (this.latestTurnByThread.get(tKey) === turnId) {
-          this.latestTurnByThread.delete(tKey);
+        const tKey2 = threadKey(turnRoute);
+        if (this.latestTurnByThread.get(tKey2) === turnId) {
+          this.latestTurnByThread.delete(tKey2);
         }
       }
 

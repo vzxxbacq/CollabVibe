@@ -118,7 +118,7 @@ export class AcpApiAdapter implements AgentApi {
         sessionId: this.currentSessionId,
         traceId: params.traceId,
         input: acpInput
-      });
+      }, this.creationConfig?.approvalTimeoutMs);
       this.pendingMode = "code";
       this.currentTurnId = result.turn.id;
       this.turnFinished = false;

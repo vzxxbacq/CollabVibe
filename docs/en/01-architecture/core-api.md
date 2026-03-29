@@ -48,18 +48,18 @@ Current permission families:
 - `skill.manage`
 - `system.admin`
 
-Audit is attached to mutating operations such as project creation, thread creation, turn actions, merge execution, backend admin changes, and approval callbacks.
+Audit is attached to mutating operations such as project creation, thread creation, turn actions, merge execution, project pull, backend admin changes, and approval callbacks.
 
 ## API groups
 
-`OrchestratorApi` currently exposes **88 methods**:
+`OrchestratorApi` currently exposes **90 methods**:
 
 - §0-§9 grouped domain methods
 - `enqueueAsyncPlatformMutation` as an async platform-output helper
 
 ### §0 Project and binding
 
-13 methods:
+15 methods:
 
 - `resolveProjectId`
 - `getProjectRecord`
@@ -74,11 +74,14 @@ Audit is attached to mutating operations such as project creation, thread creati
 - `updateGitRemote`
 - `updateProjectConfig`
 - `toggleProjectStatus`
+- `previewProjectPull`
+- `confirmProjectPull`
 
 Primary implementation files:
 
 - `services/project/project-service.ts`
 - `services/project/project-setup-service.ts`
+- `services/project/project-pull-service.ts`
 
 ### §1 Thread management
 
@@ -273,6 +276,10 @@ The main public types exported from `services/index.ts` include:
 - `MergeResult`
 - `PlatformOutput`
 - `OutputGateway`
+- `ProjectPullPreviewResult`
+- `ProjectPullConfirmResult`
+- `ProjectPullThreadDisposition`
+- `ThreadDispositionEntry`
 
 ## Output contract
 

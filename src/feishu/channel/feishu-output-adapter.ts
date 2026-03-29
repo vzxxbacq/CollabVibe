@@ -613,6 +613,20 @@ export class FeishuOutputAdapter {
     return this.turnCard.renderToolProgressCard(state, page);
   }
 
+  /** Render paginated message detail card from persisted state. */
+  renderMessageDetailCard(chatId: string, turnId: string, page: number): Record<string, unknown> | null {
+    const state = this.turnCard.getCachedState(chatId, turnId);
+    if (!state) return null;
+    return this.turnCard.renderMessageDetailCard(state, page);
+  }
+
+  /** Render paginated thinking detail card from persisted state. */
+  renderThinkingDetailCard(chatId: string, turnId: string, page: number): Record<string, unknown> | null {
+    const state = this.turnCard.getCachedState(chatId, turnId);
+    if (!state) return null;
+    return this.turnCard.renderThinkingDetailCard(state, page);
+  }
+
   primeHistoricalTurnCard(input: {
     chatId: string;
     turnId: string;

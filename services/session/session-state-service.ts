@@ -1,5 +1,8 @@
 import { ApprovalWaitManager, ConversationStateMachine } from "./state-machine";
 import { TurnStateManager } from "./turn-state-manager";
+import { createLogger } from "../../packages/logger/src/index";
+
+const log = createLogger("session-state");
 
 export type ProjectThreadKey = string;
 
@@ -20,6 +23,8 @@ export class SessionStateService {
   private readonly machines = new Map<ProjectThreadKey, ConversationStateMachine>();
   private readonly approvalManagers = new Map<ProjectThreadKey, ApprovalWaitManager>();
   private readonly interruptingTurns = new Map<ProjectThreadKey, string>();
+  private readonly interruptTimers = new Map<ProjectThreadKey, NodeJS.Timeout>();
+  private readonly interruptTimeoutMs = 30_000;
   readonly turnState: TurnStateManager;
 
   constructor(private readonly approvalTimeoutMs: number) {
@@ -97,6 +102,11 @@ export class SessionStateService {
         this.machines.delete(key);
         this.approvalManagers.delete(key);
         this.interruptingTurns.delete(key);
+        const timer = this.interruptTimers.get(key);
+        if (timer) {
+          clearTimeout(timer);
+          this.interruptTimers.delete(key);
+        }
       }
     }
   }
@@ -107,6 +117,23 @@ export class SessionStateService {
       machine.transition("INTERRUPTING");
     }
     this.interruptingTurns.set(key, turnId);
+
+    // Clear any existing timer for this key
+    const existing = this.interruptTimers.get(key);
+    if (existing) clearTimeout(existing);
+
+    // Safety timeout: auto-clear stuck INTERRUPTING state after 30s.
+    // By the time beginInterrupt() is called, interruptTurn() has already
+    // persisted the interrupted status to DB, restored the git snapshot,
+    // and cleared activeTurnId. This timeout only clears the in-memory
+    // state machine — no historical context is lost.
+    const timer = setTimeout(() => {
+      if (this.interruptingTurns.get(key) === turnId) {
+        log.warn({ key, turnId }, "interrupt timeout: force-clearing stuck INTERRUPTING state");
+        this.clearInterrupt(key);
+      }
+    }, this.interruptTimeoutMs);
+    this.interruptTimers.set(key, timer);
   }
 
   getInterruptingTurnId(key: ProjectThreadKey): string | null {
@@ -126,6 +153,11 @@ export class SessionStateService {
       machine.transition("INTERRUPTED");
     }
     this.interruptingTurns.delete(key);
+    const timer = this.interruptTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.interruptTimers.delete(key);
+    }
     if (machine.getState() === "INTERRUPTED") {
       machine.transition("IDLE");
     }
@@ -134,8 +166,17 @@ export class SessionStateService {
 
   clearInterrupt(key: ProjectThreadKey): void {
     this.interruptingTurns.delete(key);
+    const timer = this.interruptTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.interruptTimers.delete(key);
+    }
     const machine = this.getStateMachine(key);
-    if (machine.getState() === "INTERRUPTED") {
+    const state = machine.getState();
+    if (state === "INTERRUPTING") {
+      machine.transition("INTERRUPTED");
+      machine.transition("IDLE");
+    } else if (state === "INTERRUPTED") {
       machine.transition("IDLE");
     }
   }

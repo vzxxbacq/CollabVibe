@@ -3,7 +3,7 @@ export interface MigrationExecutor {
   query?<T = Record<string, unknown>>(sql: string): Promise<T[]>;
 }
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 const CURRENT_SCHEMA_SQL: string[] = [
   `CREATE TABLE IF NOT EXISTS admin_state (
@@ -71,7 +71,8 @@ const CURRENT_SCHEMA_SQL: string[] = [
     status TEXT NOT NULL DEFAULT 'active',
     base_sha TEXT,
     has_diverged INTEGER NOT NULL DEFAULT 0,
-    worktree_path TEXT
+    worktree_path TEXT,
+    execution_policy_override_json TEXT
   );`,
 
   `CREATE TABLE IF NOT EXISTS turn_records (
@@ -295,5 +296,14 @@ export async function runMigrations(executor: MigrationExecutor): Promise<void> 
   }
   if (!approvalColumns.has("display_json")) {
     await executor.execute("ALTER TABLE approvals ADD COLUMN display_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  // v1 → v2: add execution_policy_override_json to project_threads
+  const threadTableInfo = executor.query
+    ? await executor.query<{ name: string }>("PRAGMA table_info(project_threads)")
+    : [];
+  const threadColumns = new Set(threadTableInfo.map((row) => row.name));
+  if (!threadColumns.has("execution_policy_override_json")) {
+    await executor.execute("ALTER TABLE project_threads ADD COLUMN execution_policy_override_json TEXT");
   }
 }

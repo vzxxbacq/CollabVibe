@@ -5,4 +5,5 @@ export interface RuntimeDefaults {
   cwd: string;
   sandbox: string;
   approvalPolicy: string;
+  approvalTimeoutMs: number;
 }

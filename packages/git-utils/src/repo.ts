@@ -177,3 +177,46 @@ export async function isAncestor(cwd: string, ancestor: string, descendant: stri
         return false;
     }
 }
+
+/**
+ * Fetch from a remote to ensure ref freshness.
+ *
+ * @param cwd Repository path
+ * @param remote Remote name (default: "origin")
+ */
+export async function fetchRemote(cwd: string, remote = "origin"): Promise<void> {
+    await git(["fetch", remote], cwd);
+}
+
+/**
+ * Resolve an arbitrary ref (branch, tag, remote-tracking, SHA prefix) to a
+ * full SHA-1 hash.
+ *
+ * @param cwd Repository path
+ * @param ref The ref to resolve (e.g. "origin/main", "HEAD", "abc1234")
+ * @returns Full SHA-1 string
+ * @throws If the ref cannot be resolved
+ */
+export async function resolveRef(cwd: string, ref: string): Promise<string> {
+    const { stdout } = await git(["rev-parse", ref], cwd);
+    const sha = stdout.trim();
+    if (!sha) {
+        throw new Error(`unable to resolve ref "${ref}" in ${cwd}`);
+    }
+    return sha;
+}
+
+/**
+ * Hard-reset the current branch to a target ref.
+ * Used for the defensive "rewrite" mode of project pull.
+ *
+ * @param cwd Repository path (must be on the branch to reset)
+ * @param targetRef The ref to reset to (SHA or ref name)
+ * @returns The new HEAD SHA after reset
+ */
+export async function resetHard(cwd: string, targetRef: string): Promise<string> {
+    await git(["reset", "--hard", targetRef], cwd);
+    const { stdout } = await git(["rev-parse", "HEAD"], cwd);
+    return stdout.trim();
+}
+

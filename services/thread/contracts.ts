@@ -49,8 +49,8 @@ export interface ThreadRegistry {
   /** Remove a thread (after merge+delete) */
   remove(projectId: string, threadName: string): Promise<void>;
 
-  /** Update mutable runtime fields (baseSha, hasDiverged, worktreePath) on an existing thread */
-  update?(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath">>): Promise<void>;
+  /** Update mutable runtime fields (baseSha, hasDiverged, worktreePath, executionPolicyOverride) on an existing thread */
+  update?(projectId: string, threadName: string, patch: Partial<Pick<ThreadRecord, "baseSha" | "hasDiverged" | "worktreePath" | "executionPolicyOverride">>): Promise<void>;
 
   /**
    * Replace the backend-assigned thread id for an empty thread before any

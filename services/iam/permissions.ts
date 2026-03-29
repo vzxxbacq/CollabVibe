@@ -65,7 +65,6 @@ export const RolePermissionMap: Record<EffectiveRole, Permission[]> = {
     "thread.manage",
     "turn.operate",
     "skill.use",
-    "config.write",
     "user.read",
     "help.read"
   ],

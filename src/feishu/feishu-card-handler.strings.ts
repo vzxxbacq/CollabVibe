@@ -78,6 +78,10 @@ export interface FeishuCardHandlerStrings {
   asyncFailedTag: string;
   asyncPushTitle: string;
   asyncPushBody(branchName: string): string;
+  asyncPullPreviewTitle: string;
+  asyncPullPreviewBody(branchName: string): string;
+  asyncPullConfirmTitle: string;
+  asyncPullConfirmBody(branchName: string): string;
   asyncRevertTurnTitle: string;
   asyncRevertTurnBody(turnId: string): string;
   asyncAcceptTurnTitle: string;
@@ -136,6 +140,8 @@ export interface FeishuCardHandlerStrings {
   asyncInstallSkillFailedTitle: string;
   asyncSwitchThreadFailedTitle: string;
   asyncSwitchToMainFailedTitle: string;
+  asyncPullPreviewFailedTitle: string;
+  asyncPullConfirmFailedTitle: string;
 }
 
 const zhCN: FeishuCardHandlerStrings = {
@@ -216,6 +222,10 @@ const zhCN: FeishuCardHandlerStrings = {
   asyncFailedTag: "失败",
   asyncPushTitle: "正在推送到 Remote",
   asyncPushBody: (branchName) => `正在执行 \`git push origin ${branchName}\`。`,
+  asyncPullPreviewTitle: "正在预览 Pull",
+  asyncPullPreviewBody: (branchName) => `正在检查分支 **${branchName}** 的更新情况。`,
+  asyncPullConfirmTitle: "正在执行 Pull",
+  asyncPullConfirmBody: (branchName) => `正在将 **${branchName}** 的更新应用到项目。`,
   asyncRevertTurnTitle: "正在回滚 Turn",
   asyncRevertTurnBody: (turnId) => `正在恢复 turn **${turnId}** 的文件与会话状态。`,
   asyncAcceptTurnTitle: "正在确认 Turn",
@@ -274,6 +284,8 @@ const zhCN: FeishuCardHandlerStrings = {
   asyncInstallSkillFailedTitle: "Skill 安装失败",
   asyncSwitchThreadFailedTitle: "切换 Thread 失败",
   asyncSwitchToMainFailedTitle: "切回主会话失败",
+  asyncPullPreviewFailedTitle: "Pull 预览失败",
+  asyncPullConfirmFailedTitle: "Pull 执行失败",
 };
 
 const enUS: FeishuCardHandlerStrings = {
@@ -354,6 +366,10 @@ const enUS: FeishuCardHandlerStrings = {
   asyncFailedTag: "Failed",
   asyncPushTitle: "Pushing to remote",
   asyncPushBody: (branchName) => `Running \`git push origin ${branchName}\`.`,
+  asyncPullPreviewTitle: "Previewing pull",
+  asyncPullPreviewBody: (branchName) => `Checking for updates on branch **${branchName}**.`,
+  asyncPullConfirmTitle: "Executing pull",
+  asyncPullConfirmBody: (branchName) => `Applying updates from **${branchName}** to the project.`,
   asyncRevertTurnTitle: "Reverting turn",
   asyncRevertTurnBody: (turnId) => `Restoring files and session state for turn **${turnId}**.`,
   asyncAcceptTurnTitle: "Accepting turn",
@@ -412,6 +428,8 @@ const enUS: FeishuCardHandlerStrings = {
   asyncInstallSkillFailedTitle: "Skill installation failed",
   asyncSwitchThreadFailedTitle: "Failed to switch thread",
   asyncSwitchToMainFailedTitle: "Failed to switch to main session",
+  asyncPullPreviewFailedTitle: "Failed to preview pull",
+  asyncPullConfirmFailedTitle: "Failed to execute pull",
 };
 
 export function getFeishuCardHandlerStrings(locale: AppLocale): FeishuCardHandlerStrings {

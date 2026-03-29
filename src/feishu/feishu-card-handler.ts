@@ -32,7 +32,7 @@ import {
 import { routeIntent } from "../common/intent-router";
 import type { IntentType } from "../common/intent-types";
 import { MAIN_THREAD_NAME } from "../common/thread-constants";
-import type { EffectiveRole, IMFileMergeReview, MergeResult } from "../../services/index";
+import type { EffectiveRole, IMFileMergeReview, MergeResult, ThreadExecutionPolicyView } from "../../services/index";
 import { isBackendId, transportFor } from "../../services/index";
 import { createLogger } from "../logging";
 import { authorizeIntent } from "../common/command-guard";
@@ -585,6 +585,122 @@ async function renderMergeResultCard(
   }
 }
 
+// ── Thread Execution Policy Card ────────────────────────────────────────────
+
+function policyLabel(key: string): string {
+  const labels: Record<string, string> = {
+    "read-only": "🔒 只读 (read-only)",
+    "workspace-write": "📝 工作区写入 (workspace-write)",
+    "danger-full-access": "⚠️ 完全访问 (danger-full-access)",
+    "untrusted": "🛡️ 不信任 (untrusted)",
+    "on-request": "🔔 按需审批 (on-request)",
+    "never": "✅ 免审批 (never)",
+  };
+  return labels[key] ?? (key || "—");
+}
+
+function buildThreadPolicyCard(
+  deps: FeishuHandlerDeps,
+  view: ThreadExecutionPolicyView,
+  ownerId: string,
+  justUpdated?: boolean,
+): Record<string, unknown> {
+  const headerTitle = justUpdated
+    ? `✅ 策略已更新 · ${view.threadName}`
+    : `⚙️ 执行策略 · ${view.threadName}`;
+
+  const overrideSandbox = view.override.sandbox;
+  const overrideApproval = view.override.approvalPolicy;
+
+  const statusLines = [
+    `**📦 沙箱模式:**  ${policyLabel(view.resolved.sandbox)}${overrideSandbox ? " *(thread override)*" : " *(project default)*"}`,
+    `**📋 审批策略:**  ${policyLabel(view.resolved.approvalPolicy)}${overrideApproval ? " *(thread override)*" : " *(project default)*"}`,
+    "",
+    `> 项目默认: 沙箱 ${policyLabel(view.projectPolicy.sandbox)} / 审批 ${policyLabel(view.projectPolicy.approvalPolicy)}`,
+  ];
+
+  const sandboxOptions = view.capability.allowedSandbox.map((s: string) => ({
+    text: { tag: "plain_text" as const, content: policyLabel(s) },
+    value: s,
+  }));
+
+  const approvalOptions = view.capability.allowedApprovalPolicies.map((a: string) => ({
+    text: { tag: "plain_text" as const, content: policyLabel(a) },
+    value: a,
+  }));
+
+  return {
+    schema: "2.0",
+    config: { width_mode: "fill", update_multi: true },
+    header: {
+      title: { tag: "plain_text", content: headerTitle },
+      template: justUpdated ? "green" : "blue",
+    },
+    body: {
+      direction: "vertical",
+      vertical_spacing: "8px",
+      padding: "4px 12px 12px 12px",
+      elements: [
+        { tag: "markdown", content: statusLines.join("\n") },
+        { tag: "hr" },
+        {
+          tag: "form",
+          name: "thread_policy_form",
+          elements: [
+            { tag: "markdown", content: "**修改执行策略** *(需要 maintainer 权限)*" },
+            {
+              tag: "column_set",
+              flex_mode: "bisect",
+              columns: [
+                {
+                  tag: "column",
+                  width: "weighted",
+                  weight: 1,
+                  elements: [
+                    { tag: "markdown", content: "沙箱模式" },
+                    {
+                      tag: "select_static",
+                      name: "sandbox",
+                      placeholder: { tag: "plain_text", content: "不修改" },
+                      options: sandboxOptions,
+                    },
+                  ],
+                },
+                {
+                  tag: "column",
+                  width: "weighted",
+                  weight: 1,
+                  elements: [
+                    { tag: "markdown", content: "审批策略" },
+                    {
+                      tag: "select_static",
+                      name: "approvalPolicy",
+                      placeholder: { tag: "plain_text", content: "不修改" },
+                      options: approvalOptions,
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              tag: "button",
+              text: { tag: "plain_text", content: "💾 保存" },
+              type: "primary",
+              name: "submit_policy",
+              action_type: "form_submit",
+              value: {
+                action: "thread_policy_update",
+                threadName: view.threadName,
+                ownerId,
+              },
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActionResponse | void>({
   interruptTurn: async (deps, action) => {
     await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "TURN_INTERRUPT");
@@ -832,6 +948,49 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       { tone: "blue" }
     ));
   },
+  threadPolicyView: async (deps, action) => {
+    // config.write is enforced by API Guard at the L2 layer.
+    // L1 authorization uses THREAD_LIST as a read-level gate (any project member can view).
+    await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_LIST");
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const threadName = action.threadName;
+    if (!threadName) return;
+    const projectId = (await requireProjectByChatId(deps, action.chatId)).id;
+    return startAsyncPanelTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      panelKey: "thread_policy",
+      run: async () => {
+        const policyView = await deps.api.getThreadExecutionPolicy({ projectId, threadName });
+        return buildThreadPolicyCard(deps, policyView, action.actorId);
+      },
+    });
+  },
+  threadPolicyUpdate: async (deps, action) => {
+    // config.write is enforced by API Guard at the L2 layer for the confirm call.
+    await authorizeFeishuCardIntent(deps, action.chatId, action.actorId, "THREAD_LIST");
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const threadName = action.threadName;
+    if (!threadName) return;
+    const projectId = (await requireProjectByChatId(deps, action.chatId)).id;
+    const override: Record<string, string> = {};
+    if (action.sandbox) override.sandbox = action.sandbox;
+    if (action.approvalPolicy) override.approvalPolicy = action.approvalPolicy;
+    if (Object.keys(override).length === 0) return;
+    return startAsyncPanelTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      panelKey: "thread_policy",
+      run: async () => {
+        await deps.api.confirmThreadExecutionPolicyUpdate({ projectId, threadName, actorId: action.actorId, override });
+        // Refresh: show updated policy card
+        const policyView = await deps.api.getThreadExecutionPolicy({ projectId, threadName });
+        return buildThreadPolicyCard(deps, policyView, action.actorId, true);
+      },
+    });
+  },
   helpPanel: async (deps, action) => {
     const payload = action.raw as CardActionData;
     const messageId = String(payload.context?.open_message_id ?? "");
@@ -955,6 +1114,62 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
       getFeishuCardHandlerStrings(deps.config.locale).asyncPushTitle,
       getFeishuCardHandlerStrings(deps.config.locale).asyncPushBody(project.workBranch),
       { subtitle: project.name || projectId, tone: "blue" }
+    ));
+  },
+  projectPullPreview: async (deps, action) => {
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const projectId = action.projectId;
+    const targetRef = action.targetRef || "origin/main";
+    if (!projectId) return;
+    const { buildProjectPullPreviewCard } = await import("./channel/feishu-pull-card-builders");
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        const result = await deps.api.previewProjectPull({ projectId, targetRef, actorId: action.actorId });
+        return buildProjectPullPreviewCard(result, action.actorId, deps.config.locale);
+      },
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncPullPreviewFailedTitle,
+        error instanceof Error ? error.message : String(error),
+        { subtitle: projectId.slice(0, 8) }
+      )
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncPullPreviewTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncPullPreviewBody(targetRef),
+      { subtitle: projectId.slice(0, 8), tone: "blue" }
+    ));
+  },
+  projectPullConfirm: async (deps, action) => {
+    const payload = action.raw as CardActionData;
+    const messageId = String(payload.context?.open_message_id ?? "");
+    const projectId = action.projectId;
+    const previewId = action.previewId;
+    if (!projectId || !previewId) return;
+    const { buildProjectPullConfirmCard } = await import("./channel/feishu-pull-card-builders");
+    startAsyncCardTask(deps, {
+      chatId: action.chatId,
+      messageId,
+      run: async () => {
+        const result = await deps.api.confirmProjectPull({ projectId, previewId, actorId: action.actorId });
+        return buildProjectPullConfirmCard(result, action.actorId, deps.config.locale);
+      },
+      onError: async (error) => buildAsyncFailureCard(
+        deps.config.locale,
+        getFeishuCardHandlerStrings(deps.config.locale).asyncPullConfirmFailedTitle,
+        error instanceof Error ? error.message : String(error),
+        { subtitle: projectId.slice(0, 8) }
+      )
+    });
+    return rawCard(buildAsyncProgressCard(
+      deps.config.locale,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncPullConfirmTitle,
+      getFeishuCardHandlerStrings(deps.config.locale).asyncPullConfirmBody(previewId.slice(0, 8)),
+      { subtitle: projectId.slice(0, 8), tone: "blue" }
     ));
   },
   helpSkillInstall: async (deps, action) => {
@@ -1358,6 +1573,40 @@ const feishuActionRouter = new PlatformActionRouter<FeishuHandlerDeps, CardActio
     return card ? rawCard(card) : undefined;
   },
   turnViewDetail: async (deps, action) => {
+    const targetChatId = action.targetChatId?.trim() || action.chatId;
+    const card = await resolveUnifiedTurnCard(deps, targetChatId, action.actorId, action.turnId);
+    return card ? rawCard(card) : undefined;
+  },
+  turnViewMessageDetail: async (deps, action) => {
+    const targetChatId = action.targetChatId?.trim() || action.chatId;
+    const page = action.page ?? 0;
+    const card = await resolveUnifiedTurnSubpage(
+      deps,
+      targetChatId,
+      action.actorId,
+      action.turnId,
+      () => deps.platformOutput.renderMessageDetailCard(targetChatId, action.turnId, page)
+    );
+    return card ? rawCard(card) : undefined;
+  },
+  turnMessageDetailBack: async (deps, action) => {
+    const targetChatId = action.targetChatId?.trim() || action.chatId;
+    const card = await resolveUnifiedTurnCard(deps, targetChatId, action.actorId, action.turnId);
+    return card ? rawCard(card) : undefined;
+  },
+  turnViewThinkingDetail: async (deps, action) => {
+    const targetChatId = action.targetChatId?.trim() || action.chatId;
+    const page = action.page ?? 0;
+    const card = await resolveUnifiedTurnSubpage(
+      deps,
+      targetChatId,
+      action.actorId,
+      action.turnId,
+      () => deps.platformOutput.renderThinkingDetailCard(targetChatId, action.turnId, page)
+    );
+    return card ? rawCard(card) : undefined;
+  },
+  turnThinkingDetailBack: async (deps, action) => {
     const targetChatId = action.targetChatId?.trim() || action.chatId;
     const card = await resolveUnifiedTurnCard(deps, targetChatId, action.actorId, action.turnId);
     return card ? rawCard(card) : undefined;

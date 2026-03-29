@@ -164,6 +164,40 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
         ...base,
       };
     }
+    if (action === "view_message_detail" || action === "message_page") {
+      return {
+        kind: "turn_view_message_detail",
+        turnId: String(actionValue.turnId ?? ""),
+        page: typeof actionValue.page === "number" ? actionValue.page : Number(actionValue.page ?? 0),
+        targetChatId: typeof actionValue.chatId === "string" ? actionValue.chatId : undefined,
+        ...base,
+      };
+    }
+    if (action === "message_back") {
+      return {
+        kind: "turn_message_detail_back",
+        turnId: String(actionValue.turnId ?? ""),
+        targetChatId: typeof actionValue.chatId === "string" ? actionValue.chatId : undefined,
+        ...base,
+      };
+    }
+    if (action === "view_thinking_detail" || action === "thinking_page") {
+      return {
+        kind: "turn_view_thinking_detail",
+        turnId: String(actionValue.turnId ?? ""),
+        page: typeof actionValue.page === "number" ? actionValue.page : Number(actionValue.page ?? 0),
+        targetChatId: typeof actionValue.chatId === "string" ? actionValue.chatId : undefined,
+        ...base,
+      };
+    }
+    if (action === "thinking_back") {
+      return {
+        kind: "turn_thinking_detail_back",
+        turnId: String(actionValue.turnId ?? ""),
+        targetChatId: typeof actionValue.chatId === "string" ? actionValue.chatId : undefined,
+        ...base,
+      };
+    }
     if (action === "jump_snapshot") {
       return {
         kind: "snapshot_jump",
@@ -202,6 +236,12 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     }
     if (action === "help_project_push") {
       return { kind: "help_project_push", projectId: String(actionValue.projectId ?? ""), messageId: String(payload.context?.open_message_id ?? ""), ...base };
+    }
+    if (action === "project_pull_preview") {
+      return { kind: "project_pull_preview", projectId: String(actionValue.projectId ?? ""), targetRef: String(actionValue.targetRef ?? "origin/main"), ...base };
+    }
+    if (action === "project_pull_confirm") {
+      return { kind: "project_pull_confirm", projectId: String(actionValue.projectId ?? ""), previewId: String(actionValue.previewId ?? ""), ...base };
     }
     if (action === "help_skill_install") return { kind: "help_skill_install", skillName: String(actionValue.skillName ?? ""), ...base };
     if (action === "help_skill_remove") return { kind: "help_skill_remove", name: String(actionValue.name ?? ""), ...base };
@@ -282,6 +322,19 @@ export class FeishuActionAdapter implements PlatformActionAdapter {
     if (action === "admin_backend_recheck") return { kind: "admin_backend_recheck", backend: String(actionValue.backend ?? ""), provider: String(actionValue.provider ?? ""), ...base };
     if (action === "admin_backend_add_profile") return { kind: "admin_backend_add_profile", backend: String(actionValue.backend ?? ""), ...base };
     if (action === "admin_backend_remove_profile") return { kind: "admin_backend_remove_profile", backend: String(actionValue.backend ?? ""), provider: String(actionValue.provider ?? ""), profileName: String(actionValue.profile ?? ""), ...base };
+
+    // ── Thread execution policy ────────────────────────────────────────────
+    if (action === "thread_policy_view") return { kind: "thread_policy_view", threadName: String(actionValue.threadName ?? ""), ...base };
+    if (action === "thread_policy_update") {
+      const formValue = payload.action?.form_value ?? {};
+      return {
+        kind: "thread_policy_update",
+        threadName: String(actionValue.threadName ?? ""),
+        sandbox: formValue.sandbox || undefined,
+        approvalPolicy: formValue.approvalPolicy || undefined,
+        ...base,
+      };
+    }
 
     return { kind: "raw", actionId: action, ...base };
   }

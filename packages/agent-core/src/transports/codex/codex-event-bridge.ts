@@ -38,16 +38,19 @@ function extractCodexApprovalDisplay(
   const reason = nonEmptyString(params.reason);
   const cwd = nonEmptyString(params.cwd);
   const files = stringArray(params.files);
+  // Codex v2 file_change approval sends grantRoot (dir the agent wants write access to) instead of files
+  const grantRoot = nonEmptyString(params.grantRoot ?? params.grant_root);
+  const effectiveFiles = files ?? (grantRoot ? [grantRoot] : undefined);
   return buildApprovalDisplay({
     approvalType,
     requestId,
     callId,
     reason,
     cwd,
-    files,
+    files: effectiveFiles,
     command,
     displayNameCandidates: [approvalType === "command_exec" ? inferCommandDisplayName(command) : "Approve file changes"],
-    summaryCandidates: [approvalType === "command_exec" ? summarizeCommand(command) : summarizeText(reason ?? files?.join(", "))],
+    summaryCandidates: [approvalType === "command_exec" ? summarizeCommand(command) : summarizeText(reason ?? effectiveFiles?.join(", "))],
     fallbackDisplayName: approvalType === "command_exec" ? "Run shell command" : "Approve file changes",
     fallbackDescription: approvalType === "command_exec" ? "command execution" : "File change approval"
   });
@@ -519,6 +522,54 @@ export function codexNotificationToUnifiedEvent(notification: RpcNotification): 
 export const codexEventToUnifiedAgentEvent = codexNotificationToUnifiedEvent;
 
 /**
+ * Map the Codex backend's `availableDecisions` array to IM-level `availableActions`.
+ *
+ * Codex `CommandExecutionRequestApprovalParams` may include an ordered
+ * `availableDecisions` field that specifies which decisions the client may
+ * present. We translate each string variant to the corresponding IM action:
+ *   - "accept"            → "approve"
+ *   - "acceptForSession"  → "approve_always"
+ *   - "decline" | "cancel" → "deny"
+ *   - object variants (acceptWithExecpolicyAmendment, applyNetworkPolicyAmendment) → ignored
+ *
+ * If the field is null/undefined (older Codex versions), we fall back to
+ * `["approve", "deny"]` — conservatively omitting "approve_always" so we
+ * never show a button the backend does not honour.
+ */
+function mapCodexAvailableDecisions(
+  decisions: unknown[] | null | undefined
+): Array<"approve" | "deny" | "approve_always"> {
+  if (!Array.isArray(decisions) || decisions.length === 0) {
+    return ["approve", "deny"];
+  }
+  const mapped = new Set<"approve" | "deny" | "approve_always">();
+  for (const d of decisions) {
+    if (typeof d === "string") {
+      switch (d) {
+        case "accept":
+          mapped.add("approve");
+          break;
+        case "acceptForSession":
+          mapped.add("approve_always");
+          break;
+        case "decline":
+        case "cancel":
+          mapped.add("deny");
+          break;
+        // unknown string variants are silently skipped
+      }
+    }
+    // object variants (acceptWithExecpolicyAmendment, etc.) are not
+    // representable in the IM layer — skip them.
+  }
+  // Guarantee at least approve + deny if the backend only sent exotic variants
+  if (mapped.size === 0) {
+    return ["approve", "deny"];
+  }
+  return [...mapped];
+}
+
+/**
  * Convert a server-initiated JSON-RPC request (approval) to UnifiedAgentEvent.
  * The JSON-RPC `id` is preserved as `backendApprovalId` for later transport response.
  */
@@ -547,7 +598,7 @@ export function codexServerRequestToUnifiedEvent(request: {
       cwd: display.cwd,
       files: display.files,
       command: display.command,
-      availableActions: ["approve", "deny", "approve_always"],
+      availableActions: mapCodexAvailableDecisions(p.availableDecisions as unknown[] | null | undefined),
       backendType: "codex"
     };
   }

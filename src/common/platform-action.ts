@@ -149,6 +149,32 @@ export interface TurnViewDetailAction extends PlatformActionBase {
   targetChatId?: string;
 }
 
+export interface TurnViewMessageDetailAction extends PlatformActionBase {
+  kind: "turn_view_message_detail";
+  turnId: string;
+  page?: number;
+  targetChatId?: string;
+}
+
+export interface TurnMessageDetailBackAction extends PlatformActionBase {
+  kind: "turn_message_detail_back";
+  turnId: string;
+  targetChatId?: string;
+}
+
+export interface TurnViewThinkingDetailAction extends PlatformActionBase {
+  kind: "turn_view_thinking_detail";
+  turnId: string;
+  page?: number;
+  targetChatId?: string;
+}
+
+export interface TurnThinkingDetailBackAction extends PlatformActionBase {
+  kind: "turn_thinking_detail_back";
+  turnId: string;
+  targetChatId?: string;
+}
+
 export interface SnapshotJumpAction extends PlatformActionBase {
   kind: "snapshot_jump";
   threadId?: string;
@@ -224,6 +250,20 @@ export interface HelpProjectPushAction extends PlatformActionBase {
   messageId?: string;
 }
 
+// ── Project Pull ──────────────────────────────────────────────────────────────────
+
+export interface ProjectPullPreviewAction extends PlatformActionBase {
+  kind: "project_pull_preview";
+  projectId: string;
+  targetRef: string;
+}
+
+export interface ProjectPullConfirmAction extends PlatformActionBase {
+  kind: "project_pull_confirm";
+  projectId: string;
+  previewId: string;
+}
+
 export interface HelpThreadNewAction extends PlatformActionBase {
   kind: "help_thread_new";
   messageId?: string;
@@ -232,6 +272,20 @@ export interface HelpThreadNewAction extends PlatformActionBase {
 export interface PlatformRawAction extends PlatformActionBase {
   kind: "raw";
   actionId: string;
+}
+
+// ── Thread Execution Policy ──────────────────────────────────────────────────
+
+export interface ThreadPolicyViewAction extends PlatformActionBase {
+  kind: "thread_policy_view";
+  threadName: string;
+}
+
+export interface ThreadPolicyUpdateAction extends PlatformActionBase {
+  kind: "thread_policy_update";
+  threadName: string;
+  sandbox?: string;
+  approvalPolicy?: string;
 }
 
 // ── Project Init / Bind ──────────────────────────────────────────────────────
@@ -466,6 +520,10 @@ export type PlatformAction =
   | TurnViewToolProgressAction
   | TurnToolProgressBackAction
   | TurnViewDetailAction
+  | TurnViewMessageDetailAction
+  | TurnMessageDetailBackAction
+  | TurnViewThinkingDetailAction
+  | TurnThinkingDetailBackAction
   | SnapshotJumpAction
   | HelpSkillInstallAction
   | HelpSkillRemoveAction
@@ -479,6 +537,8 @@ export type PlatformAction =
   | DeleteMergedThreadAction
   | HelpPanelAction
   | HelpProjectPushAction
+  | ProjectPullPreviewAction
+  | ProjectPullConfirmAction
   | HelpThreadNewAction
   // Project init / bind
   | InitProjectAction
@@ -525,6 +585,9 @@ export type PlatformAction =
   | AdminBackendRecheckAction
   | AdminBackendAddProfileAction
   | AdminBackendRemoveProfileAction
+  // Thread execution policy
+  | ThreadPolicyViewAction
+  | ThreadPolicyUpdateAction
   | PlatformRawAction;
 
 export interface PlatformActionAdapter {

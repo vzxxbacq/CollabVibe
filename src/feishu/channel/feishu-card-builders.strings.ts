@@ -484,6 +484,7 @@ export interface FeishuCardBuilderStrings {
   helpProjectAgentsMdLabel: string;
   helpProjectAgentsMdPlaceholder: string;
   helpProjectPush: string;
+  helpProjectPull: string;
   helpProjectBack: string;
   helpProjectPushSuccess: string;
   helpProjectPushFailed(err: string): string;
@@ -961,6 +962,7 @@ const zhCN: FeishuCardBuilderStrings = {
   helpProjectAgentsMdLabel: "AGENTS.md (项目级)",
   helpProjectAgentsMdPlaceholder: "Agent 行为约束",
   helpProjectPush: "Push 到 Remote",
+  helpProjectPull: "Pull from Remote",
   helpProjectBack: "返回命令帮助",
   helpProjectPushSuccess: "推送成功",
   helpProjectPushFailed: (err) => `推送失败: ${err}`,
@@ -1477,6 +1479,7 @@ const enUS: FeishuCardBuilderStrings = {
   helpProjectAgentsMdLabel: "AGENTS.md (project-level)",
   helpProjectAgentsMdPlaceholder: "Agent behavior constraints",
   helpProjectPush: "Push to Remote",
+  helpProjectPull: "Pull from Remote",
   helpProjectBack: "Back to help",
   helpProjectPushSuccess: "Push succeeded",
   helpProjectPushFailed: (err) => `Push failed: ${err}`,

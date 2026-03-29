@@ -6,6 +6,8 @@ import type {
   ApprovalDecisionAction,
   HelpPanelAction,
   HelpProjectPushAction,
+  ProjectPullPreviewAction,
+  ProjectPullConfirmAction,
   HelpSkillInstallAction,
   HelpSkillRemoveAction,
   HelpThreadNewAction,
@@ -31,6 +33,10 @@ import type {
   TurnFileChangesBackAction,
   TurnToolProgressBackAction,
   TurnViewDetailAction,
+  TurnViewMessageDetailAction,
+  TurnMessageDetailBackAction,
+  TurnViewThinkingDetailAction,
+  TurnThinkingDetailBackAction,
   TurnViewFileChangesAction,
   TurnViewToolProgressAction,
   PlatformAction,
@@ -84,6 +90,9 @@ import type {
   AdminBackendRecheckAction,
   AdminBackendAddProfileAction,
   AdminBackendRemoveProfileAction,
+  // Thread execution policy
+  ThreadPolicyViewAction,
+  ThreadPolicyUpdateAction,
 } from "./platform-action";
 
 export interface PlatformActionExecutor<Deps, Result = unknown> {
@@ -113,6 +122,10 @@ export interface PlatformActionExecutor<Deps, Result = unknown> {
   turnViewToolProgress?(deps: Deps, action: TurnViewToolProgressAction): Promise<Result>;
   turnToolProgressBack?(deps: Deps, action: TurnToolProgressBackAction): Promise<Result>;
   turnViewDetail?(deps: Deps, action: TurnViewDetailAction): Promise<Result>;
+  turnViewMessageDetail?(deps: Deps, action: TurnViewMessageDetailAction): Promise<Result>;
+  turnMessageDetailBack?(deps: Deps, action: TurnMessageDetailBackAction): Promise<Result>;
+  turnViewThinkingDetail?(deps: Deps, action: TurnViewThinkingDetailAction): Promise<Result>;
+  turnThinkingDetailBack?(deps: Deps, action: TurnThinkingDetailBackAction): Promise<Result>;
   snapshotJump?(deps: Deps, action: SnapshotJumpAction): Promise<Result>;
   mergeFileDecision?(deps: Deps, action: MergeFileDecisionAction): Promise<Result>;
   mergeAcceptAll?(deps: Deps, action: MergeAcceptAllAction): Promise<Result>;
@@ -124,6 +137,8 @@ export interface PlatformActionExecutor<Deps, Result = unknown> {
   adminUserToggle?(deps: Deps, action: AdminUserToggleAction): Promise<Result>;
   helpPanel?(deps: Deps, action: HelpPanelAction): Promise<Result>;
   helpProjectPush?(deps: Deps, action: HelpProjectPushAction): Promise<Result>;
+  projectPullPreview?(deps: Deps, action: ProjectPullPreviewAction): Promise<Result>;
+  projectPullConfirm?(deps: Deps, action: ProjectPullConfirmAction): Promise<Result>;
   helpThreadNew?(deps: Deps, action: HelpThreadNewAction): Promise<Result>;
   // Project init / bind
   initProject?(deps: Deps, action: InitProjectAction): Promise<Result>;
@@ -170,6 +185,9 @@ export interface PlatformActionExecutor<Deps, Result = unknown> {
   adminBackendRecheck?(deps: Deps, action: AdminBackendRecheckAction): Promise<Result>;
   adminBackendAddProfile?(deps: Deps, action: AdminBackendAddProfileAction): Promise<Result>;
   adminBackendRemoveProfile?(deps: Deps, action: AdminBackendRemoveProfileAction): Promise<Result>;
+  // Thread execution policy
+  threadPolicyView?(deps: Deps, action: ThreadPolicyViewAction): Promise<Result>;
+  threadPolicyUpdate?(deps: Deps, action: ThreadPolicyUpdateAction): Promise<Result>;
   raw?(deps: Deps, action: PlatformRawAction): Promise<Result>;
 }
 
@@ -230,6 +248,14 @@ export class PlatformActionRouter<Deps, Result = unknown> {
         return this.executor.turnToolProgressBack?.(deps, action);
       case "turn_view_detail":
         return this.executor.turnViewDetail?.(deps, action);
+      case "turn_view_message_detail":
+        return this.executor.turnViewMessageDetail?.(deps, action);
+      case "turn_message_detail_back":
+        return this.executor.turnMessageDetailBack?.(deps, action);
+      case "turn_view_thinking_detail":
+        return this.executor.turnViewThinkingDetail?.(deps, action);
+      case "turn_thinking_detail_back":
+        return this.executor.turnThinkingDetailBack?.(deps, action);
       case "snapshot_jump":
         return this.executor.snapshotJump?.(deps, action);
       case "merge_file_decision":
@@ -252,6 +278,10 @@ export class PlatformActionRouter<Deps, Result = unknown> {
         return this.executor.helpPanel?.(deps, action);
       case "help_project_push":
         return this.executor.helpProjectPush?.(deps, action);
+      case "project_pull_preview":
+        return this.executor.projectPullPreview?.(deps, action);
+      case "project_pull_confirm":
+        return this.executor.projectPullConfirm?.(deps, action);
       case "help_thread_new":
         return this.executor.helpThreadNew?.(deps, action);
       // Project init / bind
@@ -339,6 +369,11 @@ export class PlatformActionRouter<Deps, Result = unknown> {
         return this.executor.adminBackendAddProfile?.(deps, action);
       case "admin_backend_remove_profile":
         return this.executor.adminBackendRemoveProfile?.(deps, action);
+      // Thread execution policy
+      case "thread_policy_view":
+        return this.executor.threadPolicyView?.(deps, action);
+      case "thread_policy_update":
+        return this.executor.threadPolicyUpdate?.(deps, action);
       case "raw":
         return this.executor.raw?.(deps, action);
       default:

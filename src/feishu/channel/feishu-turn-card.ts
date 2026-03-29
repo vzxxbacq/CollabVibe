@@ -245,6 +245,32 @@ function renderPlanMarkdown(planState: FeishuPlanState, locale: AppLocale = DEFA
   return lines.join("\n") || s.planUpdated;
 }
 
+/** Split long text into pages at paragraph/line boundaries. */
+function paginateText(text: string, pageSize = 3000): string[] {
+  if (text.length <= pageSize) return [text];
+  const pages: string[] = [];
+  let offset = 0;
+  while (offset < text.length) {
+    let end = Math.min(offset + pageSize, text.length);
+    if (end < text.length) {
+      // Prefer paragraph boundary
+      const paraBreak = text.lastIndexOf("\n\n", end);
+      if (paraBreak > offset + pageSize * 0.5) {
+        end = paraBreak + 2;
+      } else {
+        // Fall back to line boundary
+        const lineBreak = text.lastIndexOf("\n", end);
+        if (lineBreak > offset + pageSize * 0.5) {
+          end = lineBreak + 1;
+        }
+      }
+    }
+    pages.push(text.slice(offset, end));
+    offset = end;
+  }
+  return pages;
+}
+
 const STREAM_MSG_ELEMENT_ID = "turn_msg";
 const STREAM_THINK_ELEMENT_ID = "turn_think";
 const STREAM_PROGRESS_ELEMENT_ID = "turn_prog";
@@ -1093,11 +1119,39 @@ export class TurnCardManager {
     const bodyElements: Record<string, unknown>[] = [];
 
     // Message
+    const isMessageTruncated = state.message.length > 3000;
     if (state.message) {
-      const msg = state.message.length > 3000
+      const msg = isMessageTruncated
         ? state.message.slice(0, 3000) + `\n\n${s.truncated}`
         : state.message;
       bodyElements.push({ tag: "markdown", content: msg });
+      // "View full reply" button when message is truncated
+      if (isMessageTruncated) {
+        const totalPages = paginateText(state.message).length;
+        bodyElements.push({
+          tag: "interactive_container",
+          width: "fill", height: "auto",
+          has_border: true, border_color: "grey", corner_radius: "8px",
+          padding: "10px 12px 10px 12px",
+          behaviors: [{ type: "callback", value: { action: "view_message_detail", chatId: state.chatId, turnId: state.turnId, page: 0 } }],
+          elements: [{
+            tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
+            columns: [
+              {
+                tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+                elements: [{
+                  tag: "markdown", content: s.viewFullReply,
+                  icon: { tag: "standard_icon", token: "file-detail_outlined", color: "blue" }
+                }]
+              },
+              {
+                tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+                elements: [greyText(`${s.contentTruncatedHint} (${totalPages}${s.previousPage.includes("上") ? "页" : " pages"})`)]
+              }
+            ]
+          }]
+        });
+      }
     } else if (isInterrupting) {
       bodyElements.push(greyText(s.actionInterrupting));
     } else if (isAwaitingApproval) {
@@ -1126,7 +1180,37 @@ export class TurnCardManager {
     // Thinking
     if (state.thinking && state.thinking.trim().length > 0) {
       const thinkLen = state.thinking.length;
+      const isThinkingTruncated = thinkLen > 2000;
       const thinkLabel = thinkLen > 1000 ? `${(thinkLen / 1000).toFixed(1)}k chars` : `${thinkLen} chars`;
+      const thinkingPanelElements: Record<string, unknown>[] = [
+        { tag: "markdown", content: isThinkingTruncated ? state.thinking.slice(0, 2000) + `\n\n${s.truncated}` : state.thinking }
+      ];
+      // "View full thinking" button inside the collapsible panel when truncated
+      if (isThinkingTruncated) {
+        thinkingPanelElements.push({
+          tag: "interactive_container",
+          width: "fill", height: "auto",
+          has_border: true, border_color: "grey", corner_radius: "8px",
+          padding: "8px 10px 8px 10px",
+          behaviors: [{ type: "callback", value: { action: "view_thinking_detail", chatId: state.chatId, turnId: state.turnId, page: 0 } }],
+          elements: [{
+            tag: "column_set", flex_mode: "none", background_style: "default", horizontal_spacing: "default",
+            columns: [
+              {
+                tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+                elements: [{
+                  tag: "markdown", content: s.viewFullThinking,
+                  icon: { tag: "standard_icon", token: "chat_outlined", color: "blue" }
+                }]
+              },
+              {
+                tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+                elements: [greyText(s.contentTruncatedHint)]
+              }
+            ]
+          }]
+        });
+      }
       bodyElements.push({ tag: "hr" });
       bodyElements.push({
         tag: "collapsible_panel",
@@ -1138,7 +1222,7 @@ export class TurnCardManager {
         },
         background_color: "grey",
         vertical_spacing: "2px",
-        elements: [{ tag: "markdown", content: thinkLen > 2000 ? state.thinking.slice(0, 2000) + `\n\n${s.truncated}` : state.thinking }]
+        elements: thinkingPanelElements
       });
     }
 
@@ -2032,6 +2116,173 @@ export class TurnCardManager {
           { tag: "text_tag", text: { tag: "plain_text", content: s.stepCount(stepCount) }, color: "blue" }
         ],
         template: "blue"
+      },
+      body: {
+        direction: "vertical",
+        vertical_spacing: "4px",
+        padding: "4px 12px 12px 12px",
+        elements
+      }
+    };
+  }
+
+  /** Render paginated message detail card (replaces turn card in-place). */
+  renderMessageDetailCard(state: TurnCardState, page: number): Record<string, unknown> {
+    const s = getFeishuTurnCardStrings(this.locale);
+    const pages = paginateText(state.message);
+    const totalPages = Math.max(1, pages.length);
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+    const pageContent = pages[safePage] ?? "";
+
+    const elements: Record<string, unknown>[] = [];
+
+    // Page content
+    elements.push({ tag: "markdown", content: pageContent });
+
+    // Pagination
+    if (totalPages > 1) {
+      elements.push({ tag: "hr" });
+      elements.push({
+        tag: "column_set", flex_mode: "none", horizontal_spacing: "default",
+        columns: [
+          {
+            tag: "column", width: "auto", vertical_align: "center",
+            elements: [{
+              tag: "button", text: { tag: "plain_text", content: s.previousPage },
+              icon: { tag: "standard_icon", token: "arrow-left_outlined" },
+              type: "default", size: "small", disabled: safePage <= 0,
+              behaviors: [{ type: "callback", value: { action: "message_page", chatId: state.chatId, turnId: state.turnId, page: safePage - 1 } }]
+            }]
+          },
+          {
+            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+            elements: [greyText(`${safePage + 1} / ${totalPages}`)]
+          },
+          {
+            tag: "column", width: "auto", vertical_align: "center",
+            elements: [{
+              tag: "button", text: { tag: "plain_text", content: s.nextPage },
+              type: "default", size: "small", disabled: safePage >= totalPages - 1,
+              behaviors: [{ type: "callback", value: { action: "message_page", chatId: state.chatId, turnId: state.turnId, page: safePage + 1 } }]
+            }]
+          }
+        ]
+      });
+    }
+
+    // Back button
+    elements.push({ tag: "hr" });
+    elements.push({
+      tag: "interactive_container",
+      width: "fill", height: "auto",
+      has_border: true, border_color: "grey", corner_radius: "8px",
+      padding: "10px 12px 10px 12px",
+      behaviors: [{ type: "callback", value: { action: "message_back", chatId: state.chatId, turnId: state.turnId } }],
+      elements: [{
+        tag: "markdown", content: s.backToTurnCard,
+        icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
+      }]
+    });
+
+    return {
+      schema: "2.0",
+      config: { width_mode: "fill", update_multi: true },
+      header: {
+        title: { tag: "plain_text", content: s.messageDetailTitle },
+        subtitle: {
+          tag: "plain_text",
+          content: [formatThreadNameLabel(state.threadName, this.locale), state.turnNumber ? `turn-${state.turnNumber}` : null].filter(Boolean).join(" · ")
+        },
+        icon: { tag: "standard_icon", token: "file-detail_outlined", color: "blue" },
+        text_tag_list: [
+          { tag: "text_tag", text: { tag: "plain_text", content: s.pageInfo(safePage + 1, totalPages) }, color: "blue" },
+          { tag: "text_tag", text: { tag: "plain_text", content: `${state.message.length} chars` }, color: "neutral" }
+        ],
+        template: "blue"
+      },
+      body: {
+        direction: "vertical",
+        vertical_spacing: "4px",
+        padding: "4px 12px 12px 12px",
+        elements
+      }
+    };
+  }
+
+  /** Render paginated thinking detail card (replaces turn card in-place). */
+  renderThinkingDetailCard(state: TurnCardState, page: number): Record<string, unknown> {
+    const s = getFeishuTurnCardStrings(this.locale);
+    const pages = paginateText(state.thinking);
+    const totalPages = Math.max(1, pages.length);
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+    const pageContent = pages[safePage] ?? "";
+    const charLabel = state.thinking.length > 1000 ? `${(state.thinking.length / 1000).toFixed(1)}k chars` : `${state.thinking.length} chars`;
+
+    const elements: Record<string, unknown>[] = [];
+
+    // Page content
+    elements.push({ tag: "markdown", content: pageContent });
+
+    // Pagination
+    if (totalPages > 1) {
+      elements.push({ tag: "hr" });
+      elements.push({
+        tag: "column_set", flex_mode: "none", horizontal_spacing: "default",
+        columns: [
+          {
+            tag: "column", width: "auto", vertical_align: "center",
+            elements: [{
+              tag: "button", text: { tag: "plain_text", content: s.previousPage },
+              icon: { tag: "standard_icon", token: "arrow-left_outlined" },
+              type: "default", size: "small", disabled: safePage <= 0,
+              behaviors: [{ type: "callback", value: { action: "thinking_page", chatId: state.chatId, turnId: state.turnId, page: safePage - 1 } }]
+            }]
+          },
+          {
+            tag: "column", width: "weighted", weight: 1, vertical_align: "center",
+            elements: [greyText(`${safePage + 1} / ${totalPages}`)]
+          },
+          {
+            tag: "column", width: "auto", vertical_align: "center",
+            elements: [{
+              tag: "button", text: { tag: "plain_text", content: s.nextPage },
+              type: "default", size: "small", disabled: safePage >= totalPages - 1,
+              behaviors: [{ type: "callback", value: { action: "thinking_page", chatId: state.chatId, turnId: state.turnId, page: safePage + 1 } }]
+            }]
+          }
+        ]
+      });
+    }
+
+    // Back button
+    elements.push({ tag: "hr" });
+    elements.push({
+      tag: "interactive_container",
+      width: "fill", height: "auto",
+      has_border: true, border_color: "grey", corner_radius: "8px",
+      padding: "10px 12px 10px 12px",
+      behaviors: [{ type: "callback", value: { action: "thinking_back", chatId: state.chatId, turnId: state.turnId } }],
+      elements: [{
+        tag: "markdown", content: s.backToTurnCard,
+        icon: { tag: "standard_icon", token: "arrow-left_outlined", color: "grey" }
+      }]
+    });
+
+    return {
+      schema: "2.0",
+      config: { width_mode: "fill", update_multi: true },
+      header: {
+        title: { tag: "plain_text", content: s.thinkingDetailTitle },
+        subtitle: {
+          tag: "plain_text",
+          content: [formatThreadNameLabel(state.threadName, this.locale), state.turnNumber ? `turn-${state.turnNumber}` : null].filter(Boolean).join(" · ")
+        },
+        icon: { tag: "standard_icon", token: "chat_outlined", color: "grey" },
+        text_tag_list: [
+          { tag: "text_tag", text: { tag: "plain_text", content: s.pageInfo(safePage + 1, totalPages) }, color: "neutral" },
+          { tag: "text_tag", text: { tag: "plain_text", content: charLabel }, color: "neutral" }
+        ],
+        template: "grey"
       },
       body: {
         direction: "vertical",

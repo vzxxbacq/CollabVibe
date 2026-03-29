@@ -19,6 +19,12 @@ import type { ProjectRecord } from "./project/project-types";
 import type { BackendIdentity, BackendId } from "../packages/agent-core/src/index";
 import type { MergeDiffStats } from "../packages/git-utils/src/index";
 import type { ThreadRecord } from "./thread/types";
+import type {
+  ThreadExecutionPolicyOverride,
+  ThreadExecutionPolicyView,
+  ThreadExecutionPolicyPreview,
+  ThreadExecutionPolicyConfirmResult,
+} from "./thread/thread-execution-policy-types";
 import type { TurnRecord, TurnStatus, TurnDetailRecord } from "./turn/types";
 import type { TurnSnapshotRecord } from "./snapshot/types";
 import type { IMFileMergeReview, IMMergeSummary, IMThreadMergeOperation } from "./event/im-output";
@@ -31,11 +37,13 @@ import type { BackendCatalogView, BackendModelProfile } from "./backend/backend-
 
 export type { ProjectRecord } from "./project/project-types";
 export type { ThreadRecord } from "./thread/types";
+export type { ThreadExecutionPolicyView } from "./thread/thread-execution-policy-types";
 export type { TurnRecord, TurnStatus, TurnDetailRecord } from "./turn/types";
 export type { TurnSnapshotRecord } from "./snapshot/types";
 export type { TurnCardData } from "./turn/turn-card-data-provider";
 export type { BackendIdentity, BackendId } from "../packages/agent-core/src/index";
 export type { BackendCatalogView, BackendModelProfile } from "./backend/backend-service";
+export type { ProjectPullPreviewResult, ProjectPullConfirmResult, ProjectPullThreadDisposition, ThreadDispositionEntry } from "./project/project-pull-types";
 
 // ── Shared input/output types ────────────────────────────────────────────────
 
@@ -265,6 +273,28 @@ export interface OrchestratorApi {
     projectId: string;
     threadName: string;
   }): Promise<ThreadRecord | null>;
+
+  /** 获取 thread 执行策略视图。 */
+  getThreadExecutionPolicy(input: {
+    projectId: string;
+    threadName: string;
+  }): Promise<ThreadExecutionPolicyView>;
+
+  /** 预览 thread 执行策略修改。 */
+  previewThreadExecutionPolicyUpdate(input: {
+    projectId: string;
+    threadName: string;
+    actorId: string;
+    override: ThreadExecutionPolicyOverride;
+  }): Promise<ThreadExecutionPolicyPreview>;
+
+  /** 确认 thread 执行策略修改。 */
+  confirmThreadExecutionPolicyUpdate(input: {
+    projectId: string;
+    threadName: string;
+    actorId: string;
+    override: ThreadExecutionPolicyOverride;
+  }): Promise<ThreadExecutionPolicyConfirmResult>;
 
   /** 判断线程是否等待审批。 */
   isPendingApproval(input: {
@@ -520,6 +550,12 @@ export interface OrchestratorApi {
 
   /** 推送 workBranch 到远程。 */
   pushWorkBranch(input: { projectId: string; actorId: string }): Promise<void>;
+
+  /** Project Pull: 生成预览（fetch + thread 分类 + blocker 检测）。 */
+  previewProjectPull(input: { projectId: string; targetRef: string; actorId: string }): Promise<import("./project/project-pull-types").ProjectPullPreviewResult>;
+
+  /** Project Pull: 确认执行（revalidation + ff/reset + thread 更新）。 */
+  confirmProjectPull(input: { projectId: string; previewId: string; actorId: string }): Promise<import("./project/project-pull-types").ProjectPullConfirmResult>;
 
   /** 合并后检测过期线程。 */
   detectStaleThreads(input: {
